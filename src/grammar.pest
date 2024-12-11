@@ -1,0 +1,250 @@
+WHITESPACE = _{ " " | NEWLINE }
+COMMENT    = _{ "--" ~ (longString | (!NEWLINE ~ ANY)* ~ NEWLINE?) }
+
+Chunk = { SOI ~ block ~ EOI }
+
+block = { stat* ~ RetStat? }
+
+blockEnd = { (!("end" | "return") ~ stat)* ~ RetStat? ~ "end" }
+
+RetStat = {
+    "return" ~ explist? ~ ";"?
+}
+
+stat = _{
+    ";"
+  | AssignStat
+  | FunctionCall
+  | Label
+  | BreakStat
+  | GotoStat
+  | DoStat
+  | WhileStat
+  | RepeatStat
+  | IfStat
+  | ForRangeStat
+  | ForInStat
+  | FunctionDefStat
+  | LocalFunctionDefStat
+  | LocalAssignStat
+}
+
+AssignStat      = {
+    varlist ~ "=" ~ explist
+}
+LocalAssignStat = {
+    "local" ~ namelist ~ "=" ~ explist
+}
+
+Label = {
+    "::" ~ Name ~ "::"
+}
+
+BreakStat = { "break" }
+GotoStat  = { "goto" ~ Name }
+
+DoStat = {
+    "do" ~ block ~ "end"
+}
+
+WhileStat = {
+    "while" ~ exp ~ "do" ~ blockEnd
+}
+
+RepeatStat = {
+    "repeat" ~ block ~ "until" ~ exp
+}
+
+blockIf = {
+    (!("elseif" | "else" | "end" | "return") ~ stat)* ~ RetStat?
+}
+
+IfStat     = {
+    "if" ~ exp ~ "then" ~ blockIf ~ ElseIfStat* ~ ElseStat? ~ "end"
+}
+ElseIfStat = {
+    "elseif" ~ exp ~ "then" ~ blockIf
+}
+ElseStat   = {
+    "else" ~ blockEnd
+}
+
+ForRangeStat = {
+    "for" ~ Name ~ "=" ~ exp ~ "," ~ exp ~ ("," ~ (#step = exp))? ~ "do" ~ blockEnd
+}
+ForInStat    = {
+    "for" ~ namelist ~ "in" ~ explist ~ "do" ~ blockEnd
+}
+
+FunctionDefStat      = {
+    "function" ~ funcName ~ FuncBody
+}
+LocalFunctionDefStat = {
+    "local" ~ "function" ~ Name ~ FuncBody
+}
+
+funcName = {
+    Name ~ ("." ~ Name)* ~ (":" ~ #method = Name)?
+}
+
+varlist = {
+    Var ~ ("," ~ Var)*
+}
+
+Var = { prefixExp ~ (Call* ~ Access+)+ | Name }
+
+namelist = {
+    Name ~ ("," ~ Name)*
+}
+
+explist = {
+    exp ~ ("," ~ exp)*
+}
+
+exp     =  { prefix* ~ primary ~ (infix ~ prefix* ~ primary)* }
+prefix  = _{ unop }
+infix   = _{ binop }
+primary = _{ Nil | Boolean | Numeral | LiteralString | Ellipse | PrefixExp }
+
+Ellipse = { "..." }
+
+PrefixExp = { prefixExp ~ (Access | Call)* }
+
+prefixExp = _{
+    Name
+  | "(" ~ exp ~ ")"
+}
+
+Access = { "[" ~ exp ~ "]" | "." ~ Name }
+
+FunctionCall = { prefixExp ~ (Access* ~ Call+)+ }
+
+Call = { (":" ~ #method = Name)? ~ Args }
+Args = {
+    LiteralString
+  | "(" ~ explist? ~ ")"
+  | TableConstructor
+}
+
+FuncDef  = { "function" ~ FuncBody }
+FuncBody = { "(" ~ parlist? ~ ")" ~ blockEnd }
+parlist  = {
+    namelist ~ ("," ~ Ellipse)?
+  | Ellipse
+}
+
+TableConstructor = {
+    "{" ~ Fieldlist? ~ "}"
+}
+Fieldlist        = {
+    Field ~ (("," | ";") ~ Field)* ~ ("," | ";")?
+}
+Field            = {
+    "[" ~ exp ~ "]" ~ "=" ~ exp
+  | Name ~ "=" ~ exp
+  | exp
+}
+
+Name = @{ (LETTER | "_") ~ (LETTER | "_" | ASCII_DIGIT)* }
+
+Numeral = @{
+    hexNumeral
+  | decimalNumeral
+}
+
+hexNumeral     = {
+    ("-" | "+")? ~ ^"0x" ~ ASCII_HEX_DIGIT+ ~ ("." ~ ASCII_HEX_DIGIT+)? ~ (^"p" ~ ("-" | "+")? ~ ASCII_HEX_DIGIT+)?
+}
+decimalNumeral = {
+    ("-" | "+")? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? ~ (^"e" ~ ("-" | "+")? ~ ASCII_DIGIT+)?
+}
+
+LiteralString = { longString | shortString }
+
+longString  = {
+    "[" ~ PUSH("=")* ~ "[" ~ NEWLINE? ~ (!("]" ~ PEEK_ALL ~ "]") ~ ANY)* ~ "]" ~ POP_ALL ~ "]"
+}
+shortString = { PUSH("\"" | "'") ~ (escape | (!PEEK ~ ANY))* ~ POP }
+
+escape = @{
+    "\\" ~ escapeChars
+}
+
+escapeChars = @{
+    "a"
+  | "b"
+  | "f"
+  | "n"
+  | "r"
+  | "t"
+  | "v"
+  | "\\"
+  | "\""
+  | "'"
+  | NEWLINE
+  | ("z" ~ WHITESPACE*)
+  | ("u" ~ "{" ~ ASCII_HEX_DIGIT+ ~ "}")
+  | ("x" ~ ASCII_HEX_DIGIT{2})
+  | ASCII_DIGIT{1, 3}
+}
+
+// keywords tokens
+Boolean = @{ "true" | "false" }
+Nil     = @{ "nil" }
+
+unop = _{
+    Neg
+  | Not
+  | Pound
+  | Tilde
+}
+// operator tokens
+binop = _{
+    Plus
+  | Minus
+  | Star
+  | Slash
+  | DoubleSlash
+  | Caret
+  | Pourcent
+  | Ampersand
+  | Tilde
+  | Pipe
+  | ShiftRight
+  | ShiftLeft
+  | DotDot
+  | Lt
+  | LtEq
+  | Gt
+  | GtEq
+  | Eq
+  | Neq
+  | And
+  | Or
+}
+
+Pound       = { "#" }
+Plus        = { "+" }
+Minus       = { "-" }
+Neg         = { "-" }
+Star        = { "*" }
+Slash       = { "/" }
+Pourcent    = { "%" }
+Caret       = { "^" }
+Ampersand   = { "&" }
+Tilde       = { "~" }
+Pipe        = { "|" }
+ShiftLeft   = { "<<" }
+ShiftRight  = { ">>" }
+DoubleSlash = { "//" }
+Eq          = { "==" }
+Neq         = { "~=" }
+LtEq        = { "<=" }
+GtEq        = { ">=" }
+Lt          = { "<" }
+Gt          = { ">" }
+DotDot      = { ".." }
+
+And = { "and" }
+Or  = { "or" }
+Not = { "not" }
