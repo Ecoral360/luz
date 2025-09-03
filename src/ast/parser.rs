@@ -8,7 +8,7 @@ use crate::ast::{
     ReturnStat, Stat, WhileStat,
 };
 use crate::luz::err::LuzError;
-use crate::luz::obj::{FuncParams, FuncParamsBuilder, Numeral};
+use crate::luz::obj::{FuncParams, FuncParamsBuilder, LuzObj, Numeral};
 use crate::Rule;
 
 use super::{ExpAccess, GotoStat, LabelStat};
@@ -71,32 +71,77 @@ fn parse_prefix_exp(prefix_exp: Exp, pair: Pair<Rule>) -> Result<Exp, LuzError> 
         Rule::Access => {
             let mut inner = pair.into_inner();
             let element = inner.next().expect("Accessor");
-            Ok(match element.as_rule() {
-                Rule::Name => Exp::Access(ExpAccess::ByName {
-                    exp: Box::new(prefix_exp),
-                    name: element.as_str().to_string(),
-                }),
-                Rule::exp => Exp::Access(ExpAccess::ByIndex {
-                    exp: Box::new(prefix_exp),
-                    value: Box::new(parse_expr(element.into_inner())?),
-                }),
-                _ => unreachable!(),
-            })
+            Ok(Exp::Access(ExpAccess::new(
+                Box::new(prefix_exp),
+                Box::new(parse_top_expr(element)?),
+            )))
         }
-        // Rule::Call => {}
+        Rule::Call => {
+            let mut inner = pair.into_inner();
+
+            let last_call = inner.next_back().expect("Last Call");
+
+            let mut last_call = last_call.into_inner();
+            let mut method_name = None;
+            if last_call
+                .peek()
+                .map(|v| v.as_node_tag().is_some_and(|t| t == "method"))
+                .unwrap_or_default()
+            {
+                method_name = Some(
+                    last_call
+                        .next()
+                        .expect("Should always work because of previous check")
+                        .as_str()
+                        .to_string(),
+                );
+            }
+            let args = if last_call.len() == 0 {
+                vec![]
+            } else {
+                parse_args(last_call.next().expect("args"))?
+            };
+            Ok(Exp::FuncCall(FuncCall::new(
+                Box::new(prefix_exp),
+                method_name,
+                args,
+            )))
+        }
         _ => todo!("Handle Rule::{:?}", pair.as_rule()),
     }
 }
 
-fn parse_prefix_exps(exp: Pairs<Rule>) -> Result<Exp, LuzError> {
-    let mut inner = exp;
-    let first_expr = parse_top_expr(inner.next().expect("Caller"));
+fn parse_args(args: Pair<Rule>) -> Result<Vec<Exp>, LuzError> {
+    let mut args_inner = args.into_inner();
+    let mut args_inner = args_inner.next().unwrap().into_inner();
+    if args_inner.len() == 1 {
+        Ok(vec![parse_top_expr(args_inner.next().unwrap())?])
+    } else {
+        Ok(args_inner
+            .map(|arg| parse_top_expr(arg))
+            .collect::<Result<_, _>>()?)
+    }
+}
+
+fn parse_prefix_exps(first_expr: Result<Exp, LuzError>, exp: Pairs<Rule>) -> Result<Exp, LuzError> {
+    let inner = exp;
+    // let first_expr = parse_top_expr(inner.next().expect("Caller"));
     inner.fold(first_expr, |expr, el| parse_prefix_exp(expr?, el))
 }
 
 fn parse_top_expr(pair: Pair<Rule>) -> Result<Exp, LuzError> {
     Ok(match pair.as_rule() {
-        Rule::exp | Rule::PrefixExp => parse_expr(pair.into_inner())?,
+        Rule::exp => parse_expr(pair.into_inner())?,
+        Rule::PrefixExp => {
+            // let prefix: Vec<Pair<Rule>> = pair
+            //     .into_inner()
+            //     .take_while(|pair| pair.as_node_tag().is_none_or(|tag| tag != "postfix"))
+            //     .collect();
+            // let access_or_calls = pair.into_inner().find_tagged("postfix");
+
+            parse_expr(pair.into_inner())?
+        }
+        Rule::LiteralString => Exp::Literal(LuzObj::String(pair.as_str().to_string())),
         Rule::Var => {
             let var = parse_expr(pair.into_inner())?;
             Exp::Var(Box::new(var))
@@ -111,6 +156,11 @@ fn parse_top_expr(pair: Pair<Rule>) -> Result<Exp, LuzError> {
             }
         }
         Rule::Name => Exp::Name(pair.as_str().to_string()),
+
+        Rule::Access => {
+            dbg!(&pair);
+            todo!()
+        }
 
         // Rule::FuncDef => {
         // }
@@ -129,6 +179,12 @@ fn parse_expr(pairs: Pairs<Rule>) -> Result<Exp, LuzError> {
             _ => todo!(),
         })
         .map_postfix(|lhs, op| match op.as_rule() {
+            Rule::PostfixExp => {
+                let lhs = lhs?;
+                let value = parse_expr(op.into_inner())?;
+
+                Ok(Exp::Access(ExpAccess::new(Box::new(lhs), Box::new(value))))
+            }
             _ => todo!(),
         })
         .map_infix(|lhs, op, rhs| match op.as_rule() {
@@ -171,6 +227,36 @@ pub fn parse_stmts(pairs: &mut Pairs<Rule>) -> Result<Vec<Stat>, LuzError> {
         acc.extend(parse_stmt(pair)?);
         Ok(acc)
     })
+}
+
+pub fn parse_func_call(pair: Pair<Rule>) -> Result<FuncCall, LuzError> {
+    let mut inner = pair.into_inner();
+
+    let last_call = inner.next_back().expect("Last Call");
+    let first_expr = parse_top_expr(inner.next().expect("Caller"));
+    let func = parse_prefix_exps(first_expr, inner)?;
+
+    let mut last_call = last_call.into_inner();
+    let mut method_name = None;
+    if last_call
+        .peek()
+        .map(|v| v.as_node_tag().is_some_and(|t| t == "method"))
+        .unwrap_or_default()
+    {
+        method_name = Some(
+            last_call
+                .next()
+                .expect("Should always work because of previous check")
+                .as_str()
+                .to_string(),
+        );
+    }
+    let args = if last_call.len() == 0 {
+        vec![]
+    } else {
+        parse_args(last_call.next().expect("args"))?
+    };
+    Ok(FuncCall::new(Box::new(func), method_name, args))
 }
 
 pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
@@ -216,29 +302,7 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
             vec![ReturnStat::new(explist).into()]
         }
         Rule::FunctionCall => {
-            let mut inner = pair.into_inner();
-
-            let last_call = inner.next_back().expect("Last Call");
-            let first_expr = parse_top_expr(inner.next().expect("Caller"))?;
-            let func = parse_prefix_exps(inner)?;
-
-            let mut last_call = last_call.into_inner();
-            let mut method_name = None;
-            if last_call
-                .peek()
-                .map(|v| v.as_node_tag().is_some_and(|t| t == "method"))
-                .unwrap_or_default()
-            {
-                method_name = Some(
-                    last_call
-                        .next()
-                        .expect("Should always work because of previous check")
-                        .as_str()
-                        .to_string(),
-                );
-            }
-            let args = todo!();
-            vec![FuncCall::new(func, method_name, args)]
+            vec![parse_func_call(pair)?.into()]
         }
         Rule::AssignStat => {
             let mut inner = pair.into_inner();

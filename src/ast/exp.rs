@@ -33,10 +33,10 @@ pub enum Exp {
     FuncCall(FuncCall),
 }
 
-#[derive(Debug, Clone)]
-pub enum ExpAccess {
-    ByName { exp: Box<Exp>, name: String },
-    ByIndex { exp: Box<Exp>, value: Box<Exp> },
+#[derive(Debug, Clone, new)]
+pub struct ExpAccess {
+    exp: Box<Exp>,
+    value: Box<Exp>,
 }
 
 #[derive(Debug, Clone)]

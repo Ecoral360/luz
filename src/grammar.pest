@@ -92,7 +92,8 @@ varlist = {
     Var ~ ("," ~ Var)*
 }
 
-Var = { prefixExp ~ (Call* ~ Access+)+ | Name }
+//Var = { prefixExp ~ (Call* ~ Access+)+ | Name }
+Var = { prefixExp | Name }
 
 namelist = {
     Name ~ ("," ~ Name)*
@@ -102,14 +103,16 @@ explist = {
     exp ~ ("," ~ exp)*
 }
 
-exp     =  { prefix* ~ primary ~ (infix ~ prefix* ~ primary)* }
+exp     =  { prefix* ~ primary ~ postfix* ~ (infix ~ prefix* ~ primary ~ postfix*)* }
 prefix  = _{ unop }
+postfix = _{ PostfixExp }
 infix   = _{ binop }
 primary = _{ Nil | Boolean | Numeral | LiteralString | Ellipse | PrefixExp }
 
 Ellipse = { "..." }
 
-PrefixExp = { prefixExp ~ (Access | Call)* }
+PrefixExp = { prefixExp }
+PostfixExp = { Access | Call }
 
 prefixExp = _{
     Name

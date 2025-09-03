@@ -27,7 +27,7 @@ pub fn run(input: &str) -> Result<(), LuzError> {
         }
         Err(err) => {
             dbg!(err);
-            todo!();
+            panic!();
         }
     }
 }
@@ -51,7 +51,7 @@ pub fn run_file(path: &str) -> Result<(), LuzError> {
         }
         Err(err) => {
             dbg!(err);
-            todo!();
+            panic!();
         }
     }
 }
