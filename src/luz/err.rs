@@ -7,6 +7,10 @@ use super::obj::{LuzObj, LuzType};
 
 #[derive(Debug, Error)]
 pub enum LuzError {
+    #[error("File {0:?} not found.")]
+    LoadFile(String),
+
+
     #[error("Invalid type {wrong:?}. Expected {expected:?}")]
     Type {
         wrong: LuzType,

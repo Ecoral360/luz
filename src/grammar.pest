@@ -11,6 +11,7 @@ RetStat = {
     "return" ~ explist? ~ ";"?
 }
 
+
 stat = _{
     ";"
   | AssignStat
@@ -66,7 +67,7 @@ ElseIfStat = {
     "elseif" ~ exp ~ "then" ~ blockIf
 }
 ElseStat   = {
-    "else" ~ blockEnd
+    "else" ~ (!("end" | "return") ~ stat)* ~ RetStat?
 }
 
 ForRangeStat = {
@@ -145,7 +146,7 @@ Field            = {
   | exp
 }
 
-Name = @{ (LETTER | "_") ~ (LETTER | "_" | ASCII_DIGIT)* }
+Name = @{ !keywords ~ (LETTER | "_") ~ (LETTER | "_" | ASCII_DIGIT)* }
 
 Numeral = @{
     hexNumeral
@@ -208,6 +209,7 @@ binop = _{
   | Caret
   | Pourcent
   | Ampersand
+  | Neq
   | Tilde
   | Pipe
   | ShiftRight
@@ -218,7 +220,6 @@ binop = _{
   | Gt
   | GtEq
   | Eq
-  | Neq
   | And
   | Or
 }
@@ -248,3 +249,28 @@ DotDot      = { ".." }
 And = { "and" }
 Or  = { "or" }
 Not = { "not" }
+
+keywords = {
+      "and"
+    | "break"
+    | "do"
+    | "else"
+    | "elseif"
+    | "end"
+    | "false"
+    | "for"
+    | "function"
+    | "goto"
+    | "if"
+    | "in"
+    | "local"
+    | "nil"
+    | "not"
+    | "or"
+    | "repeat"
+    | "return"
+    | "then"
+    | "true"
+    | "until"
+    | "while"
+}

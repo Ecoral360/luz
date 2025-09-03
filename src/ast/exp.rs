@@ -1,8 +1,12 @@
 use derive_more::derive::From;
+use derive_new::new;
 use pest::{error::Error as PestError, iterators::Pair};
 
 use crate::{
-    luz::{err::LuzError, obj::{FuncParams, LuzObj}},
+    luz::{
+        err::LuzError,
+        obj::{FuncParams, LuzObj},
+    },
     Rule,
 };
 
@@ -24,8 +28,15 @@ pub enum Exp {
         lhs: Box<Exp>,
         rhs: Box<Exp>,
     },
+    Access(ExpAccess),
     FuncDef(),
     FuncCall(FuncCall),
+}
+
+#[derive(Debug, Clone)]
+pub enum ExpAccess {
+    ByName { exp: Box<Exp>, name: String },
+    ByIndex { exp: Box<Exp>, value: Box<Exp> },
 }
 
 #[derive(Debug, Clone)]
@@ -34,7 +45,7 @@ pub struct FuncDef {
     body: Vec<Stat>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, new)]
 pub struct FuncCall {
     func: Box<Exp>,
     method_name: Option<String>,

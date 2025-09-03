@@ -4,14 +4,14 @@ use pest::iterators::Pair;
 use pest::{iterators::Pairs, pratt_parser::PrattParser};
 
 use crate::ast::{
-    AssignStat, Exp, ForInStat, ForRangeStat, FunctionDefStat, IfStat, RepeaStat, ReturnStat, Stat,
-    WhileStat,
+    AssignStat, Exp, ForInStat, ForRangeStat, FuncCall, FunctionDefStat, IfStat, RepeaStat,
+    ReturnStat, Stat, WhileStat,
 };
 use crate::luz::err::LuzError;
 use crate::luz::obj::{FuncParams, FuncParamsBuilder, Numeral};
 use crate::Rule;
 
-use super::{GotoStat, LabelStat};
+use super::{ExpAccess, GotoStat, LabelStat};
 
 lazy_static::lazy_static! {
     static ref PRATT_EXPR_PARSER: PrattParser<Rule> = {
@@ -66,6 +66,34 @@ fn parse_list(pairs: Pairs<Rule>) -> Result<Vec<Exp>, LuzError> {
         .collect::<Result<_, _>>()
 }
 
+fn parse_prefix_exp(prefix_exp: Exp, pair: Pair<Rule>) -> Result<Exp, LuzError> {
+    match pair.as_rule() {
+        Rule::Access => {
+            let mut inner = pair.into_inner();
+            let element = inner.next().expect("Accessor");
+            Ok(match element.as_rule() {
+                Rule::Name => Exp::Access(ExpAccess::ByName {
+                    exp: Box::new(prefix_exp),
+                    name: element.as_str().to_string(),
+                }),
+                Rule::exp => Exp::Access(ExpAccess::ByIndex {
+                    exp: Box::new(prefix_exp),
+                    value: Box::new(parse_expr(element.into_inner())?),
+                }),
+                _ => unreachable!(),
+            })
+        }
+        // Rule::Call => {}
+        _ => todo!("Handle Rule::{:?}", pair.as_rule()),
+    }
+}
+
+fn parse_prefix_exps(exp: Pairs<Rule>) -> Result<Exp, LuzError> {
+    let mut inner = exp;
+    let first_expr = parse_top_expr(inner.next().expect("Caller"));
+    inner.fold(first_expr, |expr, el| parse_prefix_exp(expr?, el))
+}
+
 fn parse_top_expr(pair: Pair<Rule>) -> Result<Exp, LuzError> {
     Ok(match pair.as_rule() {
         Rule::exp | Rule::PrefixExp => parse_expr(pair.into_inner())?,
@@ -86,7 +114,6 @@ fn parse_top_expr(pair: Pair<Rule>) -> Result<Exp, LuzError> {
 
         // Rule::FuncDef => {
         // }
-
         _ => todo!("Rule::{:?}", pair.as_rule()),
     })
 }
@@ -187,6 +214,31 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
                 .unwrap_or_else(|| Ok(vec![]))?;
 
             vec![ReturnStat::new(explist).into()]
+        }
+        Rule::FunctionCall => {
+            let mut inner = pair.into_inner();
+
+            let last_call = inner.next_back().expect("Last Call");
+            let first_expr = parse_top_expr(inner.next().expect("Caller"))?;
+            let func = parse_prefix_exps(inner)?;
+
+            let mut last_call = last_call.into_inner();
+            let mut method_name = None;
+            if last_call
+                .peek()
+                .map(|v| v.as_node_tag().is_some_and(|t| t == "method"))
+                .unwrap_or_default()
+            {
+                method_name = Some(
+                    last_call
+                        .next()
+                        .expect("Should always work because of previous check")
+                        .as_str()
+                        .to_string(),
+                );
+            }
+            let args = todo!();
+            vec![FuncCall::new(func, method_name, args)]
         }
         Rule::AssignStat => {
             let mut inner = pair.into_inner();

@@ -3,6 +3,14 @@ name = "luz"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "luz"
+path = "src/lib.rs"
+
+[[bin]]
+name = "luz_bin"
+path = "src/main.rs"
+
 [dependencies]
 derive-new = "0.7.0"
 derive_builder = "0.20.2"
