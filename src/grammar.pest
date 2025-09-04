@@ -34,7 +34,7 @@ AssignStat      = {
     varlist ~ "=" ~ explist
 }
 LocalAssignStat = {
-    "local" ~ namelist ~ "=" ~ explist
+    "local" ~ namelist ~ ("=" ~ explist)?
 }
 
 Label = {
@@ -92,8 +92,7 @@ varlist = {
     Var ~ ("," ~ Var)*
 }
 
-//Var = { prefixExp ~ (Call* ~ Access+)+ | Name }
-Var = { prefixExp | Name }
+Var = { prefixExp ~ (Call* ~ Access+)+ | Name }
 
 namelist = {
     Name ~ ("," ~ Name)*
@@ -107,7 +106,7 @@ exp     =  { prefix* ~ primary ~ postfix* ~ (infix ~ prefix* ~ primary ~ postfix
 prefix  = _{ unop }
 postfix = _{ PostfixExp }
 infix   = _{ binop }
-primary = _{ Nil | Boolean | Numeral | LiteralString | Ellipse | PrefixExp }
+primary = _{ Nil | Boolean | Numeral | LiteralString | Ellipse | FuncDef | TableConstructor | PrefixExp }
 
 Ellipse = { "..." }
 
@@ -146,7 +145,7 @@ Fieldlist        = {
 Field            = {
     "[" ~ exp ~ "]" ~ "=" ~ exp
   | Name ~ "=" ~ exp
-  | exp
+  | (#value_field = exp)
 }
 
 Name = @{ !keywords ~ (LETTER | "_") ~ (LETTER | "_" | ASCII_DIGIT)* }
@@ -218,10 +217,10 @@ binop = _{
   | ShiftRight
   | ShiftLeft
   | DotDot
-  | Lt
   | LtEq
-  | Gt
   | GtEq
+  | Lt
+  | Gt
   | Eq
   | And
   | Or

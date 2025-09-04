@@ -97,6 +97,6 @@ pub enum AssignStat {
     },
     Local {
         varlist: Vec<String>,
-        explist: Vec<Exp>,
+        explist: Option<Vec<Exp>>,
     },
 }

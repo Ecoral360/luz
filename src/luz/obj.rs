@@ -9,6 +9,7 @@ pub use super::numeral::*;
 pub use super::table::*;
 
 use super::err::LuzError;
+use crate::ast::LogicCmpOp;
 use crate::ast::{Binop, CmpOp, Unop};
 
 #[derive(Debug, Clone, From)]
@@ -249,6 +250,10 @@ impl LuzObj {
             }
         })
     }
+
+    // pub fn apply_logic_cmp(self, logic_cmp_op: LogicCmpOp, rhs: LuzObj) -> Result<Self, LuzError> {
+    //     Ok(match logic_cmp_op)
+    // }
 
     pub fn apply_cmp(self, cmpop: CmpOp, rhs: LuzObj) -> Result<Self, LuzError> {
         Ok(match cmpop {

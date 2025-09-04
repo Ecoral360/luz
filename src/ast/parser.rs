@@ -1,14 +1,14 @@
-use std::fmt::write;
+use std::vec;
 
 use pest::iterators::Pair;
 use pest::{iterators::Pairs, pratt_parser::PrattParser};
 
 use crate::ast::{
-    AssignStat, Exp, ForInStat, ForRangeStat, FuncCall, FunctionDefStat, IfStat, RepeaStat,
-    ReturnStat, Stat, WhileStat,
+    AssignStat, Exp, ExpTableConstructor, ExpTableConstructorField, ForInStat, ForRangeStat,
+    FuncCall, FuncDef, FunctionDefStat, IfStat, RepeaStat, ReturnStat, Stat, WhileStat,
 };
 use crate::luz::err::LuzError;
-use crate::luz::obj::{FuncParams, FuncParamsBuilder, LuzObj, Numeral};
+use crate::luz::obj::{FuncParamsBuilder, LuzObj, Numeral};
 use crate::Rule;
 
 use super::{ExpAccess, GotoStat, LabelStat};
@@ -19,6 +19,7 @@ lazy_static::lazy_static! {
 
         // Precedence is defined lowest to highest
         PrattParser::new()
+            .op(Op::postfix(Rule::PostfixExp))
                         // Logic op
             .op(Op::infix(Rule::Or, Left))
             .op(Op::infix(Rule::And, Left))
@@ -79,27 +80,24 @@ fn parse_prefix_exp(prefix_exp: Exp, pair: Pair<Rule>) -> Result<Exp, LuzError> 
         Rule::Call => {
             let mut inner = pair.into_inner();
 
-            let last_call = inner.next_back().expect("Last Call");
-
-            let mut last_call = last_call.into_inner();
             let mut method_name = None;
-            if last_call
+            if inner
                 .peek()
                 .map(|v| v.as_node_tag().is_some_and(|t| t == "method"))
                 .unwrap_or_default()
             {
                 method_name = Some(
-                    last_call
+                    inner
                         .next()
                         .expect("Should always work because of previous check")
                         .as_str()
                         .to_string(),
                 );
             }
-            let args = if last_call.len() == 0 {
+            let args = if inner.len() == 0 {
                 vec![]
             } else {
-                parse_args(last_call.next().expect("args"))?
+                parse_args(inner.next().expect("args"))?
             };
             Ok(Exp::FuncCall(FuncCall::new(
                 Box::new(prefix_exp),
@@ -112,20 +110,21 @@ fn parse_prefix_exp(prefix_exp: Exp, pair: Pair<Rule>) -> Result<Exp, LuzError> 
 }
 
 fn parse_args(args: Pair<Rule>) -> Result<Vec<Exp>, LuzError> {
-    let mut args_inner = args.into_inner();
-    let mut args_inner = args_inner.next().unwrap().into_inner();
-    if args_inner.len() == 1 {
-        Ok(vec![parse_top_expr(args_inner.next().unwrap())?])
-    } else {
+    let Some(args) = args.into_inner().next() else {
+        return Ok(vec![]);
+    };
+    if matches!(args.as_rule(), Rule::explist) {
+        let args_inner = args.into_inner();
         Ok(args_inner
             .map(|arg| parse_top_expr(arg))
             .collect::<Result<_, _>>()?)
+    } else {
+        Ok(vec![parse_top_expr(args)?])
     }
 }
 
 fn parse_prefix_exps(first_expr: Result<Exp, LuzError>, exp: Pairs<Rule>) -> Result<Exp, LuzError> {
     let inner = exp;
-    // let first_expr = parse_top_expr(inner.next().expect("Caller"));
     inner.fold(first_expr, |expr, el| parse_prefix_exp(expr?, el))
 }
 
@@ -141,18 +140,33 @@ fn parse_top_expr(pair: Pair<Rule>) -> Result<Exp, LuzError> {
 
             parse_expr(pair.into_inner())?
         }
+        Rule::Nil => Exp::Literal(LuzObj::Nil),
+        Rule::Boolean => Exp::Literal(LuzObj::Bool(pair.as_str() == "true")),
         Rule::LiteralString => Exp::Literal(LuzObj::String(pair.as_str().to_string())),
+        Rule::Ellipse => Exp::Ellipsis,
         Rule::Var => {
-            let var = parse_expr(pair.into_inner())?;
-            Exp::Var(Box::new(var))
+            let mut inner = pair.into_inner();
+            let var = parse_top_expr(inner.next().expect("Var"));
+            if inner.len() > 0 {
+                parse_prefix_exps(var, inner)?
+            } else {
+                Exp::Var(Box::new(var?))
+            }
         }
         Rule::Numeral => {
-            if let Ok(int) = pair.as_str().parse::<i64>() {
+            let string = pair.as_str();
+            if let Ok(int) = string.parse::<i64>() {
                 Exp::Literal(Numeral::Int(int).into())
-            } else if let Ok(float) = pair.as_str().parse::<f64>() {
+            } else if let Ok(float) = string.parse::<f64>() {
                 Exp::Literal(Numeral::Float(float).into())
+            } else if string.starts_with("0x") {
+                if let Ok(hex) = i64::from_str_radix(&string[2..], 16) {
+                    Exp::Literal(Numeral::Int(hex).into())
+                } else {
+                    Err(LuzError::NumberParsing(string.to_string()))?
+                }
             } else {
-                todo!()
+                todo!("{:?}", pair.as_str())
             }
         }
         Rule::Name => Exp::Name(pair.as_str().to_string()),
@@ -162,29 +176,92 @@ fn parse_top_expr(pair: Pair<Rule>) -> Result<Exp, LuzError> {
             todo!()
         }
 
-        // Rule::FuncDef => {
-        // }
-        _ => todo!("Rule::{:?}", pair.as_rule()),
+        Rule::TableConstructor => {
+            let fields = pair.into_inner().next();
+            if let Some(fields) = fields {
+                let mut arr_fields = vec![];
+                let mut obj_fields = vec![];
+                let mut fields_inner = fields.into_inner();
+                let last_field = fields_inner.next_back();
+                for field in fields_inner {
+                    parse_table_field(&mut arr_fields, &mut obj_fields, field)?;
+                }
+
+                match last_field {
+                    Some(last_field_val)
+                        if matches!(last_field_val.as_node_tag(), Some("value_field")) =>
+                    {
+                        Exp::TableConstructor(ExpTableConstructor::new(
+                            arr_fields,
+                            obj_fields,
+                            Some(Box::new(parse_top_expr(last_field_val)?)),
+                        ))
+                    }
+                    _ => Exp::TableConstructor(ExpTableConstructor::new(vec![], vec![], None)),
+                }
+            } else {
+                Exp::TableConstructor(ExpTableConstructor::new(vec![], vec![], None))
+            }
+        }
+
+        Rule::FuncDef => {
+            let mut inner = pair.into_inner();
+
+            let mut signature = inner.next().expect("Function param & body").into_inner();
+            let next = signature.peek().expect("Function body has something");
+            let mut params = FuncParamsBuilder::default();
+
+            if let Rule::parlist = next.as_rule() {
+                let mut parlist = signature.next().unwrap().into_inner();
+                let last = parlist.next_back().unwrap();
+                let mut fixed = parse_namelist(parlist);
+                if last.as_rule() == Rule::Ellipse {
+                    params.is_vararg(true);
+                } else {
+                    fixed.push(last.as_str().to_string());
+                }
+                params.fixed(fixed);
+            }
+
+            let body = parse_stmts(&mut signature.next().expect("Function body").into_inner())?;
+
+            Exp::FuncDef(FuncDef::new(params.build().unwrap(), body))
+        }
+        _ => todo!("Top Expr Rule::{:?}", pair.as_rule()),
     })
+}
+
+fn parse_table_field(
+    arr_fields: &mut Vec<Exp>,
+    obj_fields: &mut Vec<ExpTableConstructorField>,
+    field: Pair<Rule>,
+) -> Result<(), LuzError> {
+    let mut field_inner = field.into_inner();
+    let field_inner_first = field_inner.peek().expect("Field key/value");
+
+    let exp = parse_top_expr(field_inner.next().expect("Field key/value"))?;
+
+    if matches!(field_inner_first.as_node_tag(), Some("value_field")) {
+        arr_fields.push(exp);
+    } else {
+        let val = parse_top_expr(field_inner.next().expect("Field Value"))?;
+        obj_fields.push(ExpTableConstructorField::new(Box::new(exp), Box::new(val)));
+    }
+    Ok(())
 }
 
 fn parse_expr(pairs: Pairs<Rule>) -> Result<Exp, LuzError> {
     PRATT_EXPR_PARSER
         .map_primary(|primary| parse_top_expr(primary))
         .map_prefix(|op, rhs| match op.as_rule() {
-            Rule::Neg | Rule::Not | Rule::Tilde => {
+            Rule::Neg | Rule::Not | Rule::Tilde | Rule::Pound => {
                 let rhs = rhs?;
                 rhs.do_unop(op.try_into()?)
             }
             _ => todo!(),
         })
         .map_postfix(|lhs, op| match op.as_rule() {
-            Rule::PostfixExp => {
-                let lhs = lhs?;
-                let value = parse_expr(op.into_inner())?;
-
-                Ok(Exp::Access(ExpAccess::new(Box::new(lhs), Box::new(value))))
-            }
+            Rule::PostfixExp => parse_prefix_exps(lhs, op.into_inner()),
             _ => todo!(),
         })
         .map_infix(|lhs, op, rhs| match op.as_rule() {
@@ -195,6 +272,7 @@ fn parse_expr(pairs: Pairs<Rule>) -> Result<Exp, LuzError> {
             | Rule::DoubleSlash
             | Rule::Pourcent
             | Rule::Caret
+            | Rule::DotDot
             | Rule::Ampersand
             | Rule::ShiftRight
             | Rule::ShiftLeft
@@ -213,7 +291,14 @@ fn parse_expr(pairs: Pairs<Rule>) -> Result<Exp, LuzError> {
                 lhs.do_cmp(op.try_into()?, rhs)
             }
 
-            _ => todo!(),
+            Rule::And | Rule::Or => {
+                let lhs = lhs?;
+                let rhs = rhs?;
+
+                lhs.do_logic_cmp(op.try_into()?, rhs)
+            }
+
+            op => todo!("Expr {:?}", op),
         })
         .parse(pairs)
 }
@@ -259,9 +344,14 @@ pub fn parse_func_call(pair: Pair<Rule>) -> Result<FuncCall, LuzError> {
     Ok(FuncCall::new(Box::new(func), method_name, args))
 }
 
+fn invert<T, E>(x: Option<Result<T, E>>) -> Result<Option<T>, E> {
+    x.map_or(Ok(None), |v| v.map(Some))
+}
+
 pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
     Ok(match pair.as_rule() {
         Rule::Chunk | Rule::block => parse_stmts(&mut pair.into_inner())?,
+        Rule::DoStat => parse_stmt(pair.into_inner().next().expect("Do body"))?,
         Rule::BreakStat => vec![Stat::Break],
         Rule::GotoStat => vec![GotoStat::new(
             pair.into_inner()
@@ -283,12 +373,7 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
             let mut inner = pair.into_inner();
             let varlist =
                 parse_namelist(inner.next().expect("Variables in assignment").into_inner());
-            let explist = parse_list(
-                inner
-                    .next()
-                    .expect("Expressions in assignment")
-                    .into_inner(),
-            )?;
+            let explist = invert(inner.next().map(|explist| parse_list(explist.into_inner())))?;
 
             vec![AssignStat::new_local(varlist, explist).into()]
         }
@@ -458,12 +543,7 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
                         elseif_brs.push((elseif_cond, elseif_body));
                     }
                     Rule::ElseStat => {
-                        else_br = Some(
-                            pair.into_inner()
-                                .next()
-                                .map(|e| parse_stmts(&mut e.into_inner()))
-                                .unwrap_or_else(|| Ok(vec![]))?,
-                        );
+                        else_br = Some(parse_stmts(&mut pair.into_inner())?);
                     }
                     _ => unreachable!(),
                 }
@@ -474,6 +554,6 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
         Rule::EOI => {
             vec![]
         }
-        _ => todo!("Rule::{:?}", pair.as_rule()),
+        _ => todo!("Statement Rule::{:?} ({:?})", pair.as_rule(), pair.as_str()),
     })
 }

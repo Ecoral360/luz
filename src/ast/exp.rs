@@ -15,6 +15,7 @@ use super::Stat;
 #[derive(Debug, Clone, From)]
 pub enum Exp {
     Literal(LuzObj),
+    Ellipsis,
     Name(String),
     Var(Box<Exp>),
     Unop(Unop, Box<Exp>),
@@ -23,14 +24,20 @@ pub enum Exp {
         lhs: Box<Exp>,
         rhs: Box<Exp>,
     },
-    Cmpop {
+    CmpOp {
         op: CmpOp,
         lhs: Box<Exp>,
         rhs: Box<Exp>,
     },
+    LogicCmpOp {
+        op: LogicCmpOp,
+        lhs: Box<Exp>,
+        rhs: Box<Exp>,
+    },
     Access(ExpAccess),
-    FuncDef(),
+    FuncDef(FuncDef),
     FuncCall(FuncCall),
+    TableConstructor(ExpTableConstructor),
 }
 
 #[derive(Debug, Clone, new)]
@@ -39,7 +46,7 @@ pub struct ExpAccess {
     value: Box<Exp>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, new)]
 pub struct FuncDef {
     params: FuncParams,
     body: Vec<Stat>,
@@ -50,6 +57,19 @@ pub struct FuncCall {
     func: Box<Exp>,
     method_name: Option<String>,
     args: Vec<Exp>,
+}
+
+#[derive(Debug, Clone, new)]
+pub struct ExpTableConstructor {
+    arr_fields: Vec<Exp>,
+    obj_fields: Vec<ExpTableConstructorField>,
+    last_exp: Option<Box<Exp>>,
+}
+
+#[derive(Debug, Clone, new)]
+pub struct ExpTableConstructorField {
+    key: Box<Exp>,
+    val: Box<Exp>,
 }
 
 impl Exp {
@@ -74,9 +94,19 @@ impl Exp {
     pub fn do_cmp(self, cmpop: CmpOp, rhs: Exp) -> Result<Self, LuzError> {
         Ok(match (self, rhs) {
             (Self::Literal(obj), Self::Literal(obj2)) => obj.apply_cmp(cmpop, obj2)?.into(),
-            (s, rhs) => Self::Cmpop {
+            (s, rhs) => Self::CmpOp {
                 lhs: Box::new(s),
                 op: cmpop,
+                rhs: Box::new(rhs),
+            },
+        })
+    }
+
+    pub fn do_logic_cmp(self, logic_cmp_op: LogicCmpOp, rhs: Exp) -> Result<Self, LuzError> {
+        Ok(match (self, rhs) {
+            (s, rhs) => Self::LogicCmpOp {
+                lhs: Box::new(s),
+                op: logic_cmp_op,
                 rhs: Box::new(rhs),
             },
         })
@@ -138,6 +168,31 @@ impl TryFrom<Pair<'_, Rule>> for Binop {
                         Rule::Tilde,
                         Rule::Pipe,
                     ],
+                    negatives: vec![rule],
+                },
+                value.as_span(),
+            ))?,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum LogicCmpOp {
+    And,
+    Or,
+}
+
+impl TryFrom<Pair<'_, Rule>> for LogicCmpOp {
+    type Error = PestError<Rule>;
+
+    fn try_from(value: Pair<Rule>) -> Result<Self, Self::Error> {
+        Ok(match value.as_rule() {
+            Rule::And => Self::And,
+            Rule::Or => Self::Or,
+
+            rule => Err(PestError::new_from_span(
+                pest::error::ErrorVariant::ParsingError {
+                    positives: vec![Rule::And, Rule::Or],
                     negatives: vec![rule],
                 },
                 value.as_span(),
