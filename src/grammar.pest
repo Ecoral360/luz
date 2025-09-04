@@ -11,7 +11,6 @@ RetStat = {
     "return" ~ explist? ~ ";"?
 }
 
-
 stat = _{
     ";"
   | AssignStat
@@ -34,7 +33,14 @@ AssignStat      = {
     varlist ~ "=" ~ explist
 }
 LocalAssignStat = {
-    "local" ~ namelist ~ ("=" ~ explist)?
+    "local" ~ nameattriblist ~ ("=" ~ explist)?
+}
+
+nameattriblist = {
+    Name ~ (#attrib = Attrib)? ~ ("," ~ Name ~ (#attrib = Attrib)?)*
+}
+Attrib         = {
+    "<" ~ Name ~ ">"
 }
 
 Label = {
@@ -110,7 +116,7 @@ primary = _{ Nil | Boolean | Numeral | LiteralString | Ellipse | FuncDef | Table
 
 Ellipse = { "..." }
 
-PrefixExp = { prefixExp }
+PrefixExp  = { prefixExp }
 PostfixExp = { Access | Call }
 
 prefixExp = _{
@@ -148,7 +154,7 @@ Field            = {
   | (#value_field = exp)
 }
 
-Name = @{ !keywords ~ (LETTER | "_") ~ (LETTER | "_" | ASCII_DIGIT)* }
+Name = @{ !(keywords ~ WHITESPACE) ~ (LETTER | "_") ~ (LETTER | "_" | ASCII_DIGIT)* }
 
 Numeral = @{
     hexNumeral
@@ -252,27 +258,27 @@ And = { "and" }
 Or  = { "or" }
 Not = { "not" }
 
-keywords = {
-      "and"
-    | "break"
-    | "do"
-    | "else"
-    | "elseif"
-    | "end"
-    | "false"
-    | "for"
-    | "function"
-    | "goto"
-    | "if"
-    | "in"
-    | "local"
-    | "nil"
-    | "not"
-    | "or"
-    | "repeat"
-    | "return"
-    | "then"
-    | "true"
-    | "until"
-    | "while"
+keywords = @{
+    "and"
+  | "break"
+  | "do"
+  | "else"
+  | "elseif"
+  | "end"
+  | "false"
+  | "for"
+  | "function"
+  | "goto"
+  | "if"
+  | "in"
+  | "local"
+  | "nil"
+  | "not"
+  | "or"
+  | "repeat"
+  | "return"
+  | "then"
+  | "true"
+  | "until"
+  | "while"
 }

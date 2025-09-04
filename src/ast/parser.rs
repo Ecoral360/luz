@@ -4,8 +4,9 @@ use pest::iterators::Pair;
 use pest::{iterators::Pairs, pratt_parser::PrattParser};
 
 use crate::ast::{
-    AssignStat, Exp, ExpTableConstructor, ExpTableConstructorField, ForInStat, ForRangeStat,
-    FuncCall, FuncDef, FunctionDefStat, IfStat, RepeaStat, ReturnStat, Stat, WhileStat,
+    AssignStat, Attrib, Exp, ExpTableConstructor, ExpTableConstructorField, ForInStat,
+    ForRangeStat, FuncCall, FuncDef, FunctionDefStat, IfStat, RepeaStat, ReturnStat, Stat,
+    WhileStat,
 };
 use crate::luz::err::LuzError;
 use crate::luz::obj::{FuncParamsBuilder, LuzObj, Numeral};
@@ -307,6 +308,18 @@ pub fn parse_namelist(pairs: Pairs<Rule>) -> Vec<String> {
     pairs.map(|e| e.as_str().to_string()).collect::<Vec<_>>()
 }
 
+pub fn parse_nameattriblist(pairs: Pairs<Rule>) -> Result<Vec<(String, Option<Attrib>)>, LuzError> {
+    let mut names: Vec<(String, Option<Attrib>)> = vec![];
+    for pair in pairs {
+        if matches!(pair.as_node_tag(), Some("attrib")) {
+            names.last_mut().unwrap().1.replace(pair.as_str().parse()?);
+        } else {
+            names.push((pair.as_str().to_string(), None));
+        }
+    }
+    Ok(names)
+}
+
 pub fn parse_stmts(pairs: &mut Pairs<Rule>) -> Result<Vec<Stat>, LuzError> {
     pairs.try_fold(vec![], |mut acc, pair| {
         acc.extend(parse_stmt(pair)?);
@@ -372,7 +385,7 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
         Rule::LocalAssignStat => {
             let mut inner = pair.into_inner();
             let varlist =
-                parse_namelist(inner.next().expect("Variables in assignment").into_inner());
+                parse_nameattriblist(inner.next().expect("Variables in assignment").into_inner())?;
             let explist = invert(inner.next().map(|explist| parse_list(explist.into_inner())))?;
 
             vec![AssignStat::new_local(varlist, explist).into()]

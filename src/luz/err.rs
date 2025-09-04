@@ -10,6 +10,8 @@ pub enum LuzError {
     #[error("File {0:?} not found.")]
     LoadFile(String),
 
+    #[error("Invalid attribute {0:?}. Expected 'const' or 'close'")]
+    InvalidAttribute(String),
 
     #[error("Invalid type {wrong:?}. Expected {expected:?}")]
     Type {

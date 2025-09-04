@@ -1,7 +1,9 @@
+use std::str::FromStr;
+
 use derive_more::derive::From;
 use derive_new::new;
 
-use crate::luz::obj::FuncParams;
+use crate::luz::{err::LuzError, obj::FuncParams};
 
 use super::{Exp, FuncCall};
 
@@ -89,6 +91,24 @@ pub struct ForInStat {
     block: Vec<Stat>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum Attrib {
+    Const,
+    Close,
+}
+
+impl FromStr for Attrib {
+    type Err = LuzError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s[1..s.len() - 1].trim() {
+            "close" => Ok(Self::Close),
+            "const" => Ok(Self::Const),
+            _ => Err(LuzError::InvalidAttribute(s.to_string())),
+        }
+    }
+}
+
 #[derive(Debug, Clone, new)]
 pub enum AssignStat {
     Normal {
@@ -96,7 +116,7 @@ pub enum AssignStat {
         explist: Vec<Exp>,
     },
     Local {
-        varlist: Vec<String>,
+        varlist: Vec<(String, Option<Attrib>)>,
         explist: Option<Vec<Exp>>,
     },
 }
