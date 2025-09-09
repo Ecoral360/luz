@@ -217,13 +217,13 @@ impl Compiler {
         self.scope.borrow().print_instructions();
     }
 
-    fn handle_exp(&mut self, exp: &Exp) -> Result<ExpEval, LuzError> {
+    fn handle_exp(&mut self, exp: &Exp, supports_immidiate: bool) -> Result<ExpEval, LuzError> {
         match exp {
             Exp::Literal(lit) => match lit {
-                LuzObj::Numeral(Numeral::Int(i)) if *i >= 0 && *i <= 255 => {
+                LuzObj::Numeral(Numeral::Int(i)) if supports_immidiate && (0..128).contains(i) => {
                     Ok(ExpEval::InImmediate(*i as u8))
                 }
-                _ => Ok(ExpEval::InConstant(self.get_or_add_const(lit))),
+                _ => Ok(ExpEval::InConstant(self.get_or_add_const(lit) as u8)),
             },
             Exp::Name(name) => {
                 let src = self.find_reg(name).ok_or(LuzError::CompileError(format!(
@@ -243,7 +243,7 @@ impl Compiler {
 enum ExpEval {
     InImmediate(u8),
     InRegister(u8),
-    InConstant(u32),
+    InConstant(u8),
 }
 
 #[allow(unused)]
@@ -273,10 +273,6 @@ impl Compiler {
     fn visit_return(&mut self, stat: &ReturnStat) -> Result<(), LuzError> {
         let start = self.scope().regs.len();
         let size = stat.explist.len();
-        if size == 0 {
-            self.push_inst(Instruction::op_return(0, false, 1));
-            return Ok(());
-        }
         for exp in stat.explist.iter() {
             self.push_register(None);
             self.visit_exp(exp);
@@ -290,44 +286,89 @@ impl Compiler {
             unreachable!()
         };
 
+        let lhs_addr = self.handle_exp(lhs, matches!(op, Binop::Add | Binop::Sub))?;
+        let rhs_addr = self.handle_exp(rhs, matches!(op, Binop::Add | Binop::Sub))?;
+
+        let is_b_const = matches!(rhs_addr, ExpEval::InConstant(_));
+        let is_c_const = matches!(lhs_addr, ExpEval::InConstant(_));
+        let is_c_imm = matches!(rhs_addr, ExpEval::InImmediate(_));
+
+        let lhs_addr = match lhs_addr {
+            ExpEval::InImmediate(i) => i,
+            ExpEval::InRegister(r) => r,
+            ExpEval::InConstant(c) => c,
+        };
+        let rhs_addr = match rhs_addr {
+            ExpEval::InImmediate(i) => i,
+            ExpEval::InRegister(r) => r,
+            ExpEval::InConstant(c) => c,
+        };
+
         match op {
             Binop::Concat => todo!(),
             Binop::Add => {
-                let lhs_addr = self.handle_exp(lhs)?;
-                let rhs_addr = self.handle_exp(rhs)?;
-                match (lhs_addr, rhs_addr) {
-                    (ExpEval::InRegister(lhs_addr), ExpEval::InRegister(rhs_addr)) => {
-                        self.push_inst(Instruction::op_add(
-                            self.target_register_or_err()?,
-                            lhs_addr,
-                            false,
-                            rhs_addr,
-                        ));
-                    }
-                    (ExpEval::InRegister(lhs_addr), ExpEval::InImmediate(rhs_val)) => {
-                        dbg!(rhs_val);
-                        self.push_inst(Instruction::op_addi(
-                            self.target_register_or_err()?,
-                            lhs_addr,
-                            false,
-                            rhs_val,
-                        ));
-                    }
-                    (ExpEval::InRegister(lhs_addr), ExpEval::InConstant(rhs_addr)) => {
-                        self.push_inst(Instruction::op_addk(
-                            self.target_register_or_err()?,
-                            lhs_addr,
-                            true,
-                            rhs_addr as u8,
-                        ));
-                    }
-                    _ => todo!(),
+                if is_c_imm {
+                    self.push_inst(Instruction::op_addi(
+                        self.target_register_or_err()?,
+                        lhs_addr,
+                        false,
+                        rhs_addr + 128,
+                    ));
+                } else {
+                    self.push_inst(Instruction::op_add(
+                        self.target_register_or_err()?,
+                        lhs_addr,
+                        is_b_const,
+                        rhs_addr,
+                        is_c_const,
+                    ));
                 }
             }
-            Binop::Sub => todo!(),
-            Binop::Mul => todo!(),
-            Binop::FloatDiv => todo!(),
-            Binop::FloorDiv => todo!(),
+            Binop::Sub => {
+                if is_c_imm {
+                    self.push_inst(Instruction::op_addi(
+                        self.target_register_or_err()?,
+                        lhs_addr,
+                        false,
+                        (-(rhs_addr as i32) + 128) as u8,
+                    ));
+                } else {
+                    self.push_inst(Instruction::op_sub(
+                        self.target_register_or_err()?,
+                        lhs_addr,
+                        is_b_const,
+                        rhs_addr,
+                        is_c_const,
+                    ));
+                }
+            }
+            Binop::Mul => {
+                self.push_inst(Instruction::op_mul(
+                    self.target_register_or_err()?,
+                    lhs_addr,
+                    is_b_const,
+                    rhs_addr,
+                    is_c_const,
+                ));
+            }
+            Binop::FloatDiv => {
+                self.push_inst(Instruction::op_div(
+                    self.target_register_or_err()?,
+                    lhs_addr,
+                    is_b_const,
+                    rhs_addr,
+                    is_c_const,
+                ));
+            }
+            Binop::FloorDiv => {
+                self.push_inst(Instruction::op_idiv(
+                    self.target_register_or_err()?,
+                    lhs_addr,
+                    is_b_const,
+                    rhs_addr,
+                    is_c_const,
+                ));
+            }
             Binop::Mod => todo!(),
             Binop::Exp => todo!(),
             Binop::BitAnd => todo!(),

@@ -10,7 +10,10 @@ use crate::{
         opcode::LuaOpCode,
         Register, Scope,
     },
-    luz::{err::LuzError, obj::{LuzObj, Numeral}},
+    luz::{
+        err::LuzError,
+        obj::{LuzObj, Numeral},
+    },
 };
 
 #[allow(unused)]
@@ -44,48 +47,92 @@ impl Runner {
         Ok(rets)
     }
 
+    fn get_reg_val_or_const(&self, b: u8, is_const: bool) -> Result<LuzObj, LuzError> {
+        if is_const {
+            self.get_const_val(b)
+        } else {
+            self.get_reg_val(b)
+        }
+    }
+
+    fn get_reg_val(&self, reg: u8) -> Result<LuzObj, LuzError> {
+        let val = self.scope.borrow_mut().regs()[reg as usize]
+            .val
+            .as_ref()
+            .expect("A value")
+            .clone();
+        Ok(val)
+    }
+
+    fn get_const_val(&self, idx: u8) -> Result<LuzObj, LuzError> {
+        let val = self.scope.borrow_mut().constants()[idx as usize].clone();
+        Ok(val)
+    }
+
     fn run_instruction(
         &mut self,
         instruction: &Instruction,
     ) -> Result<Option<Vec<LuzObj>>, LuzError> {
         match instruction {
             Instruction::iABC(i_abc) => match i_abc.op {
-                LuaOpCode::OP_ADD => self.run_add(i_abc)?,
-                LuaOpCode::OP_ADDI => {
-                    let iABC { c, b, k, a, .. } = *i_abc;
+                LuaOpCode::OP_ADD | LuaOpCode::OP_ADDK => {
+                    let iABC { c, b, k, a, op } = *i_abc;
 
-                    let lhs = if k {
-                        self.scope.borrow_mut().constants()[b as usize].clone()
-                    } else {
-                        self.scope.borrow_mut().regs()[b as usize]
-                            .val
-                            .as_ref()
-                            .expect("A value")
-                            .clone()
-                    };
-
-                    let c = from_excess_of_bx(c as u32);
-
-                    let rhs = LuzObj::Numeral(Numeral::Int(c as i64));
+                    let lhs = self.get_reg_val_or_const(b, k)?;
+                    let rhs = self.get_reg_val_or_const(c, op == LuaOpCode::OP_ADDK)?;
 
                     self.scope
                         .borrow_mut()
                         .set_reg_val(a, lhs.apply_binop(Binop::Add, rhs)?);
                 }
-                LuaOpCode::OP_ADDK => {
+                LuaOpCode::OP_SUB | LuaOpCode::OP_SUBK => {
+                    let iABC { c, b, k, a, op } = *i_abc;
+
+                    let lhs = self.get_reg_val_or_const(b, k)?;
+                    let rhs = self.get_reg_val_or_const(c, op == LuaOpCode::OP_SUBK)?;
+
+                    self.scope
+                        .borrow_mut()
+                        .set_reg_val(a, lhs.apply_binop(Binop::Sub, rhs)?);
+                }
+                LuaOpCode::OP_MUL | LuaOpCode::OP_MULK => {
+                    let iABC { c, b, k, a, op } = *i_abc;
+
+                    let lhs = self.get_reg_val_or_const(b, k)?;
+                    let rhs = self.get_reg_val_or_const(c, op == LuaOpCode::OP_MULK)?;
+
+                    self.scope
+                        .borrow_mut()
+                        .set_reg_val(a, lhs.apply_binop(Binop::Mul, rhs)?);
+                }
+                LuaOpCode::OP_DIV | LuaOpCode::OP_DIVK => {
+                    let iABC { c, b, k, a, op } = *i_abc;
+
+                    let lhs = self.get_reg_val_or_const(b, k)?;
+                    let rhs = self.get_reg_val_or_const(c, op == LuaOpCode::OP_DIVK)?;
+
+                    self.scope
+                        .borrow_mut()
+                        .set_reg_val(a, lhs.apply_binop(Binop::FloatDiv, rhs)?);
+                }
+                LuaOpCode::OP_IDIV | LuaOpCode::OP_IDIVK => {
+                    let iABC { c, b, k, a, op } = *i_abc;
+
+                    let lhs = self.get_reg_val_or_const(b, k)?;
+                    let rhs = self.get_reg_val_or_const(c, op == LuaOpCode::OP_IDIVK)?;
+
+                    self.scope
+                        .borrow_mut()
+                        .set_reg_val(a, lhs.apply_binop(Binop::FloorDiv, rhs)?);
+                }
+                LuaOpCode::OP_ADDI => {
                     let iABC { c, b, k, a, .. } = *i_abc;
 
-                    let lhs = if k {
-                        self.scope.borrow_mut().constants()[b as usize].clone()
-                    } else {
-                        self.scope.borrow_mut().regs()[b as usize]
-                            .val
-                            .as_ref()
-                            .expect("A value")
-                            .clone()
-                    };
+                    let lhs = self.get_reg_val_or_const(b, k)?;
 
-                    let rhs = self.scope.borrow_mut().constants()[c as usize].clone();
+                    let c = (c as i64) - 128; // from excess-128
+
+                    let rhs = LuzObj::Numeral(Numeral::Int(c));
 
                     self.scope
                         .borrow_mut()
@@ -93,23 +140,14 @@ impl Runner {
                 }
                 LuaOpCode::OP_MOVE => {
                     let iABC { a, b, .. } = *i_abc;
-                    let val = self.scope.borrow_mut().regs()[b as usize]
-                        .val
-                        .as_ref()
-                        .expect("A value")
-                        .clone();
+                    let val = self.get_reg_val(b)?;
                     self.scope.borrow_mut().set_reg_val(a, val);
                 }
                 LuaOpCode::OP_RETURN => {
                     let iABC { a, b, .. } = *i_abc;
                     let mut rets = vec![];
                     for i in 0..b - 1 {
-                        let val = self.scope.borrow_mut().regs()[(a + i) as usize]
-                            .val
-                            .as_ref()
-                            .expect("A value")
-                            .clone();
-                        rets.push(val);
+                        rets.push(self.get_reg_val(a + i)?);
                     }
                     return Ok(Some(rets));
                 }
@@ -120,7 +158,9 @@ impl Runner {
                 LuaOpCode::OP_LOADI => {
                     let iABx { b, a, .. } = *i_abx;
                     let imm = from_excess_of_bx(b);
-                    self.scope.borrow_mut().set_reg_val(a, LuzObj::Numeral(Numeral::Int(imm as i64)));
+                    self.scope
+                        .borrow_mut()
+                        .set_reg_val(a, LuzObj::Numeral(Numeral::Int(imm as i64)));
                 }
                 op => todo!("iABx {:?}", op),
             },
@@ -168,4 +208,3 @@ fn from_excess_of_bx(val: u32) -> i32 {
     // (val as i32) - 131071
     val as i32
 }
-

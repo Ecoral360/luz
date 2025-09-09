@@ -17,4 +17,4 @@
 local x = 10
 local y = x + 2
 
-return x + 1, y + x
+return x + 1, y * x + 2 - 1

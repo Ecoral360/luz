@@ -22,16 +22,83 @@ impl Display for Instruction {
 }
 
 impl Instruction {
-    pub fn op_add(a: u8, b: u8, is_b_const: bool, c: u8) -> Instruction {
-        iABC::new(c, b, is_b_const, a, LuaOpCode::OP_ADD).into()
-    }
-
     pub fn op_addi(a: u8, b: u8, is_b_const: bool, c: u8) -> Instruction {
         iABC::new(c, b, is_b_const, a, LuaOpCode::OP_ADDI).into()
     }
 
-    pub fn op_addk(a: u8, b: u8, is_b_const: bool, c: u8) -> Instruction {
-        iABC::new(c, b, is_b_const, a, LuaOpCode::OP_ADDK).into()
+    pub fn op_add(a: u8, b: u8, is_b_const: bool, c: u8, is_c_const: bool) -> Instruction {
+        iABC::new(
+            c,
+            b,
+            is_b_const,
+            a,
+            if is_c_const {
+                LuaOpCode::OP_ADDK
+            } else {
+                LuaOpCode::OP_ADD
+            },
+        )
+        .into()
+    }
+
+    pub fn op_sub(a: u8, b: u8, is_b_const: bool, c: u8, is_c_const: bool) -> Instruction {
+        iABC::new(
+            c,
+            b,
+            is_b_const,
+            a,
+            if is_c_const {
+                LuaOpCode::OP_SUB
+            } else {
+                LuaOpCode::OP_SUBK
+            },
+        )
+        .into()
+    }
+
+    pub fn op_mul(a: u8, b: u8, is_b_const: bool, c: u8, is_c_const: bool) -> Instruction {
+        iABC::new(
+            c,
+            b,
+            is_b_const,
+            a,
+            if is_c_const {
+                LuaOpCode::OP_MULK
+            } else {
+                LuaOpCode::OP_MUL
+            },
+        )
+        .into()
+    }
+
+    pub fn op_div(a: u8, b: u8, is_b_const: bool, c: u8, is_c_const: bool) -> Instruction {
+        iABC::new(
+            c,
+            b,
+            is_b_const,
+            a,
+            if is_c_const {
+                LuaOpCode::OP_DIVK
+            } else {
+                LuaOpCode::OP_DIV
+            },
+        )
+        .into()
+    }
+
+    pub fn op_idiv(a: u8, b: u8, is_b_const: bool, c: u8, is_c_const: bool) -> Instruction {
+        iABC::new(
+            c,
+            b,
+            is_b_const,
+            a,
+            if is_c_const {
+                LuaOpCode::OP_IDIV
+            } else {
+                LuaOpCode::OP_IDIVK
+            },
+        )
+        .into()
     }
 
     pub fn op_return(reg: u8, is_const: bool, b: u8) -> Instruction {
@@ -58,7 +125,6 @@ fn excess_of_bx(val: i32) -> u32 {
     // (val + 131071) as u32
     val as u32
 }
-
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, new)]
@@ -109,7 +175,11 @@ impl Display for iABC {
             LuaOpCode::OP_ADD if self.k => -(self.b as i32 + 1),
             _ => self.b as i32,
         };
-        write!(f, "{:?} {} {} {}", self.op, self.a, b, self.c)
+        let c = match self.op {
+            LuaOpCode::OP_ADDI => self.c as i32 - 128,
+            _ => self.c as i32,
+        };
+        write!(f, "{:?} {} {} {}", self.op, self.a, b, c)
     }
 }
 
