@@ -1,60 +1,166 @@
-use std::collections::HashMap;
+use std::{
+    cell::{Ref, RefCell, RefMut},
+    collections::HashMap,
+    rc::Rc,
+};
 
 use derive_new::new;
 
 use crate::{
     ast::{AssignStat, Binop, Exp, ReturnStat, Stat},
     compiler::{instructions::Instruction, visitor::Visitor},
-    luz::{err::LuzError, obj::LuzObj},
+    luz::{
+        err::LuzError,
+        obj::{LuzObj, Numeral},
+    },
 };
 
 pub mod instructions;
 pub mod opcode;
 pub mod visitor;
 
+type ScopeLink = Rc<RefCell<Scope>>;
+
 #[allow(unused)]
 #[derive(Debug)]
 pub struct Compiler {
-    scopes: HashMap<String, Scope>,
-    scopes_stack: Vec<String>,
+    scope: ScopeLink,
 }
 impl Default for Compiler {
     fn default() -> Self {
-        let mut scopes = HashMap::new();
-        scopes.insert("main".to_string(), Scope::default());
-
         Self {
-            scopes,
-            scopes_stack: vec![String::from("main")],
+            scope: Rc::new(RefCell::new(Scope::new(String::from("main"), None))),
         }
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug, new)]
 pub struct Scope {
+    name: String,
+    parent: Option<ScopeLink>,
+
+    #[new(default)]
     instructions: Vec<Instruction>,
+    #[new(default)]
     constants: Vec<LuzObj>,
+    #[new(default)]
     regs: Vec<Register>,
+
+    #[new(default)]
+    upvalues: Vec<Upvalue>,
+
+    #[new(default)]
+    sub_scopes: Vec<ScopeLink>,
+}
+
+impl Scope {
+    pub fn instructions(&self) -> &Vec<Instruction> {
+        &self.instructions
+    }
+
+    pub fn constants(&self) -> &Vec<LuzObj> {
+        &self.constants
+    }
+
+    pub fn regs(&self) -> &Vec<Register> {
+        &self.regs
+    }
+
+    pub fn upvalues(&self) -> &Vec<Upvalue> {
+        &self.upvalues
+    }
+
+    pub fn set_reg_val(&mut self, addr: u8, val: LuzObj) {
+        self.regs[addr as usize].val = Some(val);
+    }
+
+    pub fn print_instructions(&self) {
+        if self.name == "main" {
+            println!("main");
+        } else {
+            println!("function {:?}", self.name);
+        }
+        for (i, inst) in self.instructions.iter().enumerate() {
+            println!("[{}] {}", i + 1, inst);
+        }
+        println!("---- Constants:");
+        for (i, inst) in self.constants.iter().enumerate() {
+            println!("{} {:?}", i + 1, inst);
+        }
+
+        println!("---- Locals:");
+        for (i, inst) in self.regs.iter().enumerate() {
+            if let Some(name) = &inst.name {
+                println!("{} {}", i, name);
+            }
+        }
+
+        println!("---- Upvalues:");
+        for (i, inst) in self.upvalues.iter().enumerate() {
+            if let Some(name) = &inst.name {
+                println!("{} {} {} {}", i, name, inst.in_stack, inst.parent_addr);
+            }
+        }
+
+        println!();
+        for scope in &self.sub_scopes {
+            scope.borrow().print_instructions();
+        }
+    }
+
+    pub fn sub_scopes(&self) -> &[Rc<RefCell<Scope>>] {
+        &self.sub_scopes
+    }
 }
 
 #[derive(Debug, new, Clone)]
 pub struct Register {
     pub name: Option<String>,
     pub addr: u8,
+    #[new(default)]
+    pub val: Option<LuzObj>,
+}
+#[derive(Debug, new, Clone)]
+pub struct Upvalue {
+    pub name: Option<String>,
+    pub addr: u8,
+    pub parent_addr: u8,
+    pub in_stack: bool,
 }
 
 #[allow(unused)]
 impl Compiler {
-    fn scope(&self) -> &Scope {
-        self.scopes
-            .get(self.scopes_stack.last().expect("Scope in stack"))
-            .expect("Scope in scopes")
+    pub fn scope_clone(&self) -> ScopeLink {
+        Rc::clone(&self.scope)
     }
 
-    fn scope_mut(&mut self) -> &mut Scope {
-        self.scopes
-            .get_mut(self.scopes_stack.last().expect("Scope in stack"))
-            .expect("Scope in scopes")
+    fn scope(&self) -> Ref<Scope> {
+        self.scope.borrow()
+    }
+
+    fn scope_mut(&mut self) -> RefMut<Scope> {
+        self.scope.borrow_mut()
+    }
+
+    fn push_scope(&mut self, scope_name: String) {
+        let new_scope = Rc::new(RefCell::new(Scope::new(
+            scope_name,
+            Some(Rc::clone(&self.scope)),
+        )));
+        self.scope_mut().sub_scopes.push(Rc::clone(&new_scope));
+        self.scope = new_scope;
+    }
+
+    fn pop_scope(&mut self) -> Result<(), LuzError> {
+        let parent = Rc::clone(&self.scope);
+        let parent = parent.borrow();
+        let parent = parent
+            .parent
+            .as_ref()
+            .ok_or_else(|| LuzError::CompileError(format!("No parent scope")))?;
+
+        self.scope = Rc::clone(parent);
+        Ok(())
     }
 
     fn target_register(&self) -> Option<u8> {
@@ -108,18 +214,36 @@ impl Compiler {
     }
 
     pub fn print_instructions(&self) {
-        for scope_name in self.scopes_stack.iter() {
-            let scope = self.scopes.get(scope_name).expect("Scope exists");
-            if scope_name == "main" {
-                println!("main");
-            } else {
-                println!("function {:?}", scope_name);
+        self.scope.borrow().print_instructions();
+    }
+
+    fn handle_exp(&mut self, exp: &Exp) -> Result<ExpEval, LuzError> {
+        match exp {
+            Exp::Literal(lit) => match lit {
+                LuzObj::Numeral(Numeral::Int(i)) if *i >= 0 && *i <= 255 => {
+                    Ok(ExpEval::InImmediate(*i as u8))
+                }
+                _ => Ok(ExpEval::InConstant(self.get_or_add_const(lit))),
+            },
+            Exp::Name(name) => {
+                let src = self.find_reg(name).ok_or(LuzError::CompileError(format!(
+                    "name {:?} is not declared",
+                    name
+                )))?;
+                Ok(ExpEval::InRegister(src))
             }
-            for (i, inst) in scope.instructions.iter().enumerate() {
-                println!("[{}] {}", i + 1, inst);
+            _ => {
+                self.visit_exp(exp)?;
+                Ok(ExpEval::InRegister(self.target_register_or_err()?))
             }
         }
     }
+}
+
+enum ExpEval {
+    InImmediate(u8),
+    InRegister(u8),
+    InConstant(u32),
 }
 
 #[allow(unused)]
@@ -168,7 +292,38 @@ impl Compiler {
 
         match op {
             Binop::Concat => todo!(),
-            Binop::Add => todo!(),
+            Binop::Add => {
+                let lhs_addr = self.handle_exp(lhs)?;
+                let rhs_addr = self.handle_exp(rhs)?;
+                match (lhs_addr, rhs_addr) {
+                    (ExpEval::InRegister(lhs_addr), ExpEval::InRegister(rhs_addr)) => {
+                        self.push_inst(Instruction::op_add(
+                            self.target_register_or_err()?,
+                            lhs_addr,
+                            false,
+                            rhs_addr,
+                        ));
+                    }
+                    (ExpEval::InRegister(lhs_addr), ExpEval::InImmediate(rhs_val)) => {
+                        dbg!(rhs_val);
+                        self.push_inst(Instruction::op_addi(
+                            self.target_register_or_err()?,
+                            lhs_addr,
+                            false,
+                            rhs_val,
+                        ));
+                    }
+                    (ExpEval::InRegister(lhs_addr), ExpEval::InConstant(rhs_addr)) => {
+                        self.push_inst(Instruction::op_addk(
+                            self.target_register_or_err()?,
+                            lhs_addr,
+                            true,
+                            rhs_addr as u8,
+                        ));
+                    }
+                    _ => todo!(),
+                }
+            }
             Binop::Sub => todo!(),
             Binop::Mul => todo!(),
             Binop::FloatDiv => todo!(),
@@ -185,13 +340,24 @@ impl Compiler {
     }
 
     fn visit_literal(&mut self, lit: &LuzObj) -> Result<(), LuzError> {
-        let addr = self.get_or_add_const(lit);
+        match lit {
+            LuzObj::Numeral(Numeral::Int(i)) if *i >= 0 && *i <= 255 => {
+                self.push_inst(Instruction::op_loadi(
+                    self.target_register().expect("Register to load literal"),
+                    *i as i32,
+                ));
+                Ok(())
+            }
+            _ => {
+                let addr = self.get_or_add_const(lit);
 
-        self.push_inst(Instruction::op_loadk(
-            self.target_register().expect("Register to load literal"),
-            addr,
-        ));
-        Ok(())
+                self.push_inst(Instruction::op_loadk(
+                    self.target_register().expect("Register to load literal"),
+                    addr,
+                ));
+                Ok(())
+            }
+        }
     }
 
     fn visit_name(&mut self, name: &str) -> Result<(), LuzError> {

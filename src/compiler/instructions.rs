@@ -22,22 +22,43 @@ impl Display for Instruction {
 }
 
 impl Instruction {
-    pub fn op_add(a: u8, is_const: bool, b: u8, c: u8) -> Instruction {
-        iABC::new(c, b, is_const, a, LuaOpCode::OP_ADD).into()
+    pub fn op_add(a: u8, b: u8, is_b_const: bool, c: u8) -> Instruction {
+        iABC::new(c, b, is_b_const, a, LuaOpCode::OP_ADD).into()
+    }
+
+    pub fn op_addi(a: u8, b: u8, is_b_const: bool, c: u8) -> Instruction {
+        iABC::new(c, b, is_b_const, a, LuaOpCode::OP_ADDI).into()
+    }
+
+    pub fn op_addk(a: u8, b: u8, is_b_const: bool, c: u8) -> Instruction {
+        iABC::new(c, b, is_b_const, a, LuaOpCode::OP_ADDK).into()
     }
 
     pub fn op_return(reg: u8, is_const: bool, b: u8) -> Instruction {
-        iABC::new(0, b, is_const, reg, LuaOpCode::OP_RETURN).into()
+        iABC::new(1, b, is_const, reg, LuaOpCode::OP_RETURN).into()
     }
 
     pub fn op_loadk(reg: u8, addrk: u32) -> Instruction {
         iABx::new(addrk, reg, LuaOpCode::OP_LOADK).into()
     }
 
+    pub fn op_loadi(reg: u8, imm: i32) -> Instruction {
+        iABx::new(excess_of_bx(imm), reg, LuaOpCode::OP_LOADI).into()
+    }
+
     pub fn op_move(dest: u8, src: u8) -> Instruction {
         iABC::new(0, src, false, dest, LuaOpCode::OP_MOVE).into()
     }
 }
+
+// A signed argument is represented in excess K: the represented value is
+// the written unsigned value minus K, where K is half the maximum for the
+// corresponding unsigned argument.
+fn excess_of_bx(val: i32) -> u32 {
+    // (val + 131071) as u32
+    val as u32
+}
+
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, new)]
@@ -88,7 +109,7 @@ impl Display for iABC {
             LuaOpCode::OP_ADD if self.k => -(self.b as i32 + 1),
             _ => self.b as i32,
         };
-        write!(f, "{:?} {} {}", self.op, self.a, b)
+        write!(f, "{:?} {} {} {}", self.op, self.a, b, self.c)
     }
 }
 
@@ -134,7 +155,6 @@ impl Display for iABx {
         write!(f, "{:?} {} {}", self.op, self.a, b)
     }
 }
-
 
 fn mask1(size: u32, pos: u32) -> u32 {
     (!((!0) << size)) << pos

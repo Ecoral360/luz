@@ -66,5 +66,8 @@ fn run_compiler(stmts: Vec<Stat>) -> Result<(), LuzError> {
         compiler.visit_stat(&stmt)?;
     }
     compiler.print_instructions();
+    let mut runner = runner::Runner::new(compiler.scope_clone());
+    let res = runner.run()?;
+    dbg!(res);
     Ok(())
 }
