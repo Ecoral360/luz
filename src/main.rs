@@ -1,7 +1,11 @@
 use luz::luz::err::LuzError;
-use luz::run;
+use luz::{run, run_file};
 
 fn main() -> Result<(), LuzError> {
+    run_file("./src/test.lua")
+}
+
+fn old_main() -> Result<(), LuzError> {
         run(r###"
 -- $Id: testes/api.lua $
 -- See Copyright Notice in file all.lua

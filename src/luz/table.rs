@@ -1,8 +1,6 @@
 use std::{
-    cmp::Ordering,
     collections::HashMap,
     sync::{Arc, Mutex},
-    usize,
 };
 
 use super::obj::LuzObj;
@@ -37,7 +35,7 @@ impl Table {
         *t1 == *t2
     }
 
-    fn insert(&mut self, item: LuzObj) {
+    pub fn insert(&mut self, item: LuzObj) {
         self.arr.push(item);
     }
 
@@ -78,6 +76,10 @@ impl Table {
         } else {
             0
         }
+    }
+
+    pub fn tag_method_flags(&self) -> u8 {
+        self.tag_method_flags
     }
 }
 

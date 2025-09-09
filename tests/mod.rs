@@ -6,3 +6,8 @@ fn test_all() {
 
     result.expect("Error in test");
 }
+
+
+#[test]
+fn test_good_parsing() {
+}

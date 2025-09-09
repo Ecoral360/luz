@@ -4,13 +4,17 @@ use luz::err::LuzError;
 use pest::Parser;
 use pest_derive::Parser;
 
-use crate::ast::parser::parse_stmts;
+use crate::{
+    ast::{parser::parse_script, Stat},
+    compiler::visitor::Visitor,
+    compiler::Compiler,
+};
 
 pub mod ast;
 pub mod compiler;
 pub mod luz;
-pub mod runner;
 pub mod parser;
+pub mod runner;
 
 #[derive(Parser)]
 #[grammar = "./grammar.pest"]
@@ -21,7 +25,7 @@ pub fn run(input: &str) -> Result<(), LuzError> {
     match &mut stmts {
         Ok(stmts) => {
             // dbg!(&stmts);
-            let stmts = parse_stmts(stmts)?;
+            let stmts = parse_script(stmts)?;
             dbg!(stmts);
             Ok(())
         }
@@ -45,13 +49,22 @@ pub fn run_file(path: &str) -> Result<(), LuzError> {
     match &mut stmts {
         Ok(stmts) => {
             // dbg!(&stmts);
-            let stmts = parse_stmts(stmts)?;
-            dbg!(stmts);
-            Ok(())
+            let stmts = parse_script(stmts)?;
+            // dbg!(&stmts);
+            run_compiler(stmts)
         }
         Err(err) => {
             dbg!(err);
             panic!();
         }
     }
+}
+
+fn run_compiler(stmts: Vec<Stat>) -> Result<(), LuzError> {
+    let mut compiler = Compiler::default();
+    for stmt in stmts {
+        compiler.visit_stat(&stmt)?;
+    }
+    compiler.print_instructions();
+    Ok(())
 }

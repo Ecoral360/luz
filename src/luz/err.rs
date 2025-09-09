@@ -27,6 +27,9 @@ pub enum LuzError {
 
     #[error("Parsing error: {0:?}")]
     Syntax(Box<PestError<Rule>>),
+
+    #[error("Compilation error: {0:?}")]
+    CompileError(String)
 }
 
 impl From<PestError<Rule>> for LuzError {

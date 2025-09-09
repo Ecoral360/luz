@@ -32,12 +32,12 @@ pub struct LabelStat(pub String);
 
 #[derive(Debug, Clone, new)]
 pub struct ReturnStat {
-    explist: Vec<Exp>,
+    pub explist: Vec<Exp>,
 }
 
 #[derive(Debug, Clone, new)]
 pub struct DoStat {
-    block: Vec<Stat>,
+    pub block: Vec<Stat>,
 }
 
 #[derive(Debug, Clone, new)]
@@ -117,6 +117,6 @@ pub enum AssignStat {
     },
     Local {
         varlist: Vec<(String, Option<Attrib>)>,
-        explist: Option<Vec<Exp>>,
+        explist: Vec<Exp>,
     },
 }

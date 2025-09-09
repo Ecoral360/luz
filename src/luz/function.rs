@@ -7,3 +7,8 @@ pub struct FuncParams {
     #[builder(default = false)]
     is_vararg: bool,
 }
+
+
+
+#[derive(Debug, Clone)]
+pub struct LuzFunction {}

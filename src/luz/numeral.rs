@@ -83,7 +83,7 @@ impl Numeral {
             Numeral::Float(f) if f.fract() == 0.0 => Ok(Self::Int(f as i64)),
             this @ Numeral::Float(_) => Err(LuzError::InvalidCoersion {
                 obj: this.into(),
-                ty: LuzType::Int,
+                ty: LuzType::Integer,
             }),
         }
     }

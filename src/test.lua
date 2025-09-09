@@ -1,9 +1,3 @@
-local function facto(n)
-    if n <= 1 then
-        return 1
-    else
-        return n * facto(n-1)
-    end
-end
-
-print(facto(5))
+local a = 1
+-- local b, c = a + 20 + a,a - 20
+return a, 44

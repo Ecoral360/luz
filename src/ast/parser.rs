@@ -142,7 +142,7 @@ fn parse_top_expr(pair: Pair<Rule>) -> Result<Exp, LuzError> {
             parse_expr(pair.into_inner())?
         }
         Rule::Nil => Exp::Literal(LuzObj::Nil),
-        Rule::Boolean => Exp::Literal(LuzObj::Bool(pair.as_str() == "true")),
+        Rule::Boolean => Exp::Literal(LuzObj::Boolean(pair.as_str() == "true")),
         Rule::LiteralString => Exp::Literal(LuzObj::String(pair.as_str().to_string())),
         Rule::Ellipse => Exp::Ellipsis,
         Rule::Var => {
@@ -320,7 +320,13 @@ pub fn parse_nameattriblist(pairs: Pairs<Rule>) -> Result<Vec<(String, Option<At
     Ok(names)
 }
 
-pub fn parse_stmts(pairs: &mut Pairs<Rule>) -> Result<Vec<Stat>, LuzError> {
+pub fn parse_script(pairs: &mut Pairs<Rule>) -> Result<Vec<Stat>, LuzError> {
+    let mut stats = parse_stmts(pairs)?;
+    stats.push(Stat::Return(ReturnStat { explist: vec![] }));
+    Ok(stats)
+}
+
+fn parse_stmts(pairs: &mut Pairs<Rule>) -> Result<Vec<Stat>, LuzError> {
     pairs.try_fold(vec![], |mut acc, pair| {
         acc.extend(parse_stmt(pair)?);
         Ok(acc)
@@ -388,7 +394,7 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
                 parse_nameattriblist(inner.next().expect("Variables in assignment").into_inner())?;
             let explist = invert(inner.next().map(|explist| parse_list(explist.into_inner())))?;
 
-            vec![AssignStat::new_local(varlist, explist).into()]
+            vec![AssignStat::new_local(varlist, explist.unwrap_or_default()).into()]
         }
         Rule::RetStat => {
             let mut inner = pair.into_inner();
