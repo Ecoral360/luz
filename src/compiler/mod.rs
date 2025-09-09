@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use derive_new::new;
 
 use crate::{
@@ -6,13 +8,30 @@ use crate::{
     luz::{err::LuzError, obj::LuzObj},
 };
 
-mod instructions;
-mod opcode;
+pub mod instructions;
+pub mod opcode;
 pub mod visitor;
 
 #[allow(unused)]
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct Compiler {
+    scopes: HashMap<String, Scope>,
+    scopes_stack: Vec<String>,
+}
+impl Default for Compiler {
+    fn default() -> Self {
+        let mut scopes = HashMap::new();
+        scopes.insert("main".to_string(), Scope::default());
+
+        Self {
+            scopes,
+            scopes_stack: vec![String::from("main")],
+        }
+    }
+}
+
+#[derive(Default, Debug)]
+pub struct Scope {
     instructions: Vec<Instruction>,
     constants: Vec<LuzObj>,
     regs: Vec<Register>,
@@ -26,35 +45,50 @@ pub struct Register {
 
 #[allow(unused)]
 impl Compiler {
+    fn scope(&self) -> &Scope {
+        self.scopes
+            .get(self.scopes_stack.last().expect("Scope in stack"))
+            .expect("Scope in scopes")
+    }
+
+    fn scope_mut(&mut self) -> &mut Scope {
+        self.scopes
+            .get_mut(self.scopes_stack.last().expect("Scope in stack"))
+            .expect("Scope in scopes")
+    }
+
     fn target_register(&self) -> Option<u8> {
-        self.regs.last().map(|reg| reg.addr)
+        self.scope().regs.last().map(|reg| reg.addr)
     }
 
     fn target_register_or_err(&self) -> Result<u8, LuzError> {
-        self.regs
+        self.scope()
+            .regs
             .last()
             .map(|reg| reg.addr)
             .ok_or_else(|| LuzError::CompileError(format!("No target registers")))
     }
 
-    fn find_reg(&mut self, register_name: &str) -> Option<u8> {
-        self.regs
+    fn find_reg(&self, register_name: &str) -> Option<u8> {
+        self.scope()
+            .regs
             .iter()
             .find(|reg| matches!(&reg.name, Some(x) if x == register_name))
             .map(|reg| reg.addr)
     }
 
     fn push_register(&mut self, register_name: Option<String>) {
-        let reg = Register::new(register_name, self.regs.len() as u8);
-        self.regs.push(reg);
+        let reg = Register::new(register_name, self.scope().regs.len() as u8);
+        self.scope_mut().regs.push(reg);
     }
 
     fn push_inst(&mut self, inst: Instruction) {
-        self.instructions.push(inst);
+        self.scope_mut().instructions.push(inst);
     }
 
     fn get_or_add_const(&mut self, obj: &LuzObj) -> u32 {
-        let addr = self
+        let mut scope = self.scope_mut();
+        let addr = scope
             .constants
             .iter()
             .enumerate()
@@ -65,17 +99,25 @@ impl Compiler {
             return addr as u32;
         }
 
-        self.constants.push(obj.clone());
-        (self.constants.len() - 1) as u32
+        scope.constants.push(obj.clone());
+        (scope.constants.len() - 1) as u32
     }
 
     pub fn instructions(&self) -> Vec<Instruction> {
-        self.instructions.clone()
+        self.scope().instructions.clone()
     }
 
     pub fn print_instructions(&self) {
-        for (i, inst) in self.instructions.iter().enumerate() {
-            println!("[{}] {}", i + 1, inst);
+        for scope_name in self.scopes_stack.iter() {
+            let scope = self.scopes.get(scope_name).expect("Scope exists");
+            if scope_name == "main" {
+                println!("main");
+            } else {
+                println!("function {:?}", scope_name);
+            }
+            for (i, inst) in scope.instructions.iter().enumerate() {
+                println!("[{}] {}", i + 1, inst);
+            }
         }
     }
 }
@@ -105,7 +147,7 @@ impl Compiler {
     }
 
     fn visit_return(&mut self, stat: &ReturnStat) -> Result<(), LuzError> {
-        let start = self.regs.len();
+        let start = self.scope().regs.len();
         let size = stat.explist.len();
         if size == 0 {
             self.push_inst(Instruction::op_return(0, false, 1));
