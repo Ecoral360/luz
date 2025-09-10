@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, env::var, rc::Rc};
 
 use derive_new::new;
 
@@ -110,6 +110,8 @@ pub struct Register {
     pub addr: u8,
     #[new(default)]
     pub val: Option<LuzObj>,
+    #[new(value = "true")]
+    pub free: bool,
 }
 #[derive(Debug, new, Clone)]
 pub struct Upvalue {
@@ -181,19 +183,16 @@ impl Compiler {
                 body,
             } => todo!(),
             FunctionDefStat::Local { name, params, body } => {
-                ctx.push_register(Some(name.clone()));
+                let reg = ctx.push_claimed_register(Some(name.clone()));
                 let idx = ctx.push_scope(name.clone());
                 for param in &params.fixed {
-                    ctx.push_register(Some(param.clone()));
+                    ctx.push_claimed_register(Some(param.clone()));
                 }
                 for stat in body {
                     self.visit_stat(stat, ctx)?;
                 }
                 ctx.pop_scope()?;
-                ctx.push_inst(Instruction::op_closure(
-                    ctx.target_register_or_err()?,
-                    idx as u32,
-                ));
+                ctx.push_inst(Instruction::op_closure(reg, idx as u32));
             }
         }
         Ok(())
@@ -221,15 +220,17 @@ impl Compiler {
         let mut new_ctx =
             ctx.new_with(CompilerCtxBuilder::default().nb_expected((varlist.len() + 1) as u8));
 
-        for (var, exp) in varlist.iter().zip(explist) {
+        for var in varlist {
             ctx.push_register(Some(var.0.clone()));
+        }
+        for exp in explist {
             self.visit_exp(exp, &mut new_ctx);
         }
 
-        if varlist.len() > explist.len() {
+        if varlist.len() > explist.len() && !Exp::is_multires(explist) {
             for var in varlist[explist.len()..].iter() {
-                ctx.push_register(Some(var.0.clone()));
-                ctx.push_inst(Instruction::op_loadnil(ctx.target_register_or_err()?, 0));
+                let reg = ctx.push_claimed_register(Some(var.0.clone()));
+                ctx.push_inst(Instruction::op_loadnil(reg, 0));
             }
         }
 
@@ -237,13 +238,13 @@ impl Compiler {
     }
 
     fn visit_return(&mut self, ctx: &mut CompilerCtx, stat: &ReturnStat) -> Result<(), LuzError> {
-        let start = ctx.scope().regs.len();
+        let start = ctx.next_free_register();
         let size = stat.explist.len();
         for exp in stat.explist.iter() {
-            ctx.push_register(None);
             self.visit_exp(exp, ctx);
+            ctx.claim_free_register();
         }
-        ctx.push_inst(Instruction::op_return(start as u8, false, size as u8 + 1));
+        ctx.push_inst(Instruction::op_return(start, false, size as u8 + 1));
         Ok(())
     }
 
@@ -316,13 +317,17 @@ impl Compiler {
             args,
             variadic,
         } = f_call;
-        let f_addr = ctx.target_register_or_err()?;
         self.visit_exp(func, ctx);
+        let f_addr = ctx.claim_free_register();
         for arg in args {
-            ctx.push_register(None);
             self.visit_exp(arg, ctx);
+            ctx.claim_free_register();
         }
         let nb_expected = ctx.nb_expected();
+        ctx.unclaim_registers(
+            f_addr + nb_expected - 1,
+            args.len() as u8 - (nb_expected - 2),
+        );
 
         ctx.push_inst(Instruction::op_call(
             f_addr,
@@ -335,19 +340,15 @@ impl Compiler {
     fn visit_literal(&mut self, ctx: &mut CompilerCtx, lit: &LuzObj) -> Result<(), LuzError> {
         match lit {
             LuzObj::Numeral(Numeral::Int(i)) if *i >= 0 && *i <= 255 => {
-                ctx.push_inst(Instruction::op_loadi(
-                    ctx.target_register().expect("Register to load literal"),
-                    *i as u32,
-                ));
+                let reg = ctx.next_free_register();
+                ctx.push_inst(Instruction::op_loadi(reg, *i as u32));
                 Ok(())
             }
             _ => {
                 let addr = ctx.get_or_add_const(lit);
+                let reg = ctx.next_free_register();
 
-                ctx.push_inst(Instruction::op_loadk(
-                    ctx.target_register().expect("Register to load literal"),
-                    addr,
-                ));
+                ctx.push_inst(Instruction::op_loadk(reg, addr));
                 Ok(())
             }
         }
@@ -359,7 +360,8 @@ impl Compiler {
             name
         )))?;
 
-        ctx.push_inst(Instruction::op_move(ctx.target_register_or_err()?, src));
+        let reg = ctx.next_free_register();
+        ctx.push_inst(Instruction::op_move(reg, src));
         Ok(())
     }
 }

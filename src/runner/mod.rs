@@ -114,7 +114,7 @@ impl Runner {
                 }
                 LuaOpCode::OP_CALL => {
                     let iABC {
-                        c: nb_results,
+                        c: nb_expected_results,
                         b: nb_args,
                         a: func_addr,
                         ..
@@ -141,8 +141,20 @@ impl Runner {
                     let mut fc_runner = Runner::new(Rc::new(RefCell::new(fc_scope)));
 
                     let results = fc_runner.run()?;
+                    let nb_results = results.len() as u8;
                     for (i, result) in results.into_iter().enumerate() {
+                        if i == (nb_expected_results - 1) as usize {
+                            break;
+                        };
                         self.scope_mut().set_reg_val(func_addr + i as u8, result);
+                    }
+                    if (nb_expected_results - 1) > nb_results {
+                        let diff = nb_expected_results - 1 - nb_results;
+                        dbg!(diff);
+                        for addr in 0..diff {
+                            self.scope_mut()
+                                .set_reg_val(func_addr + diff + addr, LuzObj::Nil);
+                        }
                     }
                 }
                 op => todo!("iABC {:?}", op),

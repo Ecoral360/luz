@@ -67,7 +67,7 @@ impl FuncCall {
         Self {
             func,
             method_name,
-            variadic: args.last().is_some_and(|arg| arg.is_multire()),
+            variadic: Exp::is_multires(&args),
             args,
         }
     }
@@ -105,6 +105,10 @@ pub struct ExpTableConstructorField {
 impl Exp {
     pub fn is_multire(&self) -> bool {
         matches!(self, Exp::FuncCall(_) | Exp::Vararg)
+    }
+
+    pub fn is_multires(explist: &Vec<Exp>) -> bool {
+        explist.last().is_some_and(|exp| exp.is_multire())
     }
 
     pub fn do_unop(self, unop: Unop) -> Result<Self, LuzError> {

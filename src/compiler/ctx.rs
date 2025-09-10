@@ -77,15 +77,28 @@ impl CompilerCtx {
     }
 
     pub(crate) fn target_register(&self) -> Option<u8> {
-        self.scope().regs.last().map(|reg| reg.addr)
+        self.target_register_or_err().ok()
     }
 
     pub(crate) fn target_register_or_err(&self) -> Result<u8, LuzError> {
         self.scope()
             .regs
-            .last()
-            .map(|reg| reg.addr)
-            .ok_or_else(|| LuzError::CompileError(format!("No target registers")))
+            .iter()
+            .find_map(|reg| if reg.free { Some(reg.addr) } else { None })
+            .ok_or_else(|| LuzError::CompileError(format!("No free target registers")))
+    }
+
+    pub(crate) fn next_free_register(&mut self) -> u8 {
+        match self.target_register() {
+            Some(v) => v,
+            None => self.push_register(None),
+        }
+    }
+
+    pub(crate) fn claim_free_register(&mut self) -> u8 {
+        let next_free = self.next_free_register();
+        self.scope_mut().regs[next_free as usize].free = false;
+        next_free
     }
 
     pub(crate) fn find_reg(&self, register_name: &str) -> Option<u8> {
@@ -101,6 +114,20 @@ impl CompilerCtx {
         let reg = Register::new(register_name, addr);
         self.scope_mut().regs.push(reg);
         addr
+    }
+
+    pub(crate) fn push_claimed_register(&mut self, register_name: Option<String>) -> u8 {
+        let addr = self.scope().regs.len() as u8;
+        let mut reg = Register::new(register_name, addr);
+        reg.free = false;
+        self.scope_mut().regs.push(reg);
+        addr
+    }
+
+    pub(crate) fn unclaim_registers(&mut self, start: u8, nb: u8) {
+        for i in start..start + nb {
+            self.scope_mut().regs[i as usize].free = true;
+        }
     }
 
     pub(crate) fn push_inst(&mut self, inst: Instruction) {

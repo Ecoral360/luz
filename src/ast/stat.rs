@@ -39,7 +39,7 @@ pub struct ReturnStat {
 impl ReturnStat {
     pub fn new(explist: Vec<Exp>) -> Self {
         Self {
-            variadic: explist.last().is_some_and(|exp| exp.is_multire()),
+            variadic: Exp::is_multires(&explist),
             explist,
         }
     }
