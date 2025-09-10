@@ -6,7 +6,7 @@ use std::{
 use crate::{
     ast::Binop,
     compiler::{
-        instructions::{iABC, iABx, Instruction},
+        instructions::{iABC, iABx, iAsBx, Instruction, MAX_HALF_sBx},
         opcode::LuaOpCode,
         Scope,
     },
@@ -85,6 +85,7 @@ impl Runner {
                 | LuaOpCode::OP_DIVK
                 | LuaOpCode::OP_IDIV
                 | LuaOpCode::OP_IDIVK => self.run_arithmetic(i_abc)?,
+
                 LuaOpCode::OP_ADDI => {
                     let iABC { c, b, k, a, .. } = *i_abc;
 
@@ -131,14 +132,17 @@ impl Runner {
                         LuzObj::Function(Rc::new(RefCell::new(LuzFunction::new(sub_scope)))),
                     );
                 }
+                op => todo!("iABx {:?}", op),
+            },
+            Instruction::iAsBx(i_asbx) => match i_asbx.op {
                 LuaOpCode::OP_LOADI => {
-                    let iABx { b, a, .. } = *i_abx;
-                    let imm = from_excess_of_bx(b);
+                    let iAsBx { b, a, .. } = *i_asbx;
+                    let imm = (b as i64) - MAX_HALF_sBx as i64;
                     self.scope
                         .borrow_mut()
-                        .set_reg_val(a, LuzObj::Numeral(Numeral::Int(imm as i64)));
+                        .set_reg_val(a, LuzObj::Numeral(Numeral::Int(imm)));
                 }
-                op => todo!("iABx {:?}", op),
+                op => todo!("iAsBx {:?}", op),
             },
         }
         Ok(None)

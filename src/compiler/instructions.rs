@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use derive_new::new;
 
-use crate::{ast::Binop, compiler::opcode::LuaOpCode, luz::err::LuzError};
+use crate::{ast::Binop, compiler::opcode::LuaOpCode};
 
 #[allow(non_camel_case_types)]
 #[allow(unused)]
@@ -10,13 +10,18 @@ use crate::{ast::Binop, compiler::opcode::LuaOpCode, luz::err::LuzError};
 pub enum Instruction {
     iABC(iABC),
     iABx(iABx),
+    iAsBx(iAsBx),
 }
+
+#[allow(non_upper_case_globals)]
+pub const MAX_HALF_sBx: u32 = 131072;
 
 impl Display for Instruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Instruction::iABC(i_abc) => write!(f, "{}", i_abc),
             Instruction::iABx(i_abx) => write!(f, "{}", i_abx),
+            Instruction::iAsBx(i_asbx) => write!(f, "{}", i_asbx),
         }
     }
 }
@@ -106,7 +111,7 @@ impl Instruction {
     }
 
     pub fn op_loadi(reg: u8, imm: u32) -> Instruction {
-        LuaOpCode::OP_LOADI.to_iabx(reg, imm).into()
+        LuaOpCode::OP_LOADI.to_iasbx(reg, imm + MAX_HALF_sBx).into()
     }
 
     pub fn op_move(dest: u8, src: u8) -> Instruction {
@@ -215,6 +220,45 @@ impl Display for iABx {
             _ => self.b as i32,
         };
         write!(f, "{:?} {} {}", self.op, self.a, b)
+    }
+}
+
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, new)]
+pub struct iAsBx {
+    pub b: u32, // actually 17 bits
+    pub a: u8,
+    pub op: LuaOpCode, // actually 7 bits
+}
+
+impl Into<Instruction> for iAsBx {
+    fn into(self) -> Instruction {
+        Instruction::iAsBx(self)
+    }
+}
+
+impl Into<u32> for iAsBx {
+    fn into(self) -> u32 {
+        self.op as u32 | (self.a as u32) << 7 | self.b << 16
+    }
+}
+
+impl From<u32> for iAsBx {
+    fn from(val: u32) -> Self {
+        let op = get_arg(val, 7, 0);
+        let a = get_arg(val, 8, 7);
+        let b = get_arg(val, 17, 15);
+        Self {
+            b: b as u32,
+            a: a as u8,
+            op: (op as u8).try_into().unwrap(),
+        }
+    }
+}
+
+impl Display for iAsBx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?} {} {}", self.op, self.a, self.b - MAX_HALF_sBx)
     }
 }
 

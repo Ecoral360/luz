@@ -6,4 +6,4 @@ end
 
 local x = 12
 local y = 20
-return x + y, 5 + y
+return x + y, 1 - y

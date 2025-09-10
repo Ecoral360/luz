@@ -7,7 +7,10 @@ use derive_new::new;
 
 use crate::{
     ast::{AssignStat, Binop, Exp, FunctionDefStat, ReturnStat, Stat},
-    compiler::{instructions::Instruction, visitor::Visitor},
+    compiler::{
+        instructions::{Instruction, MAX_HALF_sBx},
+        visitor::Visitor,
+    },
     luz::{
         err::LuzError,
         obj::{LuzObj, Numeral},
@@ -221,8 +224,19 @@ impl Compiler {
     fn handle_exp(&mut self, exp: &Exp, supports_immidiate: bool) -> Result<ExpEval, LuzError> {
         match exp {
             Exp::Literal(lit) => match lit {
-                LuzObj::Numeral(Numeral::Int(i)) if supports_immidiate && (0..128).contains(i) => {
-                    Ok(ExpEval::InImmediate(*i as u8))
+                LuzObj::Numeral(Numeral::Int(i))
+                    if supports_immidiate && (-128..128).contains(i) =>
+                {
+                    Ok(ExpEval::InImmediate((*i + 128) as u8))
+                }
+                LuzObj::Numeral(Numeral::Int(i))
+                    if (-(MAX_HALF_sBx as i64)..(MAX_HALF_sBx as i64)).contains(i) =>
+                {
+                    self.push_inst(Instruction::op_loadi(
+                        self.target_register_or_err()?,
+                        *i as u32,
+                    ));
+                    Ok(ExpEval::InRegister(self.target_register_or_err()?))
                 }
                 _ => Ok(ExpEval::InConstant(self.get_or_add_const(lit) as u8)),
             },
@@ -339,15 +353,13 @@ impl Compiler {
         }
 
         let mut lhs_addr = match lhs_addr {
-            ExpEval::InImmediate(i) if *op == Binop::Add => i + 128,
-            ExpEval::InImmediate(i) if *op == Binop::Sub => (-(i as i32) + 128) as u8,
+            ExpEval::InImmediate(i) if *op == Binop::Sub => ((i as i32) - 256) as u8,
             ExpEval::InImmediate(i) => i,
             ExpEval::InRegister(r) => r,
             ExpEval::InConstant(c) => c,
         };
         let mut rhs_addr = match rhs_addr {
-            ExpEval::InImmediate(i) if *op == Binop::Add => i + 128,
-            ExpEval::InImmediate(i) if *op == Binop::Sub => (-(i as i32) + 128) as u8,
+            ExpEval::InImmediate(i) if *op == Binop::Sub => ((i as i32) - 256) as u8,
             ExpEval::InImmediate(i) => i,
             ExpEval::InRegister(r) => r,
             ExpEval::InConstant(c) => c,
