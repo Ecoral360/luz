@@ -1,6 +1,5 @@
 use std::{
     cell::{Ref, RefCell, RefMut},
-    collections::HashMap,
     rc::Rc,
 };
 
@@ -85,7 +84,7 @@ impl Scope {
         }
         println!("---- Constants:");
         for (i, inst) in self.constants.iter().enumerate() {
-            println!("{} {:?}", i + 1, inst);
+            println!("{} {:?}", i, inst);
         }
 
         println!("---- Locals:");
@@ -323,96 +322,57 @@ impl Compiler {
             unreachable!()
         };
 
-        let lhs_addr = self.handle_exp(lhs, matches!(op, Binop::Add | Binop::Sub))?;
+        let lhs_addr = self.handle_exp(lhs, matches!(op, Binop::Add))?;
         let rhs_addr = self.handle_exp(rhs, matches!(op, Binop::Add | Binop::Sub))?;
 
-        let is_b_const = matches!(rhs_addr, ExpEval::InConstant(_));
-        let is_c_const = matches!(lhs_addr, ExpEval::InConstant(_));
+        let is_b_const = matches!(lhs_addr, ExpEval::InConstant(_));
+        let is_b_imm = matches!(lhs_addr, ExpEval::InImmediate(_));
+
+        let is_c_const = matches!(rhs_addr, ExpEval::InConstant(_));
         let is_c_imm = matches!(rhs_addr, ExpEval::InImmediate(_));
 
-        let lhs_addr = match lhs_addr {
+        if is_b_imm && is_c_imm {
+            return Err(LuzError::CompileError(format!(
+                "Both sides of {:?} cannot be immediate values, should have been optimized away before codegen",
+                op
+            )));
+        }
+
+        let mut lhs_addr = match lhs_addr {
+            ExpEval::InImmediate(i) if *op == Binop::Add => i + 128,
+            ExpEval::InImmediate(i) if *op == Binop::Sub => (-(i as i32) + 128) as u8,
             ExpEval::InImmediate(i) => i,
             ExpEval::InRegister(r) => r,
             ExpEval::InConstant(c) => c,
         };
-        let rhs_addr = match rhs_addr {
+        let mut rhs_addr = match rhs_addr {
+            ExpEval::InImmediate(i) if *op == Binop::Add => i + 128,
+            ExpEval::InImmediate(i) if *op == Binop::Sub => (-(i as i32) + 128) as u8,
             ExpEval::InImmediate(i) => i,
             ExpEval::InRegister(r) => r,
             ExpEval::InConstant(c) => c,
         };
 
-        match op {
-            Binop::Concat => todo!(),
-            Binop::Add => {
-                if is_c_imm {
-                    self.push_inst(Instruction::op_addi(
-                        self.target_register_or_err()?,
-                        lhs_addr,
-                        false,
-                        rhs_addr + 128,
-                    ));
-                } else {
-                    self.push_inst(Instruction::op_add(
-                        self.target_register_or_err()?,
-                        lhs_addr,
-                        is_b_const,
-                        rhs_addr,
-                        is_c_const,
-                    ));
-                }
-            }
-            Binop::Sub => {
-                if is_c_imm {
-                    self.push_inst(Instruction::op_addi(
-                        self.target_register_or_err()?,
-                        lhs_addr,
-                        false,
-                        (-(rhs_addr as i32) + 128) as u8,
-                    ));
-                } else {
-                    self.push_inst(Instruction::op_sub(
-                        self.target_register_or_err()?,
-                        lhs_addr,
-                        is_b_const,
-                        rhs_addr,
-                        is_c_const,
-                    ));
-                }
-            }
-            Binop::Mul => {
-                self.push_inst(Instruction::op_mul(
-                    self.target_register_or_err()?,
-                    lhs_addr,
-                    is_b_const,
-                    rhs_addr,
-                    is_c_const,
-                ));
-            }
-            Binop::FloatDiv => {
-                self.push_inst(Instruction::op_div(
-                    self.target_register_or_err()?,
-                    lhs_addr,
-                    is_b_const,
-                    rhs_addr,
-                    is_c_const,
-                ));
-            }
-            Binop::FloorDiv => {
-                self.push_inst(Instruction::op_idiv(
-                    self.target_register_or_err()?,
-                    lhs_addr,
-                    is_b_const,
-                    rhs_addr,
-                    is_c_const,
-                ));
-            }
-            Binop::Mod => todo!(),
-            Binop::Exp => todo!(),
-            Binop::BitAnd => todo!(),
-            Binop::BitOr => todo!(),
-            Binop::BitXor => todo!(),
-            Binop::ShiftRight => todo!(),
-            Binop::ShiftLeft => todo!(),
+        if is_b_imm {
+            (lhs_addr, rhs_addr) = (rhs_addr, lhs_addr);
+        }
+
+        if is_c_imm || is_b_imm {
+            self.push_inst(Instruction::op_addi(
+                self.target_register_or_err()?,
+                lhs_addr,
+                false,
+                rhs_addr,
+            ));
+        } else {
+            self.push_inst(Instruction::op_arithmetic(
+                *op,
+                self.target_register_or_err()?,
+                lhs_addr,
+                is_b_const,
+                rhs_addr,
+                is_c_const,
+            ));
         }
         Ok(())
     }
@@ -422,7 +382,7 @@ impl Compiler {
             LuzObj::Numeral(Numeral::Int(i)) if *i >= 0 && *i <= 255 => {
                 self.push_inst(Instruction::op_loadi(
                     self.target_register().expect("Register to load literal"),
-                    *i as i32,
+                    *i as u32,
                 ));
                 Ok(())
             }

@@ -18,6 +18,8 @@ isJ                           sJ (signed)(25)            |   Op(7)     |
 ===========================================================================*/
 use num_enum::TryFromPrimitive;
 
+use crate::compiler::instructions::{iABC, iABx};
+
 #[allow(non_camel_case_types)]
 #[derive(TryFromPrimitive, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
@@ -136,37 +138,46 @@ pub enum LuaOpCode {
     OP_EXTRAARG, /*	Ax	extra (larger) argument for previous opcode	*/
 }
 
-#[allow(non_camel_case_types)]
-enum RibbitOpCode {
-    JUMP_SYM_S,
-    JUMP_INT_L,
-    JUMP_SYM_L,
-    JUMP_INT_S,
-
-    CALL_SYM_S,
-    CALL_INT_L,
-    CALL_SYM_L,
-    CALL_INT_S,
-
-    SET_INT_L,
-    SET_SYM_L,
-    SET_SYM_S,
-    SET_INT_S,
-
-    GET_INT_S,
-    GET_INT_L,
-    GET_SYM_L,
-    GET_SYM_S,
-
-    CONST_INT_S,
-    CONST_INT_L,
-    CONST_SYM_L,
-    CONST_PROC_S,
-    CONST_PROC_L,
-    CONST_SYM_S,
-
-    SKIP_INT_S,
-    SKIP_LONG_L,
-
-    IF,
+impl LuaOpCode {
+    pub fn to_iabc(self, a: u8, k: bool, b: u8, c: u8) -> iABC {
+        iABC::new(c, b, k, a, self)
+    }
+    pub fn to_iabx(self, a: u8, b: u32) -> iABx {
+        iABx::new(b, a, self)
+    }
 }
+
+// #[allow(non_camel_case_types)]
+// enum RibbitOpCode {
+//     JUMP_SYM_S,
+//     JUMP_INT_L,
+//     JUMP_SYM_L,
+//     JUMP_INT_S,
+//
+//     CALL_SYM_S,
+//     CALL_INT_L,
+//     CALL_SYM_L,
+//     CALL_INT_S,
+//
+//     SET_INT_L,
+//     SET_SYM_L,
+//     SET_SYM_S,
+//     SET_INT_S,
+//
+//     GET_INT_S,
+//     GET_INT_L,
+//     GET_SYM_L,
+//     GET_SYM_S,
+//
+//     CONST_INT_S,
+//     CONST_INT_L,
+//     CONST_SYM_L,
+//     CONST_PROC_S,
+//     CONST_PROC_L,
+//     CONST_SYM_S,
+//
+//     SKIP_INT_S,
+//     SKIP_LONG_L,
+//
+//     IF,
+// }

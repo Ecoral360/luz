@@ -1,6 +1,5 @@
 use std::cell::RefCell;
 use std::hash::Hash;
-use std::ptr;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::Mutex;

@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use derive_new::new;
 
-use crate::{compiler::opcode::LuaOpCode, luz::err::LuzError};
+use crate::{ast::Binop, compiler::opcode::LuaOpCode, luz::err::LuzError};
 
 #[allow(non_camel_case_types)]
 #[allow(unused)]
@@ -45,76 +45,68 @@ impl Instruction {
         .into()
     }
 
-    pub fn op_sub(a: u8, b: u8, is_b_const: bool, c: u8, is_c_const: bool) -> Instruction {
-        iABC::new(
-            c,
-            b,
-            is_b_const,
-            a,
-            if is_c_const {
-                LuaOpCode::OP_SUB
-            } else {
-                LuaOpCode::OP_SUBK
-            },
-        )
-        .into()
+    pub fn op_call(func_reg: u8, n_args: u8, n_expected: u8) -> Instruction {
+        LuaOpCode::OP_CALL
+            .to_iabc(func_reg, false, n_args + 1, n_expected + 1)
+            .into()
     }
 
-    pub fn op_mul(a: u8, b: u8, is_b_const: bool, c: u8, is_c_const: bool) -> Instruction {
-        iABC::new(
-            c,
-            b,
-            is_b_const,
-            a,
-            if is_c_const {
-                LuaOpCode::OP_MULK
-            } else {
-                LuaOpCode::OP_MUL
-            },
-        )
-        .into()
+    pub fn op_arithmetic(
+        op: Binop,
+        dest_reg: u8,
+        lhs: u8,
+        is_lhs_const: bool,
+        rhs: u8,
+        is_rhs_const: bool,
+    ) -> Instruction {
+        let opcode: LuaOpCode = if is_rhs_const {
+            match op {
+                Binop::Concat => todo!(),
+                Binop::Add => LuaOpCode::OP_ADDK,
+                Binop::Sub => LuaOpCode::OP_SUBK,
+                Binop::Mul => LuaOpCode::OP_MULK,
+                Binop::FloatDiv => LuaOpCode::OP_DIVK,
+                Binop::FloorDiv => LuaOpCode::OP_IDIVK,
+                Binop::Mod => LuaOpCode::OP_MODK,
+                Binop::Exp => LuaOpCode::OP_POWK,
+                Binop::BitAnd => LuaOpCode::OP_BANDK,
+                Binop::BitOr => LuaOpCode::OP_BORK,
+                Binop::BitXor => LuaOpCode::OP_BXORK,
+                Binop::ShiftLeft => LuaOpCode::OP_SHLI,
+                Binop::ShiftRight => LuaOpCode::OP_SHRI,
+            }
+        } else {
+            match op {
+                Binop::Concat => todo!(),
+                Binop::Add => LuaOpCode::OP_ADD,
+                Binop::Sub => LuaOpCode::OP_SUB,
+                Binop::Mul => LuaOpCode::OP_MUL,
+                Binop::FloatDiv => LuaOpCode::OP_DIV,
+                Binop::FloorDiv => LuaOpCode::OP_IDIV,
+                Binop::Mod => LuaOpCode::OP_MOD,
+                Binop::Exp => LuaOpCode::OP_POW,
+                Binop::BitAnd => LuaOpCode::OP_BAND,
+                Binop::BitOr => LuaOpCode::OP_BOR,
+                Binop::BitXor => LuaOpCode::OP_BXOR,
+                Binop::ShiftLeft => LuaOpCode::OP_SHL,
+                Binop::ShiftRight => LuaOpCode::OP_SHR,
+            }
+        };
+        opcode.to_iabc(dest_reg, is_lhs_const, lhs, rhs).into()
     }
 
-    pub fn op_div(a: u8, b: u8, is_b_const: bool, c: u8, is_c_const: bool) -> Instruction {
-        iABC::new(
-            c,
-            b,
-            is_b_const,
-            a,
-            if is_c_const {
-                LuaOpCode::OP_DIVK
-            } else {
-                LuaOpCode::OP_DIV
-            },
-        )
-        .into()
-    }
-
-    pub fn op_idiv(a: u8, b: u8, is_b_const: bool, c: u8, is_c_const: bool) -> Instruction {
-        iABC::new(
-            c,
-            b,
-            is_b_const,
-            a,
-            if is_c_const {
-                LuaOpCode::OP_IDIV
-            } else {
-                LuaOpCode::OP_IDIVK
-            },
-        )
-        .into()
-    }
-
-    pub fn op_return(reg: u8, is_const: bool, b: u8) -> Instruction {
-        iABC::new(1, b, is_const, reg, LuaOpCode::OP_RETURN).into()
+    pub fn op_return(reg: u8, is_const: bool, nb_exps: u8) -> Instruction {
+        LuaOpCode::OP_RETURN
+            .to_iabc(reg, is_const, nb_exps, 1)
+            .into()
     }
 
     pub fn op_loadk(reg: u8, addrk: u32) -> Instruction {
-        iABx::new(addrk, reg, LuaOpCode::OP_LOADK).into()
+        LuaOpCode::OP_LOADK.to_iabx(reg, addrk).into()
     }
 
-    pub fn op_loadi(reg: u8, imm: i32) -> Instruction {
-        iABx::new(excess_of_bx(imm), reg, LuaOpCode::OP_LOADI).into()
+    pub fn op_loadi(reg: u8, imm: u32) -> Instruction {
+        LuaOpCode::OP_LOADI.to_iabx(reg, imm).into()
     }
 
     pub fn op_move(dest: u8, src: u8) -> Instruction {
@@ -124,14 +116,6 @@ impl Instruction {
     pub fn op_closure(reg: u8, sub_scope_idx: u32) -> Instruction {
         iABx::new(sub_scope_idx, reg, LuaOpCode::OP_CLOSURE).into()
     }
-}
-
-// A signed argument is represented in excess K: the represented value is
-// the written unsigned value minus K, where K is half the maximum for the
-// corresponding unsigned argument.
-fn excess_of_bx(val: i32) -> u32 {
-    // (val + 131071) as u32
-    val as u32
 }
 
 #[allow(non_camel_case_types)]
