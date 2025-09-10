@@ -133,29 +133,62 @@ impl Runner {
                         .collect::<Result<Vec<_>, _>>()?;
 
                     let f = f.borrow();
+                    let results = match *f {
+                        LuzFunction::User { ref scope } => {
+                            let mut fc_scope = scope.borrow().clone();
+                            for (i, arg) in args.into_iter().enumerate() {
+                                fc_scope.set_reg_val(i as u8, arg);
+                            }
+                            let mut fc_runner = Runner::new(Rc::new(RefCell::new(fc_scope)));
 
-                    let mut fc_scope = f.scope.borrow().clone();
-                    for (i, arg) in args.into_iter().enumerate() {
-                        fc_scope.set_reg_val(i as u8, arg);
-                    }
-                    let mut fc_runner = Runner::new(Rc::new(RefCell::new(fc_scope)));
+                            fc_runner.run()?
+                        }
+                        LuzFunction::Native { ref fn_ptr } => {
+                            let mut fn_ptr = fn_ptr.borrow_mut();
+                            (fn_ptr)(args)
+                        }
+                    };
 
-                    let results = fc_runner.run()?;
                     let nb_results = results.len() as u8;
-                    for (i, result) in results.into_iter().enumerate() {
-                        if i == (nb_expected_results - 1) as usize {
-                            break;
-                        };
-                        self.scope_mut().set_reg_val(func_addr + i as u8, result);
-                    }
-                    if (nb_expected_results - 1) > nb_results {
-                        let diff = nb_expected_results - 1 - nb_results;
-                        dbg!(diff);
-                        for addr in 0..diff {
-                            self.scope_mut()
-                                .set_reg_val(func_addr + diff + addr, LuzObj::Nil);
+                    if nb_expected_results == 0 {
+                        // TODO: check we have enough registers
+                        for (i, result) in results.into_iter().enumerate() {
+                            self.scope_mut().set_reg_val(func_addr + i as u8, result);
+                        }
+                    } else {
+                        for (i, result) in results.into_iter().enumerate() {
+                            if i == (nb_expected_results - 1) as usize {
+                                break;
+                            };
+                            self.scope_mut().set_reg_val(func_addr + i as u8, result);
+                        }
+                        if (nb_expected_results - 1) > nb_results {
+                            let diff = nb_expected_results - 1 - nb_results;
+                            dbg!(diff);
+                            for addr in 0..diff {
+                                self.scope_mut()
+                                    .set_reg_val(func_addr + diff + addr, LuzObj::Nil);
+                            }
                         }
                     }
+                }
+                LuaOpCode::OP_GETTABUP => {
+                    let iABC { a, b, c, .. } = *i_abc;
+                    let table = self
+                        .scope()
+                        .get_upvalue_value(b)
+                        .ok_or(LuzError::CompileError("Upvalue missing".to_owned()))?;
+
+                    let LuzObj::Table(table) = table else {
+                        return Err(LuzError::Type {
+                            wrong: table.get_type(),
+                            expected: vec![LuzType::Table],
+                        });
+                    };
+                    let key = self.get_const_val(c)?;
+                    let table = table.borrow();
+                    let val = table.get(&key);
+                    self.scope.borrow_mut().set_reg_val(a, val.clone());
                 }
                 op => todo!("iABC {:?}", op),
             },
@@ -174,7 +207,7 @@ impl Runner {
                     let sub_scope = self.scope().sub_scopes()[b as usize].clone();
                     self.scope.borrow_mut().set_reg_val(
                         a,
-                        LuzObj::Function(Rc::new(RefCell::new(LuzFunction::new(sub_scope)))),
+                        LuzObj::Function(Rc::new(RefCell::new(LuzFunction::new_user(sub_scope)))),
                     );
                 }
                 op => todo!("iABx {:?}", op),

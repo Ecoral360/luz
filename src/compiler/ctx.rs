@@ -7,8 +7,8 @@ use derive_builder::Builder;
 use derive_new::new;
 
 use crate::{
-    compiler::{instructions::Instruction, Register, Scope, ScopeLink},
-    luz::{err::LuzError, obj::LuzObj},
+    compiler::{instructions::Instruction, Register, Scope, ScopeLink, Upvalue},
+    luz::{env::get_builtin_scope, err::LuzError, obj::LuzObj},
 };
 
 #[derive(Debug, new, Builder, Clone)]
@@ -21,8 +21,12 @@ pub struct CompilerCtx {
 
 impl CompilerCtx {
     pub fn new_main() -> Self {
+        let mut scope = Scope::new(String::from("main"), Some(get_builtin_scope()));
+        scope
+            .upvalues
+            .push(Upvalue::new("_ENV".to_owned(), 0, 0, true));
         Self {
-            scope: Rc::new(RefCell::new(Scope::new(String::from("main"), None))),
+            scope: Rc::new(RefCell::new(scope)),
             nb_expected: 1,
         }
     }
@@ -76,6 +80,8 @@ impl CompilerCtx {
         Ok(())
     }
 
+    pub(crate) fn register_upvalue(&mut self) {}
+
     pub(crate) fn target_register(&self) -> Option<u8> {
         self.target_register_or_err().ok()
     }
@@ -88,15 +94,15 @@ impl CompilerCtx {
             .ok_or_else(|| LuzError::CompileError(format!("No free target registers")))
     }
 
-    pub(crate) fn next_free_register(&mut self) -> u8 {
+    pub(crate) fn get_or_push_free_register(&mut self) -> u8 {
         match self.target_register() {
             Some(v) => v,
-            None => self.push_register(None),
+            None => self.push_free_register(None),
         }
     }
 
-    pub(crate) fn claim_free_register(&mut self) -> u8 {
-        let next_free = self.next_free_register();
+    pub(crate) fn claim_next_free_register(&mut self) -> u8 {
+        let next_free = self.get_or_push_free_register();
         self.scope_mut().regs[next_free as usize].free = false;
         next_free
     }
@@ -109,7 +115,7 @@ impl CompilerCtx {
             .map(|reg| reg.addr)
     }
 
-    pub(crate) fn push_register(&mut self, register_name: Option<String>) -> u8 {
+    pub(crate) fn push_free_register(&mut self, register_name: Option<String>) -> u8 {
         let addr = self.scope().regs.len() as u8;
         let reg = Register::new(register_name, addr);
         self.scope_mut().regs.push(reg);
@@ -134,20 +140,20 @@ impl CompilerCtx {
         self.scope_mut().instructions.push(inst);
     }
 
-    pub(crate) fn get_or_add_const(&mut self, obj: &LuzObj) -> u32 {
+    pub(crate) fn get_or_add_const(&mut self, obj: LuzObj) -> u32 {
         let mut scope = self.scope_mut();
         let addr = scope
             .constants
             .iter()
             .enumerate()
-            .find(|(i, con)| *con == obj)
+            .find(|(i, con)| **con == obj)
             .map(|(i, con)| i);
 
         if let Some(addr) = addr {
             return addr as u32;
         }
 
-        scope.constants.push(obj.clone());
+        scope.constants.push(obj);
         (scope.constants.len() - 1) as u32
     }
 

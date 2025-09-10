@@ -1,7 +1,6 @@
-local function add(a, b)
-  local somme = a + b
-  return somme, 2
+local function x()
+  print("testing functions and calls", "ok", 2)
+  return true, false
 end
 
-local x, y = add(4, 5)
-return x, y
+return x()

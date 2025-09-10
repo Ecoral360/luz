@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use derive_new::new;
 
-use crate::{ast::Binop, compiler::opcode::LuaOpCode};
+use crate::{ast::Binop, compiler::opcode::LuaOpCode, luz::err::LuzError};
 
 #[allow(non_camel_case_types)]
 #[allow(unused)]
@@ -129,6 +129,18 @@ impl Instruction {
     pub fn op_closure(reg: u8, sub_scope_idx: u32) -> Instruction {
         iABx::new(sub_scope_idx, reg, LuaOpCode::OP_CLOSURE).into()
     }
+
+    pub fn op_getupval(dest: u8, upval_addr: u8) -> Instruction {
+        LuaOpCode::OP_GETUPVAL
+            .to_iabc(dest, false, upval_addr, 0)
+            .into()
+    }
+
+    pub fn op_gettabup(dest: u8, upval_addr: u8, tabattr_k: u8) -> Instruction {
+        LuaOpCode::OP_GETTABUP
+            .to_iabc(dest, false, upval_addr, tabattr_k)
+            .into()
+    }
 }
 
 #[allow(non_camel_case_types)]
@@ -224,7 +236,7 @@ impl From<u32> for iABx {
 impl Display for iABx {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let b = match self.op {
-            LuaOpCode::OP_LOADK => -(self.b as i32 + 1),
+            // LuaOpCode::OP_LOADK => -(self.b as i32 + 1),
             _ => self.b as i32,
         };
         write!(f, "{:?} {} {}", self.op, self.a, b)

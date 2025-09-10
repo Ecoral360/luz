@@ -1,7 +1,6 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
+
+use crate::luz::obj::{LuzType, Numeral};
 
 use super::obj::LuzObj;
 
@@ -9,7 +8,7 @@ use super::obj::LuzObj;
 pub struct Table {
     table: HashMap<LuzObj, LuzObj>,
     arr: Vec<LuzObj>,
-    metatable: Option<Arc<Mutex<Table>>>,
+    metatable: Option<Rc<RefCell<Table>>>,
     tag_method_flags: u8,
 }
 
@@ -20,7 +19,7 @@ impl PartialEq for Table {
 }
 
 impl Table {
-    pub fn new(table: HashMap<LuzObj, LuzObj>, metatable: Option<Arc<Mutex<Table>>>) -> Self {
+    pub fn new(table: HashMap<LuzObj, LuzObj>, metatable: Option<Rc<RefCell<Table>>>) -> Self {
         Self {
             table,
             metatable,
@@ -28,24 +27,59 @@ impl Table {
         }
     }
 
-    pub fn table_eq(table1: Arc<Mutex<Table>>, table2: Arc<Mutex<Table>>) -> bool {
-        let t1 = table1.lock().expect("Locking table1 for comparaison");
-        let t2 = table2.lock().expect("Locking table2 for comparaison");
+    pub fn table_eq(table1: Rc<RefCell<Table>>, table2: Rc<RefCell<Table>>) -> bool {
+        let t1 = table1.borrow();
+        let t2 = table2.borrow();
 
         *t1 == *t2
+    }
+
+    pub fn get(&self, key: &LuzObj) -> &LuzObj {
+        match key.get_type() {
+            LuzType::Nil => &LuzObj::Nil,
+            LuzType::Integer => {
+                let LuzObj::Numeral(Numeral::Int(i)) = key else {
+                    unreachable!()
+                };
+                if (0..self.arr.len()).contains(&(*i as usize)) {
+                    self.arr.get(*i as usize).unwrap_or(&LuzObj::Nil)
+                } else {
+                    self.table.get(key).unwrap_or(&LuzObj::Nil)
+                }
+            }
+            LuzType::Float => {
+                let LuzObj::Numeral(Numeral::Float(f)) = key else {
+                    unreachable!()
+                };
+
+                if f.floor() == *f {
+                    self.arr.get(*f as usize).unwrap_or(&LuzObj::Nil)
+                } else {
+                    self.table.get(key).unwrap_or(&LuzObj::Nil)
+                }
+            }
+            LuzType::Number => todo!(),
+            LuzType::Boolean
+            | LuzType::String
+            | LuzType::Function
+            | LuzType::Userdata
+            | LuzType::Thread => self.table.get(key).unwrap_or(&LuzObj::Nil),
+
+            LuzType::Table => todo!(),
+        }
     }
 
     pub fn insert(&mut self, item: LuzObj) {
         self.arr.push(item);
     }
 
-    pub fn raw_metatable(&self) -> Option<Arc<Mutex<Table>>> {
-        self.metatable.as_ref().map(|m| Arc::clone(m))
+    pub fn raw_metatable(&self) -> Option<Rc<RefCell<Table>>> {
+        self.metatable.as_ref().map(|m| Rc::clone(m))
     }
 
     pub fn metatable(&self) -> LuzObj {
         match &self.metatable {
-            Some(metatable) => LuzObj::Table(Arc::clone(metatable)),
+            Some(metatable) => LuzObj::Table(Rc::clone(metatable)),
             None => LuzObj::Nil,
         }
     }

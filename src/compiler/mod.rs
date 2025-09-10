@@ -1,5 +1,6 @@
 use std::{cell::RefCell, env::var, rc::Rc};
 
+use derive_builder::Builder;
 use derive_new::new;
 
 use crate::{
@@ -44,6 +45,11 @@ pub struct Scope {
     sub_scopes: Vec<ScopeLink>,
 }
 
+pub enum RegOrUpvalue {
+    Register(Register),
+    Upvalue(Upvalue),
+}
+
 impl Scope {
     pub fn instructions(&self) -> &Vec<Instruction> {
         &self.instructions
@@ -63,6 +69,110 @@ impl Scope {
 
     pub fn set_reg_val(&mut self, addr: u8, val: LuzObj) {
         self.regs[addr as usize].val = Some(val);
+    }
+
+    pub fn push_reg(&mut self, reg: &mut RegisterBuilder) {
+        reg.addr(self.regs().len() as u8);
+        self.regs.push(reg.build().expect("Non valid register"));
+    }
+
+    /// Returns (is_intable, reg_or_upvalue)
+    pub fn get_reg_or_upvalue(
+        &mut self,
+        register_name: &str,
+    ) -> Result<(bool, RegOrUpvalue), LuzError> {
+        let reg = self
+            .regs
+            .iter()
+            .find(|reg| matches!(&reg.name, Some(x) if x == register_name));
+
+        if let Some(v) = reg {
+            return Ok((false, RegOrUpvalue::Register(v.clone())));
+        }
+
+        if let Some(up_addr) = self.get_upvalue(register_name) {
+            return Ok((false, RegOrUpvalue::Upvalue(up_addr.clone())));
+        }
+
+        if let Some(p) = &self.parent {
+            if p.borrow().name == "GLOBAL" {
+                if let Some(env_addr) = self.get_upvalue("_ENV") {
+                    return Ok((true, RegOrUpvalue::Upvalue(env_addr.clone())));
+                } else {
+                    return Err(LuzError::CompileError(format!(
+                        "name {:?} is not declared",
+                        register_name
+                    )));
+                };
+            }
+
+            let (_, parent_addr) = p.borrow_mut().get_reg_or_upvalue(register_name)?;
+            let addr = self.upvalues.len() as u8;
+
+            let (in_table, upvalue) = match parent_addr {
+                RegOrUpvalue::Register(register) => (
+                    false,
+                    Upvalue::new(register.name.unwrap(), addr, register.addr, true),
+                ),
+                RegOrUpvalue::Upvalue(upvalue) => {
+                    let in_table = if upvalue.name == "_ENV" {
+                        self.constants
+                            .push(LuzObj::String(register_name.to_string()));
+                        true
+                    } else {
+                        false
+                    };
+                    (
+                        in_table,
+                        Upvalue::new(upvalue.name, addr, upvalue.parent_addr, false),
+                    )
+                }
+            };
+
+            self.upvalues.push(upvalue.clone());
+
+            Ok((in_table, RegOrUpvalue::Upvalue(upvalue)))
+        } else {
+            Err(LuzError::CompileError(format!(
+                "name {:?} is not declared",
+                register_name
+            )))
+        }
+    }
+
+    pub fn find_reg(&self, register_name: &str) -> Option<u8> {
+        self.regs
+            .iter()
+            .find(|reg| matches!(&reg.name, Some(x) if x == register_name))
+            .map(|reg| reg.addr)
+    }
+
+    pub fn get_upvalue(&mut self, name: &str) -> Option<&Upvalue> {
+        self.upvalues.iter().find(|con| con.name == name)
+    }
+
+    pub fn get_upvalue_addr(&mut self, name: &str) -> Option<u8> {
+        self.upvalues.iter().enumerate().find_map(|(i, con)| {
+            if con.name == name {
+                Some(i as u8)
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn get_upvalue_value(&self, upvalue_addr: u8) -> Option<LuzObj> {
+        let upvalue = &self.upvalues[upvalue_addr as usize];
+        let p = self
+            .parent
+            .as_ref()
+            .expect("Needs parent to have upvalue")
+            .borrow();
+        if upvalue.in_stack {
+            p.regs[upvalue.parent_addr as usize].val.clone()
+        } else {
+            p.get_upvalue_value(upvalue.parent_addr)
+        }
     }
 
     pub fn print_instructions(&self) {
@@ -88,9 +198,7 @@ impl Scope {
 
         println!("---- Upvalues:");
         for (i, inst) in self.upvalues.iter().enumerate() {
-            if let Some(name) = &inst.name {
-                println!("{} {} {} {}", i, name, inst.in_stack, inst.parent_addr);
-            }
+            println!("{} {} {} {}", i, inst.name, inst.in_stack, inst.parent_addr);
         }
 
         println!();
@@ -104,7 +212,7 @@ impl Scope {
     }
 }
 
-#[derive(Debug, new, Clone)]
+#[derive(Debug, new, Clone, Builder)]
 pub struct Register {
     pub name: Option<String>,
     pub addr: u8,
@@ -113,9 +221,10 @@ pub struct Register {
     #[new(value = "true")]
     pub free: bool,
 }
+
 #[derive(Debug, new, Clone)]
 pub struct Upvalue {
-    pub name: Option<String>,
+    pub name: String,
     pub addr: u8,
     pub parent_addr: u8,
     pub in_stack: bool,
@@ -145,7 +254,7 @@ impl Compiler {
                     ));
                     Ok(ExpEval::InRegister(ctx.target_register_or_err()?))
                 }
-                _ => Ok(ExpEval::InConstant(ctx.get_or_add_const(lit) as u8)),
+                _ => Ok(ExpEval::InConstant(ctx.get_or_add_const(lit.clone()) as u8)),
             },
             Exp::Name(name) => {
                 let src = ctx.find_reg(name).ok_or(LuzError::CompileError(format!(
@@ -221,10 +330,10 @@ impl Compiler {
             ctx.new_with(CompilerCtxBuilder::default().nb_expected((varlist.len() + 1) as u8));
 
         for var in varlist {
-            ctx.push_register(Some(var.0.clone()));
+            ctx.push_free_register(Some(var.0.clone()));
         }
         for exp in explist {
-            self.visit_exp(exp, &mut new_ctx);
+            self.visit_exp(exp, &mut new_ctx)?;
         }
 
         if varlist.len() > explist.len() && !Exp::is_multires(explist) {
@@ -238,11 +347,16 @@ impl Compiler {
     }
 
     fn visit_return(&mut self, ctx: &mut CompilerCtx, stat: &ReturnStat) -> Result<(), LuzError> {
-        let start = ctx.next_free_register();
+        let start = ctx.get_or_push_free_register();
         let size = stat.explist.len();
+        let mut new_ctx = if Exp::is_multires(&stat.explist) {
+            ctx.new_with(CompilerCtxBuilder::default().nb_expected(0))
+        } else {
+            ctx.new_with(CompilerCtxBuilder::default().nb_expected((size + 1) as u8))
+        };
         for exp in stat.explist.iter() {
-            self.visit_exp(exp, ctx);
-            ctx.claim_free_register();
+            self.visit_exp(exp, &mut new_ctx)?;
+            ctx.claim_next_free_register();
         }
         ctx.push_inst(Instruction::op_return(start, false, size as u8 + 1));
         Ok(())
@@ -317,17 +431,19 @@ impl Compiler {
             args,
             variadic,
         } = f_call;
-        self.visit_exp(func, ctx);
-        let f_addr = ctx.claim_free_register();
+        self.visit_exp(func, ctx)?;
+        let f_addr = ctx.claim_next_free_register();
         for arg in args {
-            self.visit_exp(arg, ctx);
-            ctx.claim_free_register();
+            self.visit_exp(arg, ctx)?;
+            ctx.claim_next_free_register();
         }
         let nb_expected = ctx.nb_expected();
-        ctx.unclaim_registers(
-            f_addr + nb_expected - 1,
-            args.len() as u8 - (nb_expected - 2),
-        );
+        if args.len() as u8 > nb_expected && nb_expected != 0 {
+            ctx.unclaim_registers(
+                f_addr + nb_expected - 1,
+                args.len() as u8 - (nb_expected - 1),
+            );
+        }
 
         ctx.push_inst(Instruction::op_call(
             f_addr,
@@ -340,13 +456,13 @@ impl Compiler {
     fn visit_literal(&mut self, ctx: &mut CompilerCtx, lit: &LuzObj) -> Result<(), LuzError> {
         match lit {
             LuzObj::Numeral(Numeral::Int(i)) if *i >= 0 && *i <= 255 => {
-                let reg = ctx.next_free_register();
+                let reg = ctx.get_or_push_free_register();
                 ctx.push_inst(Instruction::op_loadi(reg, *i as u32));
                 Ok(())
             }
             _ => {
-                let addr = ctx.get_or_add_const(lit);
-                let reg = ctx.next_free_register();
+                let addr = ctx.get_or_add_const(lit.clone());
+                let reg = ctx.get_or_push_free_register();
 
                 ctx.push_inst(Instruction::op_loadk(reg, addr));
                 Ok(())
@@ -355,13 +471,20 @@ impl Compiler {
     }
 
     fn visit_name(&mut self, ctx: &mut CompilerCtx, name: &str) -> Result<(), LuzError> {
-        let src = ctx.find_reg(name).ok_or(LuzError::CompileError(format!(
-            "name {:?} is not declared",
-            name
-        )))?;
+        let (is_intable, src) = ctx.scope_mut().get_reg_or_upvalue(name)?;
+        let reg = ctx.get_or_push_free_register();
+        match src {
+            RegOrUpvalue::Register(src) => ctx.push_inst(Instruction::op_move(reg, src.addr)),
+            RegOrUpvalue::Upvalue(src) => {
+                if is_intable {
+                    let name_k = ctx.get_or_add_const(LuzObj::String(name.to_owned()));
+                    ctx.push_inst(Instruction::op_gettabup(reg, src.addr, name_k as u8));
+                } else {
+                    ctx.push_inst(Instruction::op_getupval(reg, src.addr));
+                }
+            }
+        }
 
-        let reg = ctx.next_free_register();
-        ctx.push_inst(Instruction::op_move(reg, src));
         Ok(())
     }
 }
@@ -371,6 +494,7 @@ impl Visitor for Compiler {
     type Return = Result<(), LuzError>;
     type Ctx = CompilerCtx;
 
+    #[must_use]
     fn visit_exp(&mut self, exp: &Exp, ctx: &mut Self::Ctx) -> Self::Return {
         match exp {
             Exp::Literal(luz_obj) => self.visit_literal(ctx, luz_obj),
@@ -388,6 +512,7 @@ impl Visitor for Compiler {
         }
     }
 
+    #[must_use]
     fn visit_stat(&mut self, stat: &Stat, ctx: &mut Self::Ctx) -> Self::Return {
         match stat {
             Stat::Assign(assign_stat) => self.visit_assign(ctx, assign_stat),

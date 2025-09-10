@@ -143,7 +143,9 @@ fn parse_top_expr(pair: Pair<Rule>) -> Result<Exp, LuzError> {
         }
         Rule::Nil => Exp::Literal(LuzObj::Nil),
         Rule::Boolean => Exp::Literal(LuzObj::Boolean(pair.as_str() == "true")),
-        Rule::LiteralString => Exp::Literal(LuzObj::String(pair.as_str().to_string())),
+        Rule::LiteralString => {
+            Exp::Literal(LuzObj::String(pair.as_str()[1..pair.as_str().len() - 1].to_string()))
+        }
         Rule::Ellipse => Exp::Vararg,
         Rule::Var => {
             let mut inner = pair.into_inner();

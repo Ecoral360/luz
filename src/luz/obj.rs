@@ -1,4 +1,6 @@
+use core::fmt;
 use std::cell::RefCell;
+use std::fmt::Display;
 use std::hash::Hash;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -21,13 +23,31 @@ pub enum LuzObj {
     Boolean(bool),
     String(String),
     Function(Rc<RefCell<LuzFunction>>),
-    Table(Arc<Mutex<Table>>),
+    Table(Rc<RefCell<Table>>),
     Thread(Arc<Mutex<LuzThread>>),
     Userdata(Arc<Mutex<Userdata>>),
     Nil,
 }
 
+impl Display for LuzObj {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LuzObj::Numeral(numeral) => write!(f, "{numeral}"),
+            LuzObj::Boolean(b) => write!(f, "{b}"),
+            LuzObj::String(s) => write!(f, "{s}"),
+            LuzObj::Function(ref_cell) => write!(f, "{:?}", ref_cell.borrow()),
+            LuzObj::Table(ref_cell) => write!(f, "{:?}", ref_cell.borrow()),
+            LuzObj::Thread(mutex) => todo!(),
+            LuzObj::Userdata(mutex) => todo!(),
+            LuzObj::Nil => write!(f, "nil"),
+        }
+    }
+}
+
 impl LuzObj {
+    pub fn str(string: &str) -> Self {
+        Self::String(string.to_owned())
+    }
     /// Returns `true` if the luz obj is [`Nil`].
     ///
     /// [`Nil`]: LuzObj::Nil
@@ -107,9 +127,7 @@ impl LuzObj {
             }
             Unop::Len => match self {
                 LuzObj::String(s) => Numeral::Int(s.len() as i64).into(),
-                LuzObj::Table(t) => {
-                    Numeral::Int(t.lock().expect("Locked table for len").len() as i64).into()
-                }
+                LuzObj::Table(t) => Numeral::Int(t.borrow().len() as i64).into(),
                 LuzObj::Boolean(_) => Err(LuzError::Type {
                     wrong: LuzType::Boolean,
                     expected: vec![LuzType::String, LuzType::Table],
@@ -295,7 +313,7 @@ impl PartialEq for LuzObj {
             (Self::Numeral(l0), Self::Numeral(r0)) => l0 == r0,
             (Self::Boolean(l0), Self::Boolean(r0)) => l0 == r0,
             (Self::String(l0), Self::String(r0)) => l0 == r0,
-            (Self::Table(l0), Self::Table(r0)) => Table::table_eq(Arc::clone(l0), Arc::clone(r0)),
+            (Self::Table(l0), Self::Table(r0)) => Table::table_eq(Rc::clone(l0), Rc::clone(r0)),
             _ => core::mem::discriminant(self) == core::mem::discriminant(other),
         }
     }
