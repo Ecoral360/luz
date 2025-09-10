@@ -17,5 +17,5 @@ pub struct FuncParams {
 
 #[derive(Debug, Clone, new)]
 pub struct LuzFunction {
-    scope: Rc<RefCell<Scope>>,
+    pub scope: Rc<RefCell<Scope>>,
 }

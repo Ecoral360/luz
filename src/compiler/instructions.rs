@@ -50,9 +50,17 @@ impl Instruction {
         .into()
     }
 
+    /// Special values for n_args and n_expected
+    /// n_args == 0 -> variadic call
+    /// n_args == 1 -> no args
+    /// n_args >= 2 -> n_args - 1 gives the number of args
+    ///
+    /// n_expected == 0 -> variadic return
+    /// n_expected == 1 -> nothing returned
+    /// n_expected >= 2 -> n_expected - 1 gives the number of expected values
     pub fn op_call(func_reg: u8, n_args: u8, n_expected: u8) -> Instruction {
         LuaOpCode::OP_CALL
-            .to_iabc(func_reg, false, n_args + 1, n_expected + 1)
+            .to_iabc(func_reg, false, n_args, n_expected)
             .into()
     }
 

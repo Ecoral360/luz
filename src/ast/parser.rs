@@ -144,7 +144,7 @@ fn parse_top_expr(pair: Pair<Rule>) -> Result<Exp, LuzError> {
         Rule::Nil => Exp::Literal(LuzObj::Nil),
         Rule::Boolean => Exp::Literal(LuzObj::Boolean(pair.as_str() == "true")),
         Rule::LiteralString => Exp::Literal(LuzObj::String(pair.as_str().to_string())),
-        Rule::Ellipse => Exp::Ellipsis,
+        Rule::Ellipse => Exp::Vararg,
         Rule::Var => {
             let mut inner = pair.into_inner();
             let var = parse_top_expr(inner.next().expect("Var"));
@@ -328,7 +328,7 @@ pub fn parse_nameattriblist(pairs: Pairs<Rule>) -> Result<Vec<(String, Option<At
 
 pub fn parse_script(pairs: &mut Pairs<Rule>) -> Result<Vec<Stat>, LuzError> {
     let mut stats = parse_stmts(pairs)?;
-    stats.push(Stat::Return(ReturnStat { explist: vec![] }));
+    stats.push(Stat::Return(ReturnStat::new(vec![])));
     Ok(stats)
 }
 

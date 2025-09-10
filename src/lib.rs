@@ -6,8 +6,7 @@ use pest_derive::Parser;
 
 use crate::{
     ast::{parser::parse_script, Stat},
-    compiler::visitor::Visitor,
-    compiler::Compiler,
+    compiler::{ctx::{CompilerCtx, CompilerCtxBuilder}, visitor::Visitor, Compiler},
 };
 
 pub mod ast;
@@ -61,12 +60,13 @@ pub fn run_file(path: &str) -> Result<(), LuzError> {
 }
 
 fn run_compiler(stmts: Vec<Stat>) -> Result<(), LuzError> {
-    let mut compiler = Compiler::default();
+    let mut compiler = Compiler {};
+    let mut ctx = CompilerCtx::new_main();
     for stmt in stmts {
-        compiler.visit_stat(&stmt)?;
+        compiler.visit_stat(&stmt, &mut ctx)?;
     }
-    compiler.print_instructions();
-    let mut runner = runner::Runner::new(compiler.scope_clone());
+    ctx.print_instructions();
+    let mut runner = runner::Runner::new(ctx.scope_clone());
     let res = runner.run()?;
     dbg!(res);
     Ok(())

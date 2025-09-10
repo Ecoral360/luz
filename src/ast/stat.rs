@@ -30,9 +30,19 @@ pub struct GotoStat(pub String);
 #[derive(Debug, Clone, new)]
 pub struct LabelStat(pub String);
 
-#[derive(Debug, Clone, new)]
+#[derive(Debug, Clone)]
 pub struct ReturnStat {
     pub explist: Vec<Exp>,
+    pub variadic: bool,
+}
+
+impl ReturnStat {
+    pub fn new(explist: Vec<Exp>) -> Self {
+        Self {
+            variadic: explist.last().is_some_and(|exp| exp.is_multire()),
+            explist,
+        }
+    }
 }
 
 #[derive(Debug, Clone, new)]

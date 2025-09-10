@@ -12,7 +12,7 @@ use crate::{
     },
     luz::{
         err::LuzError,
-        obj::{LuzFunction, LuzObj, Numeral},
+        obj::{LuzFunction, LuzObj, LuzType, Numeral},
     },
 };
 
@@ -111,6 +111,39 @@ impl Runner {
                         rets.push(self.get_reg_val(a + i)?);
                     }
                     return Ok(Some(rets));
+                }
+                LuaOpCode::OP_CALL => {
+                    let iABC {
+                        c: nb_results,
+                        b: nb_args,
+                        a: func_addr,
+                        ..
+                    } = *i_abc;
+
+                    let func = self.get_reg_val(func_addr)?;
+                    let LuzObj::Function(f) = func else {
+                        return Err(LuzError::Type {
+                            wrong: func.get_type(),
+                            expected: vec![LuzType::Function],
+                        });
+                    };
+
+                    let args = (func_addr + 1..func_addr + nb_args)
+                        .map(|arg_addr| self.get_reg_val(arg_addr))
+                        .collect::<Result<Vec<_>, _>>()?;
+
+                    let f = f.borrow();
+
+                    let mut fc_scope = f.scope.borrow().clone();
+                    for (i, arg) in args.into_iter().enumerate() {
+                        fc_scope.set_reg_val(i as u8, arg);
+                    }
+                    let mut fc_runner = Runner::new(Rc::new(RefCell::new(fc_scope)));
+
+                    let results = fc_runner.run()?;
+                    for (i, result) in results.into_iter().enumerate() {
+                        self.scope_mut().set_reg_val(func_addr + i as u8, result);
+                    }
                 }
                 op => todo!("iABC {:?}", op),
             },

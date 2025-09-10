@@ -3,7 +3,5 @@ local function add(a, b)
   return somme
 end
 
-
-local x = 12
-local y = 20
-return x + y, 1 - y
+local x = add(4, 5)
+return x

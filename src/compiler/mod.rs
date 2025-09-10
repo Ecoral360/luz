@@ -1,13 +1,11 @@
-use std::{
-    cell::{Ref, RefCell, RefMut},
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
 use derive_new::new;
 
 use crate::{
-    ast::{AssignStat, Binop, Exp, FunctionDefStat, ReturnStat, Stat},
+    ast::{AssignStat, Binop, Exp, FuncCall, FunctionDefStat, ReturnStat, Stat},
     compiler::{
+        ctx::{CompilerCtx, CompilerCtxBuilder},
         instructions::{Instruction, MAX_HALF_sBx},
         visitor::Visitor,
     },
@@ -17,26 +15,17 @@ use crate::{
     },
 };
 
+pub mod ctx;
 pub mod instructions;
 pub mod opcode;
 pub mod visitor;
 
 type ScopeLink = Rc<RefCell<Scope>>;
 
-#[allow(unused)]
 #[derive(Debug)]
-pub struct Compiler {
-    scope: ScopeLink,
-}
-impl Default for Compiler {
-    fn default() -> Self {
-        Self {
-            scope: Rc::new(RefCell::new(Scope::new(String::from("main"), None))),
-        }
-    }
-}
+pub struct Compiler {}
 
-#[derive(Debug, new)]
+#[derive(Debug, new, Clone)]
 pub struct Scope {
     name: String,
     parent: Option<ScopeLink>,
@@ -132,96 +121,12 @@ pub struct Upvalue {
 
 #[allow(unused)]
 impl Compiler {
-    pub fn scope_clone(&self) -> ScopeLink {
-        Rc::clone(&self.scope)
-    }
-
-    fn scope(&self) -> Ref<Scope> {
-        self.scope.borrow()
-    }
-
-    fn scope_mut(&mut self) -> RefMut<Scope> {
-        self.scope.borrow_mut()
-    }
-
-    fn push_scope(&mut self, scope_name: String) -> usize {
-        let new_scope = Rc::new(RefCell::new(Scope::new(
-            scope_name,
-            Some(Rc::clone(&self.scope)),
-        )));
-        let idx = self.scope_mut().sub_scopes().len();
-        self.scope_mut().sub_scopes.push(Rc::clone(&new_scope));
-        self.scope = new_scope;
-        idx
-    }
-
-    fn pop_scope(&mut self) -> Result<(), LuzError> {
-        let parent = Rc::clone(&self.scope);
-        let parent = parent.borrow();
-        let parent = parent
-            .parent
-            .as_ref()
-            .ok_or_else(|| LuzError::CompileError(format!("No parent scope")))?;
-
-        self.scope = Rc::clone(parent);
-        Ok(())
-    }
-
-    fn target_register(&self) -> Option<u8> {
-        self.scope().regs.last().map(|reg| reg.addr)
-    }
-
-    fn target_register_or_err(&self) -> Result<u8, LuzError> {
-        self.scope()
-            .regs
-            .last()
-            .map(|reg| reg.addr)
-            .ok_or_else(|| LuzError::CompileError(format!("No target registers")))
-    }
-
-    fn find_reg(&self, register_name: &str) -> Option<u8> {
-        self.scope()
-            .regs
-            .iter()
-            .find(|reg| matches!(&reg.name, Some(x) if x == register_name))
-            .map(|reg| reg.addr)
-    }
-
-    fn push_register(&mut self, register_name: Option<String>) {
-        let reg = Register::new(register_name, self.scope().regs.len() as u8);
-        self.scope_mut().regs.push(reg);
-    }
-
-    fn push_inst(&mut self, inst: Instruction) {
-        self.scope_mut().instructions.push(inst);
-    }
-
-    fn get_or_add_const(&mut self, obj: &LuzObj) -> u32 {
-        let mut scope = self.scope_mut();
-        let addr = scope
-            .constants
-            .iter()
-            .enumerate()
-            .find(|(i, con)| *con == obj)
-            .map(|(i, con)| i);
-
-        if let Some(addr) = addr {
-            return addr as u32;
-        }
-
-        scope.constants.push(obj.clone());
-        (scope.constants.len() - 1) as u32
-    }
-
-    pub fn instructions(&self) -> Vec<Instruction> {
-        self.scope().instructions.clone()
-    }
-
-    pub fn print_instructions(&self) {
-        self.scope.borrow().print_instructions();
-    }
-
-    fn handle_exp(&mut self, exp: &Exp, supports_immidiate: bool) -> Result<ExpEval, LuzError> {
+    fn handle_exp(
+        &mut self,
+        ctx: &mut CompilerCtx,
+        exp: &Exp,
+        supports_immidiate: bool,
+    ) -> Result<ExpEval, LuzError> {
         match exp {
             Exp::Literal(lit) => match lit {
                 LuzObj::Numeral(Numeral::Int(i))
@@ -232,24 +137,24 @@ impl Compiler {
                 LuzObj::Numeral(Numeral::Int(i))
                     if (-(MAX_HALF_sBx as i64)..(MAX_HALF_sBx as i64)).contains(i) =>
                 {
-                    self.push_inst(Instruction::op_loadi(
-                        self.target_register_or_err()?,
+                    ctx.push_inst(Instruction::op_loadi(
+                        ctx.target_register_or_err()?,
                         *i as u32,
                     ));
-                    Ok(ExpEval::InRegister(self.target_register_or_err()?))
+                    Ok(ExpEval::InRegister(ctx.target_register_or_err()?))
                 }
-                _ => Ok(ExpEval::InConstant(self.get_or_add_const(lit) as u8)),
+                _ => Ok(ExpEval::InConstant(ctx.get_or_add_const(lit) as u8)),
             },
             Exp::Name(name) => {
-                let src = self.find_reg(name).ok_or(LuzError::CompileError(format!(
+                let src = ctx.find_reg(name).ok_or(LuzError::CompileError(format!(
                     "name {:?} is not declared",
                     name
                 )))?;
                 Ok(ExpEval::InRegister(src))
             }
             _ => {
-                self.visit_exp(exp)?;
-                Ok(ExpEval::InRegister(self.target_register_or_err()?))
+                self.visit_exp(exp, ctx)?;
+                Ok(ExpEval::InRegister(ctx.target_register_or_err()?))
             }
         }
     }
@@ -263,7 +168,11 @@ enum ExpEval {
 
 #[allow(unused)]
 impl Compiler {
-    fn visit_function_def(&mut self, func_def: &FunctionDefStat) -> Result<(), LuzError> {
+    fn visit_function_def(
+        &mut self,
+        ctx: &mut CompilerCtx,
+        func_def: &FunctionDefStat,
+    ) -> Result<(), LuzError> {
         match func_def {
             FunctionDefStat::Normal {
                 name,
@@ -272,17 +181,17 @@ impl Compiler {
                 body,
             } => todo!(),
             FunctionDefStat::Local { name, params, body } => {
-                self.push_register(Some(name.clone()));
-                let idx = self.push_scope(name.clone());
+                ctx.push_register(Some(name.clone()));
+                let idx = ctx.push_scope(name.clone());
                 for param in &params.fixed {
-                    self.push_register(Some(param.clone()));
+                    ctx.push_register(Some(param.clone()));
                 }
                 for stat in body {
-                    self.visit_stat(stat)?;
+                    self.visit_stat(stat, ctx)?;
                 }
-                self.pop_scope()?;
-                self.push_inst(Instruction::op_closure(
-                    self.target_register_or_err()?,
+                ctx.pop_scope()?;
+                ctx.push_inst(Instruction::op_closure(
+                    ctx.target_register_or_err()?,
                     idx as u32,
                 ));
             }
@@ -290,54 +199,61 @@ impl Compiler {
         Ok(())
     }
 
-    fn visit_assign(&mut self, assign: &AssignStat) -> Result<(), LuzError> {
+    fn visit_assign(&mut self, ctx: &mut CompilerCtx, assign: &AssignStat) -> Result<(), LuzError> {
         match assign {
             AssignStat::Normal { varlist, explist } => todo!(),
             AssignStat::Local { varlist, explist } => {
-                self.visit_local_assign(assign);
+                self.visit_local_assign(ctx, assign);
             }
         }
         Ok(())
     }
 
-    fn visit_local_assign(&mut self, assign: &AssignStat) -> Result<(), LuzError> {
+    fn visit_local_assign(
+        &mut self,
+        ctx: &mut CompilerCtx,
+        assign: &AssignStat,
+    ) -> Result<(), LuzError> {
         let AssignStat::Local { varlist, explist } = assign else {
             unreachable!()
         };
 
+        let mut new_ctx =
+            ctx.new_with(CompilerCtxBuilder::default().nb_expected((varlist.len() + 1) as u8));
+
         for (var, exp) in varlist.iter().zip(explist) {
-            self.push_register(Some(var.0.clone()));
-            self.visit_exp(exp);
+            ctx.push_register(Some(var.0.clone()));
+            self.visit_exp(exp, &mut new_ctx);
         }
 
         if varlist.len() > explist.len() {
             for var in varlist[explist.len()..].iter() {
-                self.push_register(Some(var.0.clone()));
-                self.push_inst(Instruction::op_loadnil(self.target_register_or_err()?, 0));
+                ctx.push_register(Some(var.0.clone()));
+                ctx.push_inst(Instruction::op_loadnil(ctx.target_register_or_err()?, 0));
             }
         }
 
         Ok(())
     }
 
-    fn visit_return(&mut self, stat: &ReturnStat) -> Result<(), LuzError> {
-        let start = self.scope().regs.len();
+    fn visit_return(&mut self, ctx: &mut CompilerCtx, stat: &ReturnStat) -> Result<(), LuzError> {
+        let start = ctx.scope().regs.len();
         let size = stat.explist.len();
         for exp in stat.explist.iter() {
-            self.push_register(None);
-            self.visit_exp(exp);
+            ctx.push_register(None);
+            self.visit_exp(exp, ctx);
         }
-        self.push_inst(Instruction::op_return(start as u8, false, size as u8 + 1));
+        ctx.push_inst(Instruction::op_return(start as u8, false, size as u8 + 1));
         Ok(())
     }
 
-    fn visit_binop(&mut self, exp: &Exp) -> Result<(), LuzError> {
+    fn visit_binop(&mut self, ctx: &mut CompilerCtx, exp: &Exp) -> Result<(), LuzError> {
         let Exp::Binop { op, lhs, rhs } = exp else {
             unreachable!()
         };
 
-        let lhs_addr = self.handle_exp(lhs, matches!(op, Binop::Add))?;
-        let rhs_addr = self.handle_exp(rhs, matches!(op, Binop::Add | Binop::Sub))?;
+        let lhs_addr = self.handle_exp(ctx, lhs, matches!(op, Binop::Add))?;
+        let rhs_addr = self.handle_exp(ctx, rhs, matches!(op, Binop::Add | Binop::Sub))?;
 
         let is_b_const = matches!(lhs_addr, ExpEval::InConstant(_));
         let is_b_imm = matches!(lhs_addr, ExpEval::InImmediate(_));
@@ -370,16 +286,16 @@ impl Compiler {
         }
 
         if is_c_imm || is_b_imm {
-            self.push_inst(Instruction::op_addi(
-                self.target_register_or_err()?,
+            ctx.push_inst(Instruction::op_addi(
+                ctx.target_register_or_err()?,
                 lhs_addr,
                 false,
                 rhs_addr,
             ));
         } else {
-            self.push_inst(Instruction::op_arithmetic(
+            ctx.push_inst(Instruction::op_arithmetic(
                 *op,
-                self.target_register_or_err()?,
+                ctx.target_register_or_err()?,
                 lhs_addr,
                 is_b_const,
                 rhs_addr,
@@ -389,20 +305,47 @@ impl Compiler {
         Ok(())
     }
 
-    fn visit_literal(&mut self, lit: &LuzObj) -> Result<(), LuzError> {
+    fn visit_function_call(
+        &mut self,
+        ctx: &mut CompilerCtx,
+        f_call: &FuncCall,
+    ) -> Result<(), LuzError> {
+        let FuncCall {
+            func,
+            method_name,
+            args,
+            variadic,
+        } = f_call;
+        let f_addr = ctx.target_register_or_err()?;
+        self.visit_exp(func, ctx);
+        for arg in args {
+            ctx.push_register(None);
+            self.visit_exp(arg, ctx);
+        }
+        let nb_expected = ctx.nb_expected();
+
+        ctx.push_inst(Instruction::op_call(
+            f_addr,
+            if *variadic { 0 } else { (args.len() + 1) as u8 },
+            nb_expected,
+        ));
+        Ok(())
+    }
+
+    fn visit_literal(&mut self, ctx: &mut CompilerCtx, lit: &LuzObj) -> Result<(), LuzError> {
         match lit {
             LuzObj::Numeral(Numeral::Int(i)) if *i >= 0 && *i <= 255 => {
-                self.push_inst(Instruction::op_loadi(
-                    self.target_register().expect("Register to load literal"),
+                ctx.push_inst(Instruction::op_loadi(
+                    ctx.target_register().expect("Register to load literal"),
                     *i as u32,
                 ));
                 Ok(())
             }
             _ => {
-                let addr = self.get_or_add_const(lit);
+                let addr = ctx.get_or_add_const(lit);
 
-                self.push_inst(Instruction::op_loadk(
-                    self.target_register().expect("Register to load literal"),
+                ctx.push_inst(Instruction::op_loadk(
+                    ctx.target_register().expect("Register to load literal"),
                     addr,
                 ));
                 Ok(())
@@ -410,13 +353,13 @@ impl Compiler {
         }
     }
 
-    fn visit_name(&mut self, name: &str) -> Result<(), LuzError> {
-        let src = self.find_reg(name).ok_or(LuzError::CompileError(format!(
+    fn visit_name(&mut self, ctx: &mut CompilerCtx, name: &str) -> Result<(), LuzError> {
+        let src = ctx.find_reg(name).ok_or(LuzError::CompileError(format!(
             "name {:?} is not declared",
             name
         )))?;
 
-        self.push_inst(Instruction::op_move(self.target_register_or_err()?, src));
+        ctx.push_inst(Instruction::op_move(ctx.target_register_or_err()?, src));
         Ok(())
     }
 }
@@ -424,30 +367,31 @@ impl Compiler {
 #[allow(unused)]
 impl Visitor for Compiler {
     type Return = Result<(), LuzError>;
+    type Ctx = CompilerCtx;
 
-    fn visit_exp(&mut self, exp: &Exp) -> Self::Return {
+    fn visit_exp(&mut self, exp: &Exp, ctx: &mut Self::Ctx) -> Self::Return {
         match exp {
-            Exp::Literal(luz_obj) => self.visit_literal(luz_obj),
-            Exp::Binop { .. } => self.visit_binop(exp),
-            Exp::Ellipsis => todo!(),
-            Exp::Name(name) => self.visit_name(name),
+            Exp::Literal(luz_obj) => self.visit_literal(ctx, luz_obj),
+            Exp::Binop { .. } => self.visit_binop(ctx, exp),
+            Exp::Vararg => todo!(),
+            Exp::Name(name) => self.visit_name(ctx, name),
             Exp::Var(exp) => todo!(),
             Exp::Unop(unop, exp) => todo!(),
             Exp::CmpOp { op, lhs, rhs } => todo!(),
             Exp::LogicCmpOp { op, lhs, rhs } => todo!(),
             Exp::Access(exp_access) => todo!(),
             Exp::FuncDef(func_def) => todo!(),
-            Exp::FuncCall(func_call) => todo!(),
+            Exp::FuncCall(func_call) => self.visit_function_call(ctx, func_call),
             Exp::TableConstructor(exp_table_constructor) => todo!(),
         }
     }
 
-    fn visit_stat(&mut self, stat: &Stat) -> Self::Return {
+    fn visit_stat(&mut self, stat: &Stat, ctx: &mut Self::Ctx) -> Self::Return {
         match stat {
-            Stat::Assign(assign_stat) => self.visit_assign(assign_stat),
-            Stat::Return(return_stat) => self.visit_return(return_stat),
-            Stat::FuncCall(func_call) => todo!(),
-            Stat::FunctionDef(function_def_stat) => self.visit_function_def(function_def_stat),
+            Stat::Assign(assign_stat) => self.visit_assign(ctx, assign_stat),
+            Stat::Return(return_stat) => self.visit_return(ctx, return_stat),
+            Stat::FuncCall(func_call) => self.visit_function_call(ctx, func_call),
+            Stat::FunctionDef(function_def_stat) => self.visit_function_def(ctx, function_def_stat),
             Stat::Do(do_stat) => todo!(),
             Stat::While(while_stat) => todo!(),
             Stat::Repeat(repea_stat) => todo!(),

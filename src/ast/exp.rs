@@ -15,7 +15,7 @@ use super::Stat;
 #[derive(Debug, Clone, From)]
 pub enum Exp {
     Literal(LuzObj),
-    Ellipsis,
+    Vararg,
     Name(String),
     Var(Box<Exp>),
     Unop(Unop, Box<Exp>),
@@ -40,39 +40,73 @@ pub enum Exp {
     TableConstructor(ExpTableConstructor),
 }
 
+impl Exp {}
+
 #[derive(Debug, Clone, new)]
 pub struct ExpAccess {
-    exp: Box<Exp>,
-    value: Box<Exp>,
+    pub exp: Box<Exp>,
+    pub value: Box<Exp>,
 }
 
 #[derive(Debug, Clone, new)]
 pub struct FuncDef {
-    params: FuncParams,
-    body: Vec<Stat>,
+    pub params: FuncParams,
+    pub body: Vec<Stat>,
 }
 
-#[derive(Debug, Clone, new)]
+#[derive(Debug, Clone)]
 pub struct FuncCall {
-    func: Box<Exp>,
-    method_name: Option<String>,
-    args: Vec<Exp>,
+    pub func: Box<Exp>,
+    pub method_name: Option<String>,
+    pub args: Vec<Exp>,
+    pub variadic: bool,
 }
 
-#[derive(Debug, Clone, new)]
+impl FuncCall {
+    pub fn new(func: Box<Exp>, method_name: Option<String>, args: Vec<Exp>) -> Self {
+        Self {
+            func,
+            method_name,
+            variadic: args.last().is_some_and(|arg| arg.is_multire()),
+            args,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ExpTableConstructor {
-    arr_fields: Vec<Exp>,
-    obj_fields: Vec<ExpTableConstructorField>,
-    last_exp: Option<Box<Exp>>,
+    pub arr_fields: Vec<Exp>,
+    pub obj_fields: Vec<ExpTableConstructorField>,
+    pub last_exp: Option<Box<Exp>>,
+    pub variadic: bool,
+}
+
+impl ExpTableConstructor {
+    pub fn new(
+        arr_fields: Vec<Exp>,
+        obj_fields: Vec<ExpTableConstructorField>,
+        last_exp: Option<Box<Exp>>,
+    ) -> Self {
+        Self {
+            arr_fields,
+            obj_fields,
+            variadic: last_exp.as_ref().is_some_and(|exp| exp.is_multire()),
+            last_exp,
+        }
+    }
 }
 
 #[derive(Debug, Clone, new)]
 pub struct ExpTableConstructorField {
-    key: Box<Exp>,
-    val: Box<Exp>,
+    pub key: Box<Exp>,
+    pub val: Box<Exp>,
 }
 
 impl Exp {
+    pub fn is_multire(&self) -> bool {
+        matches!(self, Exp::FuncCall(_) | Exp::Vararg)
+    }
+
     pub fn do_unop(self, unop: Unop) -> Result<Self, LuzError> {
         Ok(match self {
             Self::Literal(obj) => obj.apply_unop(unop)?.into(),
