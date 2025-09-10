@@ -213,7 +213,13 @@ fn parse_top_expr(pair: Pair<Rule>) -> Result<Exp, LuzError> {
             let mut params = FuncParamsBuilder::default();
 
             if let Rule::parlist = next.as_rule() {
-                let mut parlist = signature.next().unwrap().into_inner();
+                let mut parlist = signature
+                    .next()
+                    .unwrap()
+                    .into_inner()
+                    .next()
+                    .unwrap()
+                    .into_inner();
                 let last = parlist.next_back().unwrap();
                 let mut fixed = parse_namelist(parlist);
                 if last.as_rule() == Rule::Ellipse {
@@ -449,9 +455,19 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
             let mut params = FuncParamsBuilder::default();
 
             if let Rule::parlist = next.as_rule() {
-                let mut parlist = signature.next().unwrap().into_inner();
+                let mut parlist = signature
+                    .next()
+                    .unwrap()
+                    .into_inner()
+                    .next()
+                    .unwrap()
+                    .into_inner();
                 let last = parlist.next_back().unwrap();
-                let mut fixed = parse_namelist(parlist);
+                let mut fixed = if parlist.len() == 0 {
+                    vec![]
+                } else {
+                    parse_namelist(parlist)
+                };
                 if last.as_rule() == Rule::Ellipse {
                     params.is_vararg(true);
                 } else {
@@ -460,7 +476,7 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
                 params.fixed(fixed);
             }
 
-            let body = parse_stmts(&mut signature.next().expect("Function body").into_inner())?;
+            let body = parse_script(&mut signature.next().expect("Function body").into_inner())?;
 
             vec![FunctionDefStat::new_local(name, params.build().unwrap(), body).into()]
         }
@@ -482,7 +498,13 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
             let mut params = FuncParamsBuilder::default();
 
             if let Rule::parlist = next.as_rule() {
-                let mut parlist = signature.next().unwrap().into_inner();
+                let mut parlist = signature
+                    .next()
+                    .unwrap()
+                    .into_inner()
+                    .next()
+                    .unwrap()
+                    .into_inner();
                 let last = parlist.next_back().unwrap();
                 let mut fixed = parse_namelist(parlist);
                 if last.as_rule() == Rule::Ellipse {
@@ -493,7 +515,7 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
                 params.fixed(fixed);
             }
 
-            let body = parse_stmts(&mut signature.next().expect("Function body").into_inner())?;
+            let body = parse_script(&mut signature.next().expect("Function body").into_inner())?;
 
             vec![
                 FunctionDefStat::new_normal(namelist, method, params.build().unwrap(), body).into(),

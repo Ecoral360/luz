@@ -7,7 +7,7 @@ use std::{
 use derive_new::new;
 
 use crate::{
-    ast::{AssignStat, Binop, Exp, ReturnStat, Stat},
+    ast::{AssignStat, Binop, Exp, FunctionDefStat, ReturnStat, Stat},
     compiler::{instructions::Instruction, visitor::Visitor},
     luz::{
         err::LuzError,
@@ -142,13 +142,15 @@ impl Compiler {
         self.scope.borrow_mut()
     }
 
-    fn push_scope(&mut self, scope_name: String) {
+    fn push_scope(&mut self, scope_name: String) -> usize {
         let new_scope = Rc::new(RefCell::new(Scope::new(
             scope_name,
             Some(Rc::clone(&self.scope)),
         )));
+        let idx = self.scope_mut().sub_scopes().len();
         self.scope_mut().sub_scopes.push(Rc::clone(&new_scope));
         self.scope = new_scope;
+        idx
     }
 
     fn pop_scope(&mut self) -> Result<(), LuzError> {
@@ -248,6 +250,33 @@ enum ExpEval {
 
 #[allow(unused)]
 impl Compiler {
+    fn visit_function_def(&mut self, func_def: &FunctionDefStat) -> Result<(), LuzError> {
+        match func_def {
+            FunctionDefStat::Normal {
+                name,
+                method,
+                params,
+                body,
+            } => todo!(),
+            FunctionDefStat::Local { name, params, body } => {
+                self.push_register(Some(name.clone()));
+                let idx = self.push_scope(name.clone());
+                for param in &params.fixed {
+                    self.push_register(Some(param.clone()));
+                }
+                for stat in body {
+                    self.visit_stat(stat)?;
+                }
+                self.pop_scope()?;
+                self.push_inst(Instruction::op_closure(
+                    self.target_register_or_err()?,
+                    idx as u32,
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn visit_assign(&mut self, assign: &AssignStat) -> Result<(), LuzError> {
         match assign {
             AssignStat::Normal { varlist, explist } => todo!(),
@@ -267,6 +296,14 @@ impl Compiler {
             self.push_register(Some(var.0.clone()));
             self.visit_exp(exp);
         }
+
+        if varlist.len() > explist.len() {
+            for var in varlist[explist.len()..].iter() {
+                self.push_register(Some(var.0.clone()));
+                self.push_inst(Instruction::op_loadnil(self.target_register_or_err()?, 0));
+            }
+        }
+
         Ok(())
     }
 
@@ -438,7 +475,7 @@ impl Visitor for Compiler {
             Stat::Assign(assign_stat) => self.visit_assign(assign_stat),
             Stat::Return(return_stat) => self.visit_return(return_stat),
             Stat::FuncCall(func_call) => todo!(),
-            Stat::FunctionDef(function_def_stat) => todo!(),
+            Stat::FunctionDef(function_def_stat) => self.visit_function_def(function_def_stat),
             Stat::Do(do_stat) => todo!(),
             Stat::While(while_stat) => todo!(),
             Stat::Repeat(repea_stat) => todo!(),

@@ -1,14 +1,21 @@
+use std::{cell::RefCell, rc::Rc};
+
 use derive_builder::Builder;
+use derive_new::new;
+
+use crate::compiler::Scope;
 
 #[derive(Debug, Clone, Builder)]
 pub struct FuncParams {
     #[builder(default = vec![])]
-    fixed: Vec<String>,
+    pub fixed: Vec<String>,
     #[builder(default = false)]
-    is_vararg: bool,
+    pub is_vararg: bool,
 }
 
 
 
-#[derive(Debug, Clone)]
-pub struct LuzFunction {}
+#[derive(Debug, Clone, new)]
+pub struct LuzFunction {
+    scope: Rc<RefCell<Scope>>,
+}

@@ -1,5 +1,7 @@
+use std::cell::RefCell;
 use std::hash::Hash;
 use std::ptr;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -19,7 +21,7 @@ pub enum LuzObj {
     Numeral(Numeral),
     Boolean(bool),
     String(String),
-    Function(Arc<Mutex<LuzFunction>>),
+    Function(Rc<RefCell<LuzFunction>>),
     Table(Arc<Mutex<Table>>),
     Thread(Arc<Mutex<LuzThread>>),
     Userdata(Arc<Mutex<Userdata>>),

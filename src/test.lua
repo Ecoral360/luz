@@ -14,7 +14,13 @@
 --   
 -- end
 
-local x = 10
-local y = x + 2
+local function x(h, r)
+  local a = 1
+  local b = 1
+  local c = 1
+  -- local b, c = a + 20 + a,a - 20
+  local function y()
+  end
 
-return x + 1, y * x + 2 - 1
+  local e
+end

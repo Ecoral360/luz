@@ -12,7 +12,7 @@ use crate::{
     },
     luz::{
         err::LuzError,
-        obj::{LuzObj, Numeral},
+        obj::{LuzFunction, LuzObj, Numeral},
     },
 };
 
@@ -155,6 +155,22 @@ impl Runner {
             },
             Instruction::iABx(i_abx) => match i_abx.op {
                 LuaOpCode::OP_LOADK => self.run_loadk(i_abx)?,
+                LuaOpCode::OP_LOADNIL => {
+                    let iABx { b, a, .. } = *i_abx;
+                    for i in 0..=b {
+                        self.scope
+                            .borrow_mut()
+                            .set_reg_val(a + i as u8, LuzObj::Nil);
+                    }
+                }
+                LuaOpCode::OP_CLOSURE => {
+                    let iABx { b, a, .. } = *i_abx;
+                    let sub_scope = self.scope().sub_scopes()[b as usize].clone();
+                    self.scope.borrow_mut().set_reg_val(
+                        a,
+                        LuzObj::Function(Rc::new(RefCell::new(LuzFunction::new(sub_scope)))),
+                    );
+                }
                 LuaOpCode::OP_LOADI => {
                     let iABx { b, a, .. } = *i_abx;
                     let imm = from_excess_of_bx(b);

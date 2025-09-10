@@ -26,6 +26,10 @@ impl Instruction {
         iABC::new(c, b, is_b_const, a, LuaOpCode::OP_ADDI).into()
     }
 
+    pub fn op_loadnil(a: u8, b: u32) -> Instruction {
+        iABx::new(b, a, LuaOpCode::OP_LOADNIL).into()
+    }
+
     pub fn op_add(a: u8, b: u8, is_b_const: bool, c: u8, is_c_const: bool) -> Instruction {
         iABC::new(
             c,
@@ -115,6 +119,10 @@ impl Instruction {
 
     pub fn op_move(dest: u8, src: u8) -> Instruction {
         iABC::new(0, src, false, dest, LuaOpCode::OP_MOVE).into()
+    }
+
+    pub fn op_closure(reg: u8, sub_scope_idx: u32) -> Instruction {
+        iABx::new(sub_scope_idx, reg, LuaOpCode::OP_CLOSURE).into()
     }
 }
 
