@@ -6,9 +6,9 @@ use std::{
 use crate::{
     ast::{Binop, CmpOp},
     compiler::{
+        ctx::Scope,
         instructions::{iABC, iABx, iAsBx, isJ, Instruction, MAX_HALF_sBx, MAX_HALF_sJ},
         opcode::LuaOpCode,
-        Scope,
     },
     luz::{
         err::LuzError,
@@ -140,6 +140,22 @@ impl Runner {
                         .borrow_mut()
                         .set_reg_val(a, lhs.apply_binop(Binop::Add, rhs)?);
                 }
+
+                LuaOpCode::OP_CONCAT => {
+                    let start = *a;
+                    let end = start + *b;
+
+                    let dest = *a;
+
+                    let mut str = String::new();
+                    for addr in start..end {
+                        let obj = self.get_reg_val(addr)?;
+                        str += &obj.to_string();
+                    }
+
+                    self.scope_mut().set_reg_val(start, LuzObj::String(str));
+                }
+
                 LuaOpCode::OP_MOVE => {
                     let iABC { a, b, .. } = *i_abc;
                     let val = self.get_reg_val(b)?;
@@ -230,6 +246,27 @@ impl Runner {
                     let table = table.borrow();
                     let val = table.get(&key);
                     self.scope.borrow_mut().set_reg_val(a, val.clone());
+                }
+                LuaOpCode::OP_SETTABUP => {
+                    let table = self
+                        .scope()
+                        .get_upvalue_value(*a)
+                        .ok_or(LuzError::CompileError("Upvalue missing".to_owned()))?;
+
+                    let LuzObj::Table(table) = table else {
+                        return Err(LuzError::Type {
+                            wrong: table.get_type(),
+                            expected: vec![LuzType::Table],
+                        });
+                    };
+                    let key = self.get_const_val(*b)?;
+                    let val = if *k {
+                        self.get_const_val(*c)?
+                    } else {
+                        self.get_reg_val(*c)?
+                    };
+                    let mut table = table.borrow_mut();
+                    table.insert(key, val);
                 }
                 op => todo!("iABC {:?}", op),
             },

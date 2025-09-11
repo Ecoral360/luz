@@ -69,8 +69,16 @@ impl Table {
         }
     }
 
-    pub fn insert(&mut self, item: LuzObj) {
+    pub fn push(&mut self, item: LuzObj) {
         self.arr.push(item);
+    }
+
+    pub fn insert(&mut self, key: LuzObj, item: LuzObj) {
+        if key == LuzObj::Numeral(Numeral::Int(self.arr.len() as i64)) {
+            self.arr.push(item);
+        } else {
+            self.table.insert(key, item);
+        }
     }
 
     pub fn raw_metatable(&self) -> Option<Rc<RefCell<Table>>> {
@@ -129,14 +137,14 @@ mod test {
 
         let mut table = Table::default();
 
-        table.insert(Numeral::Int(1).into());
-        table.insert(Numeral::Int(2).into());
-        table.insert(Numeral::Int(3).into());
-        table.insert(LuzObj::Nil);
-        table.insert(Numeral::Int(4).into());
-        table.insert(Numeral::Int(5).into());
-        table.insert(Numeral::Int(6).into());
-        table.insert(Numeral::Int(7).into());
+        table.push(Numeral::Int(1).into());
+        table.push(Numeral::Int(2).into());
+        table.push(Numeral::Int(3).into());
+        table.push(LuzObj::Nil);
+        table.push(Numeral::Int(4).into());
+        table.push(Numeral::Int(5).into());
+        table.push(Numeral::Int(6).into());
+        table.push(Numeral::Int(7).into());
 
         let b_loop = table.find_boundary_in_array();
 

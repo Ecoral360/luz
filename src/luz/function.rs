@@ -5,8 +5,9 @@ use derive_builder::Builder;
 use derive_new::new;
 
 use crate::{
-    compiler::Scope,
-    luz::{err::LuzError, obj::LuzObj}, runner::Runner,
+    compiler::ctx::ScopeRef,
+    luz::{err::LuzError, obj::LuzObj},
+    runner::Runner,
 };
 
 #[derive(Debug, Clone, Builder)]
@@ -20,7 +21,7 @@ pub struct FuncParams {
 #[derive(Clone, new)]
 pub enum LuzFunction {
     User {
-        scope: Rc<RefCell<Scope>>,
+        scope: ScopeRef,
     },
     Native {
         fn_ptr: Rc<RefCell<dyn FnMut(&mut Runner, Vec<LuzObj>) -> Result<Vec<LuzObj>, LuzError>>>,

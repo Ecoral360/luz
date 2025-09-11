@@ -1,12 +1,7 @@
-use std::{cell::RefCell, env::var, rc::Rc};
-
-use derive_builder::Builder;
-use derive_new::new;
-
 use crate::{
-    ast::{AssignStat, Binop, Exp, FuncCall, FunctionDefStat, ReturnStat, Stat},
+    ast::{AssignStat, Binop, CmpOp, Exp, FuncCall, FunctionDefStat, LogicCmpOp, ReturnStat, Stat},
     compiler::{
-        ctx::{CompilerCtx, CompilerCtxBuilder},
+        ctx::{CompilerCtx, CompilerCtxBuilder, RegOrUpvalue, Upvalue},
         instructions::{Instruction, MAX_HALF_sBx},
         visitor::Visitor,
     },
@@ -21,214 +16,8 @@ pub mod instructions;
 pub mod opcode;
 pub mod visitor;
 
-type ScopeLink = Rc<RefCell<Scope>>;
-
 #[derive(Debug)]
 pub struct Compiler {}
-
-#[derive(Debug, new, Clone)]
-pub struct Scope {
-    name: String,
-    parent: Option<ScopeLink>,
-
-    #[new(default)]
-    instructions: Vec<Instruction>,
-    #[new(default)]
-    constants: Vec<LuzObj>,
-    #[new(default)]
-    regs: Vec<Register>,
-
-    #[new(default)]
-    upvalues: Vec<Upvalue>,
-
-    #[new(default)]
-    sub_scopes: Vec<ScopeLink>,
-}
-
-pub enum RegOrUpvalue {
-    Register(Register),
-    Upvalue(Upvalue),
-}
-
-impl Scope {
-    pub fn instructions(&self) -> &Vec<Instruction> {
-        &self.instructions
-    }
-
-    pub fn constants(&self) -> &Vec<LuzObj> {
-        &self.constants
-    }
-
-    pub fn regs(&self) -> &Vec<Register> {
-        &self.regs
-    }
-
-    pub fn upvalues(&self) -> &Vec<Upvalue> {
-        &self.upvalues
-    }
-
-    pub fn set_reg_val(&mut self, addr: u8, val: LuzObj) {
-        self.regs[addr as usize].val = Some(val);
-    }
-
-    pub fn push_reg(&mut self, reg: &mut RegisterBuilder) {
-        reg.addr(self.regs().len() as u8);
-        self.regs.push(reg.build().expect("Non valid register"));
-    }
-
-    /// Returns (is_intable, reg_or_upvalue)
-    pub fn get_reg_or_upvalue(
-        &mut self,
-        register_name: &str,
-    ) -> Result<(bool, RegOrUpvalue), LuzError> {
-        let reg = self
-            .regs
-            .iter()
-            .find(|reg| matches!(&reg.name, Some(x) if x == register_name));
-
-        if let Some(v) = reg {
-            return Ok((false, RegOrUpvalue::Register(v.clone())));
-        }
-
-        if let Some(up_addr) = self.get_upvalue(register_name) {
-            return Ok((false, RegOrUpvalue::Upvalue(up_addr.clone())));
-        }
-
-        if let Some(p) = &self.parent {
-            if p.borrow().name == "GLOBAL" {
-                if let Some(env_addr) = self.get_upvalue("_ENV") {
-                    return Ok((true, RegOrUpvalue::Upvalue(env_addr.clone())));
-                } else {
-                    return Err(LuzError::CompileError(format!(
-                        "name {:?} is not declared",
-                        register_name
-                    )));
-                };
-            }
-
-            let (_, parent_addr) = p.borrow_mut().get_reg_or_upvalue(register_name)?;
-            let addr = self.upvalues.len() as u8;
-
-            let (in_table, upvalue) = match parent_addr {
-                RegOrUpvalue::Register(register) => (
-                    false,
-                    Upvalue::new(register.name.unwrap(), addr, register.addr, true),
-                ),
-                RegOrUpvalue::Upvalue(upvalue) => {
-                    let in_table = if upvalue.name == "_ENV" {
-                        self.constants
-                            .push(LuzObj::String(register_name.to_string()));
-                        true
-                    } else {
-                        false
-                    };
-                    (
-                        in_table,
-                        Upvalue::new(upvalue.name, addr, upvalue.parent_addr, false),
-                    )
-                }
-            };
-
-            self.upvalues.push(upvalue.clone());
-
-            Ok((in_table, RegOrUpvalue::Upvalue(upvalue)))
-        } else {
-            Err(LuzError::CompileError(format!(
-                "name {:?} is not declared",
-                register_name
-            )))
-        }
-    }
-
-    pub fn find_reg(&self, register_name: &str) -> Option<u8> {
-        self.regs
-            .iter()
-            .find(|reg| matches!(&reg.name, Some(x) if x == register_name))
-            .map(|reg| reg.addr)
-    }
-
-    pub fn get_upvalue(&mut self, name: &str) -> Option<&Upvalue> {
-        self.upvalues.iter().find(|con| con.name == name)
-    }
-
-    pub fn get_upvalue_addr(&mut self, name: &str) -> Option<u8> {
-        self.upvalues.iter().enumerate().find_map(|(i, con)| {
-            if con.name == name {
-                Some(i as u8)
-            } else {
-                None
-            }
-        })
-    }
-
-    pub fn get_upvalue_value(&self, upvalue_addr: u8) -> Option<LuzObj> {
-        let upvalue = &self.upvalues[upvalue_addr as usize];
-        let p = self
-            .parent
-            .as_ref()
-            .expect("Needs parent to have upvalue")
-            .borrow();
-        if upvalue.in_stack {
-            p.regs[upvalue.parent_addr as usize].val.clone()
-        } else {
-            p.get_upvalue_value(upvalue.parent_addr)
-        }
-    }
-
-    pub fn print_instructions(&self) {
-        if self.name == "main" {
-            println!("main");
-        } else {
-            println!("function {:?}", self.name);
-        }
-        for (i, inst) in self.instructions.iter().enumerate() {
-            println!("[{}] {}", i + 1, inst);
-        }
-        println!("---- Constants:");
-        for (i, inst) in self.constants.iter().enumerate() {
-            println!("{} {:?}", i, inst);
-        }
-
-        println!("---- Locals:");
-        for (i, inst) in self.regs.iter().enumerate() {
-            if let Some(name) = &inst.name {
-                println!("{} {}", i, name);
-            }
-        }
-
-        println!("---- Upvalues:");
-        for (i, inst) in self.upvalues.iter().enumerate() {
-            println!("{} {} {} {}", i, inst.name, inst.in_stack, inst.parent_addr);
-        }
-
-        println!();
-        for scope in &self.sub_scopes {
-            scope.borrow().print_instructions();
-        }
-    }
-
-    pub fn sub_scopes(&self) -> &[Rc<RefCell<Scope>>] {
-        &self.sub_scopes
-    }
-}
-
-#[derive(Debug, new, Clone, Builder)]
-pub struct Register {
-    pub name: Option<String>,
-    pub addr: u8,
-    #[new(default)]
-    pub val: Option<LuzObj>,
-    #[new(value = "true")]
-    pub free: bool,
-}
-
-#[derive(Debug, new, Clone)]
-pub struct Upvalue {
-    pub name: String,
-    pub addr: u8,
-    pub parent_addr: u8,
-    pub in_stack: bool,
-}
 
 #[allow(unused)]
 impl Compiler {
@@ -242,7 +31,7 @@ impl Compiler {
         match exp {
             Exp::Literal(lit) => match lit {
                 LuzObj::Numeral(Numeral::Int(i))
-                    if supports_immidiate && (-128..128).contains(i) =>
+                    if supports_immidiate && (-127..129).contains(i) =>
                 {
                     Ok(ExpEval::InImmediate((*i + 128) as u8))
                 }
@@ -269,11 +58,11 @@ impl Compiler {
                 }
             },
             Exp::Name(name) => {
-                let src = ctx.find_reg(name).ok_or(LuzError::CompileError(format!(
-                    "name {:?} is not declared",
-                    name
-                )))?;
-                Ok(ExpEval::InRegister(src))
+                let (in_table, src) = ctx.scope_mut().get_reg_or_upvalue(name)?;
+                match src {
+                    RegOrUpvalue::Register(register) => Ok(ExpEval::InRegister(register.addr)),
+                    RegOrUpvalue::Upvalue(upvalue) => Ok(ExpEval::InUpvalue { in_table, upvalue }),
+                }
             }
             _ => {
                 self.visit_exp(exp, ctx)?;
@@ -283,10 +72,12 @@ impl Compiler {
     }
 }
 
+#[derive(Debug, Clone)]
 enum ExpEval {
     InImmediate(u8),
     InRegister(u8),
     InConstant(u8),
+    InUpvalue { in_table: bool, upvalue: Upvalue },
 }
 
 #[allow(unused)]
@@ -321,40 +112,76 @@ impl Compiler {
 
     fn visit_assign(&mut self, ctx: &mut CompilerCtx, assign: &AssignStat) -> Result<(), LuzError> {
         match assign {
-            AssignStat::Normal { varlist, explist } => todo!(),
+            AssignStat::Normal { varlist, explist } => {
+                let mut explist_iter = explist.iter();
+                for var_exp in varlist {
+                    let Exp::Var(var) = var_exp else {
+                        unreachable!("{:#?}", var_exp);
+                    };
+                    match **var {
+                        Exp::Name(ref name) => {
+                            let (is_intable, src) = ctx.scope_mut().get_reg_or_upvalue(name)?;
+                            match src {
+                                RegOrUpvalue::Register(src) => {
+                                    self.visit_exp(explist_iter.next().expect("value"), ctx);
+                                }
+                                RegOrUpvalue::Upvalue(src) => {
+                                    if is_intable {
+                                        let name_k =
+                                            ctx.get_or_add_const(LuzObj::String(name.to_owned()));
+
+                                        let res = self.handle_exp(
+                                            ctx,
+                                            explist_iter.next().expect("value"),
+                                            false,
+                                            true,
+                                        )?;
+
+                                        let (is_val_const, reg) = match res {
+                                            ExpEval::InRegister(reg) => (false, reg),
+                                            ExpEval::InConstant(kreg) => (true, kreg),
+                                            ExpEval::InUpvalue { in_table, upvalue } => todo!(),
+                                            _ => unreachable!(
+                                                "Not supported by op_settabup {:?}",
+                                                res
+                                            ),
+                                        };
+
+                                        ctx.push_inst(Instruction::op_settabup(
+                                            src.addr,
+                                            name_k as u8,
+                                            reg,
+                                            is_val_const,
+                                        ));
+                                    } else {
+                                        // ctx.push_inst(Instruction::op_getupval(reg, src.addr));
+                                    }
+                                }
+                            }
+                        }
+                        _ => todo!("Assign normal: {:#?}", var),
+                    }
+                }
+            }
             AssignStat::Local { varlist, explist } => {
-                self.visit_local_assign(ctx, assign);
+                let mut new_ctx = ctx
+                    .new_with(CompilerCtxBuilder::default().nb_expected((varlist.len() + 1) as u8));
+
+                for var in varlist {
+                    ctx.push_free_register(Some(var.0.clone()));
+                }
+                for exp in explist {
+                    self.visit_exp(exp, &mut new_ctx)?;
+                }
+
+                if varlist.len() > explist.len() && !Exp::is_multires(explist) {
+                    for var in varlist[explist.len()..].iter() {
+                        let reg = ctx.get_or_push_free_register();
+                        ctx.push_inst(Instruction::op_loadnil(reg, 0));
+                    }
+                }
             }
         }
-        Ok(())
-    }
-
-    fn visit_local_assign(
-        &mut self,
-        ctx: &mut CompilerCtx,
-        assign: &AssignStat,
-    ) -> Result<(), LuzError> {
-        let AssignStat::Local { varlist, explist } = assign else {
-            unreachable!()
-        };
-
-        let mut new_ctx =
-            ctx.new_with(CompilerCtxBuilder::default().nb_expected((varlist.len() + 1) as u8));
-
-        for var in varlist {
-            ctx.push_free_register(Some(var.0.clone()));
-        }
-        for exp in explist {
-            self.visit_exp(exp, &mut new_ctx)?;
-        }
-
-        if varlist.len() > explist.len() && !Exp::is_multires(explist) {
-            for var in varlist[explist.len()..].iter() {
-                let reg = ctx.push_claimed_register(Some(var.0.clone()));
-                ctx.push_inst(Instruction::op_loadnil(reg, 0));
-            }
-        }
-
         Ok(())
     }
 
@@ -378,6 +205,18 @@ impl Compiler {
         let Exp::Binop { op, lhs, rhs } = exp else {
             unreachable!()
         };
+        if *op == Binop::Concat {
+            self.visit_exp(lhs, ctx)?;
+            let lhs_addr = ctx.claim_next_free_register();
+
+            self.visit_exp(rhs, ctx)?;
+            let rhs_addr = ctx.target_register_or_err()?;
+
+            ctx.push_inst(Instruction::op_concat(lhs_addr, rhs_addr - lhs_addr + 1));
+            ctx.unclaim_registers(&[lhs_addr]);
+
+            return Ok(());
+        }
 
         let lhs_addr = self.handle_exp(ctx, lhs, matches!(op, Binop::Add), true)?;
         let rhs_addr = self.handle_exp(ctx, rhs, matches!(op, Binop::Add | Binop::Sub), true)?;
@@ -395,18 +234,33 @@ impl Compiler {
             )));
         }
 
-        let mut lhs_addr = match lhs_addr {
-            ExpEval::InImmediate(i) if *op == Binop::Sub => ((i as i32) - 256) as u8,
-            ExpEval::InImmediate(i) => i,
-            ExpEval::InRegister(r) => r,
-            ExpEval::InConstant(c) => c,
+        let (lhs_dirty, mut lhs_addr) = match lhs_addr {
+            ExpEval::InImmediate(i) if *op == Binop::Sub => (false, ((i as i32) - 256) as u8),
+            ExpEval::InImmediate(i) => (false, i),
+            ExpEval::InRegister(r) => (false, r),
+            ExpEval::InConstant(c) => (false, c),
+            ExpEval::InUpvalue { in_table, upvalue } => {
+                self.visit_exp(lhs, ctx)?;
+                (true, ctx.claim_next_free_register())
+            }
         };
-        let mut rhs_addr = match rhs_addr {
-            ExpEval::InImmediate(i) if *op == Binop::Sub => ((i as i32) - 256) as u8,
-            ExpEval::InImmediate(i) => i,
-            ExpEval::InRegister(r) => r,
-            ExpEval::InConstant(c) => c,
+        let (rhs_dirty, mut rhs_addr) = match rhs_addr {
+            ExpEval::InImmediate(i) if *op == Binop::Sub => (false, ((i as i32) - 256) as u8),
+            ExpEval::InImmediate(i) => (false, i),
+            ExpEval::InRegister(r) => (false, r),
+            ExpEval::InConstant(c) => (false, c),
+            ExpEval::InUpvalue { in_table, upvalue } => {
+                self.visit_exp(rhs, ctx)?;
+                (true, ctx.claim_next_free_register())
+            }
         };
+
+        if lhs_dirty {
+            ctx.unclaim_registers(&[lhs_addr]);
+        }
+        if rhs_dirty {
+            ctx.unclaim_registers(&[rhs_addr]);
+        }
 
         if is_b_imm {
             (lhs_addr, rhs_addr) = (rhs_addr, lhs_addr);
@@ -432,45 +286,126 @@ impl Compiler {
         Ok(())
     }
 
+    fn visit_logicop(&mut self, ctx: &mut CompilerCtx, exp: &Exp) -> Result<(), LuzError> {
+        let Exp::LogicCmpOp { op, lhs, rhs } = exp else {
+            unreachable!()
+        };
+
+        match op {
+            LogicCmpOp::And => todo!(),
+            LogicCmpOp::Or => todo!(),
+        }
+
+        Ok(())
+    }
+
+    // fn load_upvalue(
+    //     &mut self,
+    //     ctx: &mut CompilerCtx,
+    //     upvalue: Upvalue,
+    //     in_table: bool,
+    // ) -> Result<u8, LuzError> {
+    //     let dest = ctx.get_or_push_free_register();
+    //     if in_table {
+    //         Instruction::op_gettabup(dest, upvalue.addr, tabattr_addrk);
+    //     } else {
+    //         Instruction::op_getupval(dest, upvalue.addr);
+    //     }
+    //
+    //     todo!()
+    // }
+
     fn visit_cmpop(&mut self, ctx: &mut CompilerCtx, exp: &Exp) -> Result<(), LuzError> {
         let Exp::CmpOp { op, lhs, rhs } = exp else {
             unreachable!()
         };
 
         let lhs_addr = self.handle_exp(ctx, lhs, false, false)?;
-        let rhs_addr = self.handle_exp(ctx, rhs, false, false)?;
+        let rhs_addr = self.handle_exp(ctx, rhs, true, matches!(op, CmpOp::Eq | CmpOp::Neq))?;
 
-        let lhs_addr = match lhs_addr {
-            ExpEval::InRegister(r) => r,
+        let is_rhs_immidiate = matches!(rhs_addr, ExpEval::InImmediate(_));
+        let is_rhs_constant = matches!(rhs_addr, ExpEval::InConstant(_));
+
+        let (lhs_dirty, mut lhs_addr) = match lhs_addr {
+            ExpEval::InRegister(r) => (false, r),
+            ExpEval::InUpvalue { in_table, upvalue } => {
+                self.visit_exp(lhs, ctx)?;
+                (true, ctx.claim_next_free_register())
+            }
             _ => {
                 return Err(LuzError::CompileError(format!(
-                    "Constants values not supported in comparison"
+                    "This value not supported in comparison: {:?}",
+                    lhs_addr
                 )))
             }
         };
-        let rhs_addr = match rhs_addr {
-            ExpEval::InRegister(r) => r,
+        let (rhs_dirty, mut rhs_addr) = match rhs_addr {
+            ExpEval::InImmediate(i) => (false, i),
+            ExpEval::InRegister(r) => (false, r),
+            ExpEval::InConstant(c) => (false, c),
+            ExpEval::InUpvalue { in_table, upvalue } => {
+                self.visit_exp(rhs, ctx)?;
+                (true, ctx.claim_next_free_register())
+            }
             _ => {
                 return Err(LuzError::CompileError(format!(
-                    "Constants values not supported in comparison"
+                    "This value not supported in comparison: {:?}",
+                    lhs_addr
                 )))
             }
         };
+
+        if lhs_dirty {
+            ctx.unclaim_registers(&[lhs_addr]);
+        }
+        if rhs_dirty {
+            ctx.unclaim_registers(&[rhs_addr]);
+        }
 
         match op {
-            crate::ast::CmpOp::Eq => todo!(),
-            crate::ast::CmpOp::Neq => todo!(),
-            crate::ast::CmpOp::Lt => {
-                ctx.push_inst(Instruction::op_lt(lhs_addr, rhs_addr, false, false));
+            CmpOp::Eq | CmpOp::Neq => {
+                if is_rhs_immidiate {
+                    ctx.push_inst(Instruction::op_eqi(lhs_addr, rhs_addr, *op == CmpOp::Neq));
+                } else {
+                    ctx.push_inst(Instruction::op_eq(
+                        lhs_addr,
+                        rhs_addr,
+                        is_rhs_constant,
+                        *op == CmpOp::Neq,
+                    ));
+                }
             }
-            crate::ast::CmpOp::Gt => {
-                ctx.push_inst(Instruction::op_lt(rhs_addr, lhs_addr, false, false));
+            CmpOp::Lt => {
+                ctx.push_inst(Instruction::op_lt(
+                    lhs_addr,
+                    rhs_addr,
+                    is_rhs_constant,
+                    false,
+                ));
             }
-            crate::ast::CmpOp::LtEq => {
-                ctx.push_inst(Instruction::op_le(lhs_addr, rhs_addr, false, false));
+            CmpOp::Gt => {
+                ctx.push_inst(Instruction::op_lt(
+                    rhs_addr,
+                    lhs_addr,
+                    is_rhs_constant,
+                    false,
+                ));
             }
-            crate::ast::CmpOp::GtEq => {
-                ctx.push_inst(Instruction::op_le(rhs_addr, lhs_addr, false, false));
+            CmpOp::LtEq => {
+                ctx.push_inst(Instruction::op_le(
+                    lhs_addr,
+                    rhs_addr,
+                    is_rhs_constant,
+                    false,
+                ));
+            }
+            CmpOp::GtEq => {
+                ctx.push_inst(Instruction::op_le(
+                    rhs_addr,
+                    lhs_addr,
+                    is_rhs_constant,
+                    false,
+                ));
             }
         }
 
@@ -500,7 +435,7 @@ impl Compiler {
         }
         let nb_expected = ctx.nb_expected();
         if args.len() as u8 > nb_expected && nb_expected != 0 {
-            ctx.unclaim_registers(
+            ctx.unclaim_register_range(
                 f_addr + nb_expected - 1,
                 args.len() as u8 - (nb_expected - 1),
             );
@@ -536,7 +471,11 @@ impl Compiler {
         let (is_intable, src) = ctx.scope_mut().get_reg_or_upvalue(name)?;
         let reg = ctx.get_or_push_free_register();
         match src {
-            RegOrUpvalue::Register(src) => ctx.push_inst(Instruction::op_move(reg, src.addr)),
+            RegOrUpvalue::Register(src) => {
+                if reg != src.addr {
+                    ctx.push_inst(Instruction::op_move(reg, src.addr))
+                }
+            }
             RegOrUpvalue::Upvalue(src) => {
                 if is_intable {
                     let name_k = ctx.get_or_add_const(LuzObj::String(name.to_owned()));

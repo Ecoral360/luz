@@ -68,6 +68,9 @@ impl Instruction {
             .to_iabc(func_reg, false, n_args, n_expected)
             .into()
     }
+    pub fn op_concat(start: u8, nb: u8) -> Instruction {
+        LuaOpCode::OP_CONCAT.to_iabc(start, false, nb, 0).into()
+    }
 
     pub fn op_arithmetic(
         op: Binop,
@@ -79,7 +82,7 @@ impl Instruction {
     ) -> Instruction {
         let opcode: LuaOpCode = if is_rhs_const {
             match op {
-                Binop::Concat => todo!(),
+                Binop::Concat => unreachable!(),
                 Binop::Add => LuaOpCode::OP_ADDK,
                 Binop::Sub => LuaOpCode::OP_SUBK,
                 Binop::Mul => LuaOpCode::OP_MULK,
@@ -95,7 +98,7 @@ impl Instruction {
             }
         } else {
             match op {
-                Binop::Concat => todo!(),
+                Binop::Concat => unreachable!(),
                 Binop::Add => LuaOpCode::OP_ADD,
                 Binop::Sub => LuaOpCode::OP_SUB,
                 Binop::Mul => LuaOpCode::OP_MUL,
@@ -129,20 +132,20 @@ impl Instruction {
 
     pub fn op_eq(lhs: u8, rhs: u8, is_rhs_const: bool, apply_not: bool) -> Instruction {
         let opcode = if is_rhs_const {
-            LuaOpCode::OP_LTI
+            LuaOpCode::OP_EQK
         } else {
-            LuaOpCode::OP_LT
+            LuaOpCode::OP_EQ
         };
         opcode
-            .to_iabc(
-                lhs,
-                !apply_not,
-                if is_rhs_const { rhs + 128 } else { rhs },
-                (!apply_not) as u8,
-            )
+            .to_iabc(lhs, !apply_not, rhs, (!apply_not) as u8)
             .into()
     }
 
+    pub fn op_eqi(lhs: u8, rhs_i: u8, apply_not: bool) -> Instruction {
+        LuaOpCode::OP_EQI
+            .to_iabc(lhs, !apply_not, rhs_i, (!apply_not) as u8)
+            .into()
+    }
     pub fn op_lt(lhs: u8, rhs: u8, is_rhs_const: bool, apply_not: bool) -> Instruction {
         let opcode = if is_rhs_const {
             LuaOpCode::OP_LTI
@@ -150,12 +153,7 @@ impl Instruction {
             LuaOpCode::OP_LT
         };
         opcode
-            .to_iabc(
-                lhs,
-                !apply_not,
-                rhs,
-                (!apply_not) as u8,
-            )
+            .to_iabc(lhs, !apply_not, rhs, (!apply_not) as u8)
             .into()
     }
 
@@ -166,12 +164,7 @@ impl Instruction {
             LuaOpCode::OP_LE
         };
         opcode
-            .to_iabc(
-                lhs,
-                !apply_not,
-                rhs,
-                (!apply_not) as u8,
-            )
+            .to_iabc(lhs, !apply_not, rhs, (!apply_not) as u8)
             .into()
     }
 
@@ -211,9 +204,19 @@ impl Instruction {
             .into()
     }
 
-    pub fn op_gettabup(dest: u8, upval_addr: u8, tabattr_k: u8) -> Instruction {
+    pub fn op_gettabup(dest: u8, upval_addr: u8, tabattr_addrk: u8) -> Instruction {
         LuaOpCode::OP_GETTABUP
-            .to_iabc(dest, false, upval_addr, tabattr_k)
+            .to_iabc(dest, false, upval_addr, tabattr_addrk)
+            .into()
+    }
+    pub fn op_settabup(
+        upval_dest_addr: u8,
+        tabattr_addrk: u8,
+        val: u8,
+        is_val_const: bool,
+    ) -> Instruction {
+        LuaOpCode::OP_SETTABUP
+            .to_iabc(upval_dest_addr, is_val_const, tabattr_addrk, val)
             .into()
     }
 }
@@ -392,7 +395,7 @@ impl From<u32> for isJ {
 
 impl Display for isJ {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?} {} {}", self.op, self.a, self.b - MAX_HALF_sJ)
+        write!(f, "{:?} {}", self.op, self.b - MAX_HALF_sJ)
     }
 }
 

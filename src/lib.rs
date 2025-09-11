@@ -6,13 +6,12 @@ use pest_derive::Parser;
 
 use crate::{
     ast::{parser::parse_script, Stat},
-    compiler::{ctx::{CompilerCtx, CompilerCtxBuilder}, visitor::Visitor, Compiler},
+    compiler::{ctx::CompilerCtx, visitor::Visitor, Compiler},
 };
 
 pub mod ast;
 pub mod compiler;
 pub mod luz;
-pub mod parser;
 pub mod runner;
 
 #[derive(Parser)]

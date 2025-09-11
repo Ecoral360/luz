@@ -14,10 +14,19 @@ pub enum Numeral {
     Int(i64),
     Float(f64),
 }
-
-impl Ord for Numeral {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        todo!()
+impl PartialOrd for Numeral {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(match (self, other) {
+            (Self::Int(l0), Self::Int(r0)) => l0.cmp(r0),
+            (Self::Float(l0), Self::Float(r0)) => l0.partial_cmp(r0)?,
+            (Self::Int(r0), Self::Float(l0)) | (Self::Float(l0), Self::Int(r0)) => {
+                if (l0.floor() == *l0) && (l0.floor() as i64 == *r0) {
+                    std::cmp::Ordering::Equal
+                } else {
+                    l0.partial_cmp(&(*r0 as f64))?
+                }
+            }
+        })
     }
 }
 
@@ -29,7 +38,6 @@ impl PartialEq for Numeral {
             (Self::Int(r0), Self::Float(l0)) | (Self::Float(l0), Self::Int(r0)) => {
                 (l0.floor() == *l0) && (l0.floor() as i64 == *r0)
             }
-            _ => false,
         }
     }
 }

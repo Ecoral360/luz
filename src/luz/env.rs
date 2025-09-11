@@ -1,7 +1,7 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{
-    compiler::{RegisterBuilder, Scope},
+    compiler::ctx::{RegisterBuilder, Scope},
     luz::{
         err::LuzError,
         obj::{LuzFunction, LuzObj, Table},
