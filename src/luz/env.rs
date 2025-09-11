@@ -1,8 +1,12 @@
-use std::{cell::RefCell, collections::HashMap, fmt::Display, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{
-    compiler::{ctx::CompilerCtx, RegisterBuilder, Scope},
-    luz::obj::{LuzFunction, LuzObj, Table},
+    compiler::{RegisterBuilder, Scope},
+    luz::{
+        err::LuzError,
+        obj::{LuzFunction, LuzObj, Table},
+    },
+    runner::Runner,
 };
 
 fn make_env_table() -> Table {
@@ -11,7 +15,7 @@ fn make_env_table() -> Table {
     table.insert(
         LuzObj::str("print"),
         LuzObj::Function(Rc::new(RefCell::new(LuzFunction::new_native(Rc::new(
-            RefCell::new(|args: Vec<LuzObj>| {
+            RefCell::new(|_: &mut Runner, args: Vec<LuzObj>| {
                 println!(
                     "{}",
                     args.iter()
@@ -19,7 +23,35 @@ fn make_env_table() -> Table {
                         .collect::<Vec<String>>()
                         .join("\t")
                 );
-                vec![]
+                Ok(vec![])
+            }),
+        ))))),
+    );
+
+    table.insert(
+        LuzObj::str("type"),
+        LuzObj::Function(Rc::new(RefCell::new(LuzFunction::new_native(Rc::new(
+            RefCell::new(|_: &mut Runner, args: Vec<LuzObj>| {
+                let arg = args.get(0).cloned().unwrap_or(LuzObj::Nil);
+                Ok(vec![LuzObj::String(arg.get_type().to_string())])
+            }),
+        ))))),
+    );
+
+    table.insert(
+        LuzObj::str("assert"),
+        LuzObj::Function(Rc::new(RefCell::new(LuzFunction::new_native(Rc::new(
+            RefCell::new(|_: &mut Runner, args: Vec<LuzObj>| {
+                let condition = args.get(0).cloned().unwrap_or(LuzObj::Nil);
+                if condition.is_truthy() {
+                    Ok(vec![condition])
+                } else {
+                    let message = args
+                        .get(1)
+                        .cloned()
+                        .unwrap_or(LuzObj::String("assertion failed!".to_string()));
+                    Err(LuzError::RuntimeError(message.to_string()))
+                }
             }),
         ))))),
     );

@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use derive_new::new;
 
-use crate::{ast::Binop, compiler::opcode::LuaOpCode, luz::err::LuzError};
+use crate::{ast::Binop, compiler::opcode::LuaOpCode};
 
 #[allow(non_camel_case_types)]
 #[allow(unused)]
@@ -11,10 +11,14 @@ pub enum Instruction {
     iABC(iABC),
     iABx(iABx),
     iAsBx(iAsBx),
+    isJ(isJ),
 }
 
 #[allow(non_upper_case_globals)]
 pub const MAX_HALF_sBx: u32 = 131072;
+
+#[allow(non_upper_case_globals)]
+pub const MAX_HALF_sJ: u32 = 16777216;
 
 impl Display for Instruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -22,6 +26,7 @@ impl Display for Instruction {
             Instruction::iABC(i_abc) => write!(f, "{}", i_abc),
             Instruction::iABx(i_abx) => write!(f, "{}", i_abx),
             Instruction::iAsBx(i_asbx) => write!(f, "{}", i_asbx),
+            Instruction::isJ(i_sj) => write!(f, "{}", i_sj),
         }
     }
 }
@@ -106,6 +111,76 @@ impl Instruction {
             }
         };
         opcode.to_iabc(dest_reg, is_lhs_const, lhs, rhs).into()
+    }
+
+    pub fn op_jmp(jmp_dist: u32) -> Instruction {
+        LuaOpCode::OP_JMP
+            .to_isj(0, jmp_dist + MAX_HALF_sJ) // a is unused
+            .into()
+    }
+
+    pub fn op_lfalseskip(reg: u8) -> Instruction {
+        LuaOpCode::OP_LFALSESKIP.to_iabc(reg, false, 0, 0).into()
+    }
+
+    pub fn op_loadtrue(reg: u8) -> Instruction {
+        LuaOpCode::OP_LOADTRUE.to_iabc(reg, false, 0, 0).into()
+    }
+
+    pub fn op_eq(lhs: u8, rhs: u8, is_rhs_const: bool, apply_not: bool) -> Instruction {
+        let opcode = if is_rhs_const {
+            LuaOpCode::OP_LTI
+        } else {
+            LuaOpCode::OP_LT
+        };
+        opcode
+            .to_iabc(
+                lhs,
+                !apply_not,
+                if is_rhs_const { rhs + 128 } else { rhs },
+                (!apply_not) as u8,
+            )
+            .into()
+    }
+
+    pub fn op_lt(lhs: u8, rhs: u8, is_rhs_const: bool, apply_not: bool) -> Instruction {
+        let opcode = if is_rhs_const {
+            LuaOpCode::OP_LTI
+        } else {
+            LuaOpCode::OP_LT
+        };
+        opcode
+            .to_iabc(
+                lhs,
+                !apply_not,
+                rhs,
+                (!apply_not) as u8,
+            )
+            .into()
+    }
+
+    pub fn op_le(lhs: u8, rhs: u8, is_rhs_const: bool, apply_not: bool) -> Instruction {
+        let opcode = if is_rhs_const {
+            LuaOpCode::OP_LEI
+        } else {
+            LuaOpCode::OP_LE
+        };
+        opcode
+            .to_iabc(
+                lhs,
+                !apply_not,
+                rhs,
+                (!apply_not) as u8,
+            )
+            .into()
+    }
+
+    pub fn op_gt(lhs: u8, rhs: u8, is_rhs_const: bool, apply_not: bool) -> Instruction {
+        Instruction::op_le(lhs, rhs, is_rhs_const, !apply_not)
+    }
+
+    pub fn op_ge(lhs: u8, rhs: u8, is_rhs_const: bool, apply_not: bool) -> Instruction {
+        Instruction::op_lt(lhs, rhs, is_rhs_const, !apply_not)
     }
 
     pub fn op_return(reg: u8, is_const: bool, nb_exps: u8) -> Instruction {
@@ -279,6 +354,45 @@ impl From<u32> for iAsBx {
 impl Display for iAsBx {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?} {} {}", self.op, self.a, self.b - MAX_HALF_sBx)
+    }
+}
+
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, new)]
+pub struct isJ {
+    pub b: u32, // actually 25 bits
+    pub a: u8,
+    pub op: LuaOpCode, // actually 7 bits
+}
+
+impl Into<Instruction> for isJ {
+    fn into(self) -> Instruction {
+        Instruction::isJ(self)
+    }
+}
+
+impl Into<u32> for isJ {
+    fn into(self) -> u32 {
+        self.op as u32 | (self.a as u32) << 7 | self.b << 16
+    }
+}
+
+impl From<u32> for isJ {
+    fn from(val: u32) -> Self {
+        let op = get_arg(val, 7, 0);
+        let a = get_arg(val, 8, 7);
+        let b = get_arg(val, 17, 15);
+        Self {
+            b: b as u32,
+            a: a as u8,
+            op: (op as u8).try_into().unwrap(),
+        }
+    }
+}
+
+impl Display for isJ {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?} {} {}", self.op, self.a, self.b - MAX_HALF_sJ)
     }
 }
 

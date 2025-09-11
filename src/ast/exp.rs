@@ -239,7 +239,7 @@ impl TryFrom<Pair<'_, Rule>> for LogicCmpOp {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CmpOp {
     Eq,
     Neq,

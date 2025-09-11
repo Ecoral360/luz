@@ -6,7 +6,7 @@ use derive_new::new;
 
 use crate::{
     compiler::Scope,
-    luz::obj::LuzObj,
+    luz::{err::LuzError, obj::LuzObj}, runner::Runner,
 };
 
 #[derive(Debug, Clone, Builder)]
@@ -23,7 +23,7 @@ pub enum LuzFunction {
         scope: Rc<RefCell<Scope>>,
     },
     Native {
-        fn_ptr: Rc<RefCell<dyn FnMut(Vec<LuzObj>) -> Vec<LuzObj>>>,
+        fn_ptr: Rc<RefCell<dyn FnMut(&mut Runner, Vec<LuzObj>) -> Result<Vec<LuzObj>, LuzError>>>,
     },
 }
 

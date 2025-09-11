@@ -57,6 +57,12 @@ impl LuzObj {
         matches!(self, Self::Nil)
     }
 
+    #[must_use]
+    #[inline]
+    pub fn is_truthy(&self) -> bool {
+        matches!(self, Self::Nil | Self::Boolean(false)) == false
+    }
+
     #[inline]
     pub const fn get_type(&self) -> LuzType {
         match self {
@@ -355,4 +361,21 @@ pub enum LuzType {
     Userdata,
     Thread,
     Table,
+}
+
+impl Display for LuzType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LuzType::Nil => write!(f, "nil"),
+            LuzType::Boolean => write!(f, "boolean"),
+            LuzType::Integer => write!(f, "number"),
+            LuzType::Float => write!(f, "number"),
+            LuzType::Number => write!(f, "number"),
+            LuzType::String => write!(f, "string"),
+            LuzType::Function => write!(f, "function"),
+            LuzType::Userdata => write!(f, "userdata"),
+            LuzType::Thread => write!(f, "thread"),
+            LuzType::Table => write!(f, "table"),
+        }
+    }
 }

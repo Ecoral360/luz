@@ -237,6 +237,7 @@ impl Compiler {
         ctx: &mut CompilerCtx,
         exp: &Exp,
         supports_immidiate: bool,
+        supports_constants: bool,
     ) -> Result<ExpEval, LuzError> {
         match exp {
             Exp::Literal(lit) => match lit {
@@ -254,7 +255,18 @@ impl Compiler {
                     ));
                     Ok(ExpEval::InRegister(ctx.target_register_or_err()?))
                 }
-                _ => Ok(ExpEval::InConstant(ctx.get_or_add_const(lit.clone()) as u8)),
+                _ => {
+                    if supports_constants {
+                        Ok(ExpEval::InConstant(ctx.get_or_add_const(lit.clone()) as u8))
+                    } else {
+                        let constant = ctx.get_or_add_const(lit.clone());
+                        ctx.push_inst(Instruction::op_loadk(
+                            ctx.target_register_or_err()?,
+                            constant,
+                        ));
+                        Ok(ExpEval::InRegister(ctx.target_register_or_err()?))
+                    }
+                }
             },
             Exp::Name(name) => {
                 let src = ctx.find_reg(name).ok_or(LuzError::CompileError(format!(
@@ -367,8 +379,8 @@ impl Compiler {
             unreachable!()
         };
 
-        let lhs_addr = self.handle_exp(ctx, lhs, matches!(op, Binop::Add))?;
-        let rhs_addr = self.handle_exp(ctx, rhs, matches!(op, Binop::Add | Binop::Sub))?;
+        let lhs_addr = self.handle_exp(ctx, lhs, matches!(op, Binop::Add), true)?;
+        let rhs_addr = self.handle_exp(ctx, rhs, matches!(op, Binop::Add | Binop::Sub), true)?;
 
         let is_b_const = matches!(lhs_addr, ExpEval::InConstant(_));
         let is_b_imm = matches!(lhs_addr, ExpEval::InImmediate(_));
@@ -420,6 +432,55 @@ impl Compiler {
         Ok(())
     }
 
+    fn visit_cmpop(&mut self, ctx: &mut CompilerCtx, exp: &Exp) -> Result<(), LuzError> {
+        let Exp::CmpOp { op, lhs, rhs } = exp else {
+            unreachable!()
+        };
+
+        let lhs_addr = self.handle_exp(ctx, lhs, false, false)?;
+        let rhs_addr = self.handle_exp(ctx, rhs, false, false)?;
+
+        let lhs_addr = match lhs_addr {
+            ExpEval::InRegister(r) => r,
+            _ => {
+                return Err(LuzError::CompileError(format!(
+                    "Constants values not supported in comparison"
+                )))
+            }
+        };
+        let rhs_addr = match rhs_addr {
+            ExpEval::InRegister(r) => r,
+            _ => {
+                return Err(LuzError::CompileError(format!(
+                    "Constants values not supported in comparison"
+                )))
+            }
+        };
+
+        match op {
+            crate::ast::CmpOp::Eq => todo!(),
+            crate::ast::CmpOp::Neq => todo!(),
+            crate::ast::CmpOp::Lt => {
+                ctx.push_inst(Instruction::op_lt(lhs_addr, rhs_addr, false, false));
+            }
+            crate::ast::CmpOp::Gt => {
+                ctx.push_inst(Instruction::op_lt(rhs_addr, lhs_addr, false, false));
+            }
+            crate::ast::CmpOp::LtEq => {
+                ctx.push_inst(Instruction::op_le(lhs_addr, rhs_addr, false, false));
+            }
+            crate::ast::CmpOp::GtEq => {
+                ctx.push_inst(Instruction::op_le(rhs_addr, lhs_addr, false, false));
+            }
+        }
+
+        ctx.push_inst(Instruction::op_jmp(1));
+        let next_addr = ctx.get_or_push_free_register();
+        ctx.push_inst(Instruction::op_lfalseskip(next_addr));
+        ctx.push_inst(Instruction::op_loadtrue(next_addr));
+        Ok(())
+    }
+
     fn visit_function_call(
         &mut self,
         ctx: &mut CompilerCtx,
@@ -458,6 +519,7 @@ impl Compiler {
             LuzObj::Numeral(Numeral::Int(i)) if *i >= 0 && *i <= 255 => {
                 let reg = ctx.get_or_push_free_register();
                 ctx.push_inst(Instruction::op_loadi(reg, *i as u32));
+                ctx.claim_next_free_register();
                 Ok(())
             }
             _ => {
@@ -503,7 +565,7 @@ impl Visitor for Compiler {
             Exp::Name(name) => self.visit_name(ctx, name),
             Exp::Var(exp) => todo!(),
             Exp::Unop(unop, exp) => todo!(),
-            Exp::CmpOp { op, lhs, rhs } => todo!(),
+            Exp::CmpOp { op, lhs, rhs } => self.visit_cmpop(ctx, exp),
             Exp::LogicCmpOp { op, lhs, rhs } => todo!(),
             Exp::Access(exp_access) => todo!(),
             Exp::FuncDef(func_def) => todo!(),

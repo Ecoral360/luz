@@ -25,6 +25,12 @@ pub enum LuzError {
     #[error("{0:?} is not a valid number")]
     NumberParsing(String),
 
+    #[error("Invalid assertion: {0}")]
+    InvalidAssertion(String),
+
+    #[error("{0}")]
+    RuntimeError(String),
+
     #[error("Parsing error: {0:?}")]
     Syntax(Box<PestError<Rule>>),
 

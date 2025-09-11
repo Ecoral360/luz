@@ -4,9 +4,9 @@ use std::{
 };
 
 use crate::{
-    ast::Binop,
+    ast::{Binop, CmpOp},
     compiler::{
-        instructions::{iABC, iABx, iAsBx, Instruction, MAX_HALF_sBx},
+        instructions::{iABC, iABx, iAsBx, isJ, Instruction, MAX_HALF_sBx, MAX_HALF_sJ},
         opcode::LuaOpCode,
         Scope,
     },
@@ -15,6 +15,12 @@ use crate::{
         obj::{LuzFunction, LuzObj, LuzType, Numeral},
     },
 };
+
+pub enum InstructionResult {
+    Continue,
+    Skip(u32),
+    Return(Vec<LuzObj>),
+}
 
 #[allow(unused)]
 pub struct Runner {
@@ -38,11 +44,19 @@ impl Runner {
     pub fn run(&mut self) -> Result<Vec<LuzObj>, LuzError> {
         let instructions = self.scope().instructions().clone();
         let mut rets = vec![];
-        for instruction in &instructions {
-            if let Some(ret) = self.run_instruction(instruction)? {
-                rets = ret;
-                break;
-            }
+        let mut instruction_iter = instructions.iter();
+        while let Some(instruction) = instruction_iter.next() {
+            rets = match self.run_instruction(instruction)? {
+                InstructionResult::Continue => continue,
+                InstructionResult::Skip(n) => {
+                    for _ in 0..n {
+                        instruction_iter.next();
+                    }
+                    continue;
+                }
+                InstructionResult::Return(rets) => rets,
+            };
+            break;
         }
         Ok(rets)
     }
@@ -72,9 +86,36 @@ impl Runner {
     fn run_instruction(
         &mut self,
         instruction: &Instruction,
-    ) -> Result<Option<Vec<LuzObj>>, LuzError> {
+    ) -> Result<InstructionResult, LuzError> {
         match instruction {
-            Instruction::iABC(i_abc) => match i_abc.op {
+            Instruction::iABC(i_abc @ iABC { c, b, k, a, op }) => match op {
+                LuaOpCode::OP_LT | LuaOpCode::OP_LE => {
+                    let lhs = self.get_reg_val(*a)?;
+                    let rhs = self.get_reg_val(*b)?;
+
+                    let res = lhs.apply_cmp(
+                        if *op == LuaOpCode::OP_LT {
+                            CmpOp::Lt
+                        } else {
+                            CmpOp::LtEq
+                        },
+                        rhs,
+                    )?;
+
+                    if res.is_truthy() != *k {
+                        return Ok(InstructionResult::Skip(1));
+                    }
+                }
+                LuaOpCode::OP_LOADTRUE => {
+                    self.scope_mut().set_reg_val(*a, LuzObj::Boolean(true));
+                }
+                LuaOpCode::OP_LOADFALSE => {
+                    self.scope_mut().set_reg_val(*a, LuzObj::Boolean(true));
+                }
+                LuaOpCode::OP_LFALSESKIP => {
+                    self.scope_mut().set_reg_val(*a, LuzObj::Boolean(false));
+                    return Ok(InstructionResult::Skip(1));
+                }
                 LuaOpCode::OP_ADD
                 | LuaOpCode::OP_ADDK
                 | LuaOpCode::OP_SUB
@@ -110,7 +151,7 @@ impl Runner {
                     for i in 0..b - 1 {
                         rets.push(self.get_reg_val(a + i)?);
                     }
-                    return Ok(Some(rets));
+                    return Ok(InstructionResult::Return(rets));
                 }
                 LuaOpCode::OP_CALL => {
                     let iABC {
@@ -145,7 +186,7 @@ impl Runner {
                         }
                         LuzFunction::Native { ref fn_ptr } => {
                             let mut fn_ptr = fn_ptr.borrow_mut();
-                            (fn_ptr)(args)
+                            (fn_ptr)(self, args)?
                         }
                     };
 
@@ -222,8 +263,16 @@ impl Runner {
                 }
                 op => todo!("iAsBx {:?}", op),
             },
+            Instruction::isJ(is_j) => match is_j.op {
+                LuaOpCode::OP_JMP => {
+                    let isJ { b, .. } = *is_j;
+                    let offset = b - MAX_HALF_sJ;
+                    return Ok(InstructionResult::Skip(offset));
+                }
+                op => todo!("isJ {:?}", op),
+            },
         }
-        Ok(None)
+        Ok(InstructionResult::Continue)
     }
 
     fn run_arithmetic(&mut self, code: &iABC) -> Result<(), LuzError> {

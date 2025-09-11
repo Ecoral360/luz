@@ -68,6 +68,6 @@ fn run_compiler(stmts: Vec<Stat>) -> Result<(), LuzError> {
     ctx.print_instructions();
     let mut runner = runner::Runner::new(ctx.scope_clone());
     let res = runner.run()?;
-    dbg!(res);
+    println!("Result: {:?}", res);
     Ok(())
 }

@@ -9,10 +9,29 @@ use super::{
     obj::{LuzObj, LuzType},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy)]
 pub enum Numeral {
     Int(i64),
     Float(f64),
+}
+
+impl Ord for Numeral {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        todo!()
+    }
+}
+
+impl PartialEq for Numeral {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Int(l0), Self::Int(r0)) => l0 == r0,
+            (Self::Float(l0), Self::Float(r0)) => l0 == r0,
+            (Self::Int(r0), Self::Float(l0)) | (Self::Float(l0), Self::Int(r0)) => {
+                (l0.floor() == *l0) && (l0.floor() as i64 == *r0)
+            }
+            _ => false,
+        }
+    }
 }
 
 macro_rules! impl_op {
