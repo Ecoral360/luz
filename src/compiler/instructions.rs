@@ -146,8 +146,8 @@ impl Instruction {
             .to_iabc(lhs, !apply_not, rhs_i, (!apply_not) as u8)
             .into()
     }
-    pub fn op_lt(lhs: u8, rhs: u8, is_rhs_const: bool, apply_not: bool) -> Instruction {
-        let opcode = if is_rhs_const {
+    pub fn op_lt(lhs: u8, rhs: u8, is_rhs_immidiate: bool, apply_not: bool) -> Instruction {
+        let opcode = if is_rhs_immidiate {
             LuaOpCode::OP_LTI
         } else {
             LuaOpCode::OP_LT
@@ -157,8 +157,8 @@ impl Instruction {
             .into()
     }
 
-    pub fn op_le(lhs: u8, rhs: u8, is_rhs_const: bool, apply_not: bool) -> Instruction {
-        let opcode = if is_rhs_const {
+    pub fn op_le(lhs: u8, rhs: u8, is_rhs_immidiate: bool, apply_not: bool) -> Instruction {
+        let opcode = if is_rhs_immidiate {
             LuaOpCode::OP_LEI
         } else {
             LuaOpCode::OP_LE
@@ -168,12 +168,24 @@ impl Instruction {
             .into()
     }
 
-    pub fn op_gt(lhs: u8, rhs: u8, is_rhs_const: bool, apply_not: bool) -> Instruction {
-        Instruction::op_le(lhs, rhs, is_rhs_const, !apply_not)
+    pub fn op_gt(lhs: u8, rhs: u8, is_rhs_immidiate: bool, apply_not: bool) -> Instruction {
+        if is_rhs_immidiate {
+            LuaOpCode::OP_GTI
+                .to_iabc(lhs, !apply_not, rhs, (!apply_not) as u8)
+                .into()
+        } else {
+            Instruction::op_le(lhs, rhs, is_rhs_immidiate, !apply_not)
+        }
     }
 
-    pub fn op_ge(lhs: u8, rhs: u8, is_rhs_const: bool, apply_not: bool) -> Instruction {
-        Instruction::op_lt(lhs, rhs, is_rhs_const, !apply_not)
+    pub fn op_ge(lhs: u8, rhs: u8, is_rhs_immidiate: bool, apply_not: bool) -> Instruction {
+        if is_rhs_immidiate {
+            LuaOpCode::OP_GEI
+                .to_iabc(lhs, !apply_not, rhs, (!apply_not) as u8)
+                .into()
+        } else {
+            Instruction::op_lt(lhs, rhs, is_rhs_immidiate, !apply_not)
+        }
     }
 
     pub fn op_return(reg: u8, is_const: bool, nb_exps: u8) -> Instruction {
@@ -218,6 +230,10 @@ impl Instruction {
         LuaOpCode::OP_SETTABUP
             .to_iabc(upval_dest_addr, is_val_const, tabattr_addrk, val)
             .into()
+    }
+
+    pub fn op_varargprep(dest: u8) -> Instruction {
+        LuaOpCode::OP_VARARGPREP.to_iabc(dest, false, 0, 0).into()
     }
 }
 
@@ -268,6 +284,9 @@ impl Display for iABC {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let b = match self.op {
             LuaOpCode::OP_ADD if self.k => -(self.b as i32 + 1),
+            LuaOpCode::OP_GTI | LuaOpCode::OP_LTI | LuaOpCode::OP_GEI | LuaOpCode::OP_LEI => {
+                self.b as i32 - 128
+            }
             _ => self.b as i32,
         };
         let c = match self.op {

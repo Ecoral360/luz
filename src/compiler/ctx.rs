@@ -83,15 +83,20 @@ impl CompilerCtx {
     pub(crate) fn register_upvalue(&mut self) {}
 
     pub(crate) fn target_register(&self) -> Option<u8> {
-        self.target_register_or_err().ok()
-    }
-
-    pub(crate) fn target_register_or_err(&self) -> Result<u8, LuzError> {
         self.scope()
             .regs
             .iter()
             .find_map(|reg| if reg.free { Some(reg.addr) } else { None })
+    }
+
+    pub(crate) fn target_register_or_err(&self) -> Result<u8, LuzError> {
+        Ok(self
+            .scope()
+            .regs
+            .iter()
+            .find_map(|reg| if reg.free { Some(reg.addr) } else { None })
             .ok_or_else(|| LuzError::CompileError(format!("No free target registers")))
+            .unwrap())
     }
 
     pub(crate) fn get_or_push_free_register(&mut self) -> u8 {
@@ -189,6 +194,12 @@ pub struct Scope {
 
     #[new(default)]
     sub_scopes: Vec<ScopeRef>,
+
+    #[new(default)]
+    nb_params: u32,
+
+    #[new(default)]
+    vararg: Vec<LuzObj>,
 }
 
 pub type ScopeRef = Rc<RefCell<Scope>>;
@@ -221,6 +232,13 @@ impl Scope {
 
     pub fn set_reg_val(&mut self, addr: u8, val: LuzObj) {
         self.regs[addr as usize].val = Some(val);
+    }
+
+    pub fn take_reg_val(&mut self, addr: u8) -> Option<LuzObj> {
+        self.regs
+            .get_mut(addr as usize)
+            .map(|reg| reg.val.take())
+            .flatten()
     }
 
     pub fn push_reg(&mut self, reg: &mut RegisterBuilder) {
@@ -368,6 +386,22 @@ impl Scope {
 
     pub fn sub_scopes(&self) -> &[Rc<RefCell<Scope>>] {
         &self.sub_scopes
+    }
+
+    pub fn set_nb_params(&mut self, nb_params: u32) {
+        self.nb_params = nb_params;
+    }
+
+    pub fn nb_params(&self) -> u32 {
+        self.nb_params
+    }
+
+    pub fn vararg(&self) -> &[LuzObj] {
+        &self.vararg
+    }
+
+    pub fn set_vararg(&mut self, vararg: Vec<LuzObj>) {
+        self.vararg = vararg;
     }
 }
 

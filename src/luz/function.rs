@@ -10,7 +10,7 @@ use crate::{
     runner::Runner,
 };
 
-#[derive(Debug, Clone, Builder)]
+#[derive(Debug, Clone, Builder, new)]
 pub struct FuncParams {
     #[builder(default = vec![])]
     pub fixed: Vec<String>,
@@ -21,11 +21,22 @@ pub struct FuncParams {
 #[derive(Clone, new)]
 pub enum LuzFunction {
     User {
+        nb_fixed_params: u32,
         scope: ScopeRef,
     },
     Native {
-        fn_ptr: Rc<RefCell<dyn FnMut(&mut Runner, Vec<LuzObj>) -> Result<Vec<LuzObj>, LuzError>>>,
+        nb_fixed_params: u32,
+        fn_ptr: Rc<RefCell<dyn FnMut(&mut Runner, Vec<LuzObj>, Vec<LuzObj>) -> Result<Vec<LuzObj>, LuzError>>>,
     },
+}
+
+impl LuzFunction {
+    pub fn nb_fixed_params(&self) -> u32 {
+        match self {
+            LuzFunction::User { nb_fixed_params, .. } => *nb_fixed_params,
+            LuzFunction::Native { nb_fixed_params, .. } => *nb_fixed_params,
+        }
+    }
 }
 
 impl fmt::Debug for LuzFunction {

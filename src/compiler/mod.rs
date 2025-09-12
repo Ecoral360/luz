@@ -38,11 +38,9 @@ impl Compiler {
                 LuzObj::Numeral(Numeral::Int(i))
                     if (-(MAX_HALF_sBx as i64)..(MAX_HALF_sBx as i64)).contains(i) =>
                 {
-                    ctx.push_inst(Instruction::op_loadi(
-                        ctx.target_register_or_err()?,
-                        *i as u32,
-                    ));
-                    Ok(ExpEval::InRegister(ctx.target_register_or_err()?))
+                    let reg = ctx.get_or_push_free_register();
+                    ctx.push_inst(Instruction::op_loadi(reg, *i as u32));
+                    Ok(ExpEval::InRegister(reg))
                 }
                 _ => {
                     if supports_constants {
@@ -97,8 +95,13 @@ impl Compiler {
             FunctionDefStat::Local { name, params, body } => {
                 let reg = ctx.push_claimed_register(Some(name.clone()));
                 let idx = ctx.push_scope(name.clone());
+                ctx.scope_mut().set_nb_params(params.fixed.len() as u32);
                 for param in &params.fixed {
                     ctx.push_claimed_register(Some(param.clone()));
+                }
+                if params.is_vararg {
+                    let vararg_reg = ctx.push_claimed_register(None);
+                    ctx.push_inst(Instruction::op_varargprep(vararg_reg));
                 }
                 for stat in body {
                     self.visit_stat(stat, ctx)?;
@@ -172,6 +175,7 @@ impl Compiler {
                 }
                 for exp in explist {
                     self.visit_exp(exp, &mut new_ctx)?;
+                    ctx.claim_next_free_register();
                 }
 
                 if varlist.len() > explist.len() && !Exp::is_multires(explist) {
@@ -210,7 +214,7 @@ impl Compiler {
             let lhs_addr = ctx.claim_next_free_register();
 
             self.visit_exp(rhs, ctx)?;
-            let rhs_addr = ctx.target_register_or_err()?;
+            let rhs_addr = ctx.get_or_push_free_register();
 
             ctx.push_inst(Instruction::op_concat(lhs_addr, rhs_addr - lhs_addr + 1));
             ctx.unclaim_registers(&[lhs_addr]);
@@ -266,21 +270,12 @@ impl Compiler {
             (lhs_addr, rhs_addr) = (rhs_addr, lhs_addr);
         }
 
+        let result_reg = ctx.get_or_push_free_register();
         if is_c_imm || is_b_imm {
-            ctx.push_inst(Instruction::op_addi(
-                ctx.target_register_or_err()?,
-                lhs_addr,
-                false,
-                rhs_addr,
-            ));
+            ctx.push_inst(Instruction::op_addi(result_reg, lhs_addr, false, rhs_addr));
         } else {
             ctx.push_inst(Instruction::op_arithmetic(
-                *op,
-                ctx.target_register_or_err()?,
-                lhs_addr,
-                is_b_const,
-                rhs_addr,
-                is_c_const,
+                *op, result_reg, lhs_addr, is_b_const, rhs_addr, is_c_const,
             ));
         }
         Ok(())
@@ -316,21 +311,27 @@ impl Compiler {
     // }
 
     fn visit_cmpop(&mut self, ctx: &mut CompilerCtx, exp: &Exp) -> Result<(), LuzError> {
-        let Exp::CmpOp { op, lhs, rhs } = exp else {
+        let Exp::CmpOp { mut op, lhs, rhs } = exp else {
             unreachable!()
         };
 
-        let lhs_addr = self.handle_exp(ctx, lhs, false, false)?;
+        let lhs_addr = self.handle_exp(ctx, lhs, true, matches!(op, CmpOp::Eq | CmpOp::Neq))?;
         let rhs_addr = self.handle_exp(ctx, rhs, true, matches!(op, CmpOp::Eq | CmpOp::Neq))?;
+
+        let is_lhs_immidiate = matches!(lhs_addr, ExpEval::InImmediate(_));
+        let is_lhs_constant = matches!(lhs_addr, ExpEval::InConstant(_));
 
         let is_rhs_immidiate = matches!(rhs_addr, ExpEval::InImmediate(_));
         let is_rhs_constant = matches!(rhs_addr, ExpEval::InConstant(_));
 
         let (lhs_dirty, mut lhs_addr) = match lhs_addr {
-            ExpEval::InRegister(r) => (false, r),
+            ExpEval::InRegister(r) => (None, r),
+            ExpEval::InImmediate(i) => (Some(ctx.claim_next_free_register()), i),
+            ExpEval::InConstant(c) => (None, c),
             ExpEval::InUpvalue { in_table, upvalue } => {
                 self.visit_exp(lhs, ctx)?;
-                (true, ctx.claim_next_free_register())
+                let reg = ctx.claim_next_free_register();
+                (Some(reg), reg)
             }
             _ => {
                 return Err(LuzError::CompileError(format!(
@@ -340,72 +341,58 @@ impl Compiler {
             }
         };
         let (rhs_dirty, mut rhs_addr) = match rhs_addr {
-            ExpEval::InImmediate(i) => (false, i),
-            ExpEval::InRegister(r) => (false, r),
-            ExpEval::InConstant(c) => (false, c),
+            ExpEval::InRegister(r) => (None, r),
+            ExpEval::InImmediate(i) => (Some(ctx.claim_next_free_register()), i),
+            ExpEval::InConstant(c) => (None, c),
             ExpEval::InUpvalue { in_table, upvalue } => {
                 self.visit_exp(rhs, ctx)?;
-                (true, ctx.claim_next_free_register())
+                let reg = ctx.claim_next_free_register();
+                (Some(reg), reg)
             }
             _ => {
                 return Err(LuzError::CompileError(format!(
                     "This value not supported in comparison: {:?}",
-                    lhs_addr
+                    rhs_addr
                 )))
             }
         };
 
-        if lhs_dirty {
-            ctx.unclaim_registers(&[lhs_addr]);
+        if let Some(addr_to_free) = lhs_dirty {
+            ctx.unclaim_registers(&[addr_to_free]);
         }
-        if rhs_dirty {
-            ctx.unclaim_registers(&[rhs_addr]);
+        if let Some(addr_to_free) = rhs_dirty {
+            ctx.unclaim_registers(&[addr_to_free]);
+        }
+
+        let is_immidiate = is_lhs_immidiate || is_rhs_immidiate;
+        if is_lhs_immidiate || is_lhs_constant {
+            op = op.flip_op();
         }
 
         match op {
             CmpOp::Eq | CmpOp::Neq => {
-                if is_rhs_immidiate {
-                    ctx.push_inst(Instruction::op_eqi(lhs_addr, rhs_addr, *op == CmpOp::Neq));
+                if is_lhs_immidiate {
+                    ctx.push_inst(Instruction::op_eqi(lhs_addr, rhs_addr, op == CmpOp::Neq));
                 } else {
                     ctx.push_inst(Instruction::op_eq(
                         lhs_addr,
                         rhs_addr,
                         is_rhs_constant,
-                        *op == CmpOp::Neq,
+                        op == CmpOp::Neq,
                     ));
                 }
             }
             CmpOp::Lt => {
-                ctx.push_inst(Instruction::op_lt(
-                    lhs_addr,
-                    rhs_addr,
-                    is_rhs_constant,
-                    false,
-                ));
+                ctx.push_inst(Instruction::op_lt(lhs_addr, rhs_addr, is_immidiate, false));
             }
             CmpOp::Gt => {
-                ctx.push_inst(Instruction::op_lt(
-                    rhs_addr,
-                    lhs_addr,
-                    is_rhs_constant,
-                    false,
-                ));
+                ctx.push_inst(Instruction::op_gt(rhs_addr, lhs_addr, is_immidiate, false));
             }
             CmpOp::LtEq => {
-                ctx.push_inst(Instruction::op_le(
-                    lhs_addr,
-                    rhs_addr,
-                    is_rhs_constant,
-                    false,
-                ));
+                ctx.push_inst(Instruction::op_le(lhs_addr, rhs_addr, is_immidiate, false));
             }
             CmpOp::GtEq => {
-                ctx.push_inst(Instruction::op_le(
-                    rhs_addr,
-                    lhs_addr,
-                    is_rhs_constant,
-                    false,
-                ));
+                ctx.push_inst(Instruction::op_ge(rhs_addr, lhs_addr, is_immidiate, false));
             }
         }
 
@@ -429,17 +416,29 @@ impl Compiler {
         } = f_call;
         self.visit_exp(func, ctx)?;
         let f_addr = ctx.claim_next_free_register();
-        for arg in args {
-            self.visit_exp(arg, ctx)?;
-            ctx.claim_next_free_register();
+
+        let mut claimed = vec![f_addr];
+        if !Exp::is_multires(args) {
+            for arg in args {
+                let mut one_exp_ctx = ctx.new_with(CompilerCtxBuilder::default().nb_expected(2));
+                self.visit_exp(arg, &mut one_exp_ctx)?;
+                claimed.push(ctx.claim_next_free_register());
+            }
+        } else {
+            for arg in &args[..args.len() - 1] {
+                let mut one_exp_ctx = ctx.new_with(CompilerCtxBuilder::default().nb_expected(2));
+                self.visit_exp(arg, &mut one_exp_ctx)?;
+                claimed.push(ctx.claim_next_free_register());
+            }
+            let mut all_out_ctx = ctx.new_with(CompilerCtxBuilder::default().nb_expected(0));
+            self.visit_exp(&args[args.len() - 1], &mut all_out_ctx)?;
+            claimed.push(ctx.claim_next_free_register());
         }
+
         let nb_expected = ctx.nb_expected();
-        if args.len() as u8 > nb_expected && nb_expected != 0 {
-            ctx.unclaim_register_range(
-                f_addr + nb_expected - 1,
-                args.len() as u8 - (nb_expected - 1),
-            );
-        }
+        let nb_to_unclaim = ctx.scope().regs().len();
+        ctx.unclaim_registers(&claimed);
+        // ctx.unclaim_register_range(f_addr, claimed);
 
         ctx.push_inst(Instruction::op_call(
             f_addr,
@@ -454,7 +453,7 @@ impl Compiler {
             LuzObj::Numeral(Numeral::Int(i)) if *i >= 0 && *i <= 255 => {
                 let reg = ctx.get_or_push_free_register();
                 ctx.push_inst(Instruction::op_loadi(reg, *i as u32));
-                ctx.claim_next_free_register();
+                // ctx.claim_next_free_register();
                 Ok(())
             }
             _ => {

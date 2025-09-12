@@ -249,6 +249,19 @@ pub enum CmpOp {
     GtEq,
 }
 
+impl CmpOp {
+    pub fn flip_op(self) -> Self {
+        match self {
+            CmpOp::Eq => CmpOp::Eq,
+            CmpOp::Neq => CmpOp::Neq,
+            CmpOp::Lt => CmpOp::Gt,
+            CmpOp::Gt => CmpOp::Lt,
+            CmpOp::LtEq => CmpOp::GtEq,
+            CmpOp::GtEq => CmpOp::LtEq,
+        }
+    }
+}
+
 impl TryFrom<Pair<'_, Rule>> for CmpOp {
     type Error = PestError<Rule>;
 

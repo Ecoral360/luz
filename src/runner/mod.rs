@@ -25,12 +25,16 @@ pub enum InstructionResult {
 #[allow(unused)]
 pub struct Runner {
     scope: Rc<RefCell<Scope>>,
+    vararg: Option<Vec<LuzObj>>,
 }
 
 #[allow(unused)]
 impl Runner {
     pub fn new(scope: Rc<RefCell<Scope>>) -> Self {
-        Self { scope }
+        Self {
+            scope,
+            vararg: Some(vec![]),
+        }
     }
 
     fn scope(&self) -> Ref<Scope> {
@@ -70,12 +74,21 @@ impl Runner {
     }
 
     fn get_reg_val(&self, reg: u8) -> Result<LuzObj, LuzError> {
-        let val = self.scope.borrow_mut().regs()[reg as usize]
+        let val = self
+            .scope
+            .borrow_mut()
+            .regs()
+            .get(reg as usize)
+            .ok_or(LuzError::RuntimeError(format!("Register not found {reg}")))?
             .val
             .as_ref()
             .expect("A value")
             .clone();
         Ok(val)
+    }
+
+    fn take_reg_val(&mut self, reg: u8) -> Result<Option<LuzObj>, LuzError> {
+        Ok(self.scope.borrow_mut().take_reg_val(reg))
     }
 
     fn get_const_val(&self, idx: u8) -> Result<LuzObj, LuzError> {
@@ -101,6 +114,23 @@ impl Runner {
                         },
                         rhs,
                     )?;
+
+                    if res.is_truthy() != *k {
+                        return Ok(InstructionResult::Skip(1));
+                    }
+                }
+                LuaOpCode::OP_LTI | LuaOpCode::OP_LEI | LuaOpCode::OP_GEI | LuaOpCode::OP_GTI => {
+                    let lhs = self.get_reg_val(*a)?;
+                    let rhs = (*b as i64) - 128;
+
+                    let cmp_op = match op {
+                        LuaOpCode::OP_LTI => CmpOp::Lt,
+                        LuaOpCode::OP_LEI => CmpOp::LtEq,
+                        LuaOpCode::OP_GEI => CmpOp::GtEq,
+                        LuaOpCode::OP_GTI => CmpOp::Gt,
+                        _ => unreachable!(),
+                    };
+                    let res = lhs.apply_cmp(cmp_op, LuzObj::Numeral(Numeral::Int(rhs)))?;
 
                     if res.is_truthy() != *k {
                         return Ok(InstructionResult::Skip(1));
@@ -169,6 +199,10 @@ impl Runner {
                     }
                     return Ok(InstructionResult::Return(rets));
                 }
+                LuaOpCode::OP_VARARGPREP => {
+                    let vararg = self.vararg.take().expect("Var arg");
+                    self.scope_mut().set_vararg(vararg);
+                }
                 LuaOpCode::OP_CALL => {
                     let iABC {
                         c: nb_expected_results,
@@ -185,24 +219,44 @@ impl Runner {
                         });
                     };
 
-                    let args = (func_addr + 1..func_addr + nb_args)
-                        .map(|arg_addr| self.get_reg_val(arg_addr))
-                        .collect::<Result<Vec<_>, _>>()?;
-
                     let f = f.borrow();
+
+                    let nb_params = f.nb_fixed_params();
+
+                    let mut args = vec![];
+                    let mut vararg = vec![];
+                    let mut arg_addr = 0;
+                    while let Ok(Some(arg_val)) = self.take_reg_val(func_addr + 1 + arg_addr as u8)
+                    {
+                        if nb_args != 0 && arg_addr as u8 == nb_args - 1 {
+                            break;
+                        }
+                        if arg_addr >= nb_params {
+                            vararg.push(arg_val);
+                        } else {
+                            args.push(arg_val);
+                        }
+                        arg_addr += 1;
+                    }
+                    if arg_addr < nb_params {
+                        for _ in 0..nb_params {
+                            args.push(LuzObj::Nil);
+                        }
+                    }
                     let results = match *f {
-                        LuzFunction::User { ref scope } => {
+                        LuzFunction::User { ref scope, .. } => {
                             let mut fc_scope = scope.borrow().clone();
                             for (i, arg) in args.into_iter().enumerate() {
                                 fc_scope.set_reg_val(i as u8, arg);
                             }
                             let mut fc_runner = Runner::new(Rc::new(RefCell::new(fc_scope)));
+                            fc_runner.vararg = Some(vararg);
 
                             fc_runner.run()?
                         }
-                        LuzFunction::Native { ref fn_ptr } => {
+                        LuzFunction::Native { ref fn_ptr, .. } => {
                             let mut fn_ptr = fn_ptr.borrow_mut();
-                            (fn_ptr)(self, args)?
+                            (fn_ptr)(self, args, vararg)?
                         }
                     };
 
@@ -214,14 +268,13 @@ impl Runner {
                         }
                     } else {
                         for (i, result) in results.into_iter().enumerate() {
-                            if i == (nb_expected_results - 1) as usize {
+                            if i == nb_expected_results as usize {
                                 break;
                             };
                             self.scope_mut().set_reg_val(func_addr + i as u8, result);
                         }
                         if (nb_expected_results - 1) > nb_results {
                             let diff = nb_expected_results - 1 - nb_results;
-                            dbg!(diff);
                             for addr in 0..diff {
                                 self.scope_mut()
                                     .set_reg_val(func_addr + diff + addr, LuzObj::Nil);
@@ -283,9 +336,12 @@ impl Runner {
                 LuaOpCode::OP_CLOSURE => {
                     let iABx { b, a, .. } = *i_abx;
                     let sub_scope = self.scope().sub_scopes()[b as usize].clone();
+                    let nb_params = sub_scope.borrow().nb_params();
                     self.scope.borrow_mut().set_reg_val(
                         a,
-                        LuzObj::Function(Rc::new(RefCell::new(LuzFunction::new_user(sub_scope)))),
+                        LuzObj::Function(Rc::new(RefCell::new(LuzFunction::new_user(
+                            nb_params, sub_scope,
+                        )))),
                     );
                 }
                 op => todo!("iABx {:?}", op),

@@ -14,46 +14,56 @@ fn make_env_table() -> Table {
 
     table.insert(
         LuzObj::str("print"),
-        LuzObj::Function(Rc::new(RefCell::new(LuzFunction::new_native(Rc::new(
-            RefCell::new(|_: &mut Runner, args: Vec<LuzObj>| {
-                println!(
-                    "{}",
-                    args.iter()
-                        .map(|a| a.to_string())
-                        .collect::<Vec<String>>()
-                        .join("\t")
-                );
-                Ok(vec![])
-            }),
-        ))))),
+        LuzObj::Function(Rc::new(RefCell::new(LuzFunction::new_native(
+            0,
+            Rc::new(RefCell::new(
+                |_: &mut Runner, _args: Vec<LuzObj>, vararg: Vec<LuzObj>| {
+                    println!(
+                        "{}",
+                        vararg
+                            .iter()
+                            .map(|a| a.to_string())
+                            .collect::<Vec<String>>()
+                            .join("\t")
+                    );
+                    Ok(vec![])
+                },
+            )),
+        )))),
     );
 
     table.insert(
         LuzObj::str("type"),
-        LuzObj::Function(Rc::new(RefCell::new(LuzFunction::new_native(Rc::new(
-            RefCell::new(|_: &mut Runner, args: Vec<LuzObj>| {
-                let arg = args.get(0).cloned().unwrap_or(LuzObj::Nil);
-                Ok(vec![LuzObj::String(arg.get_type().to_string())])
-            }),
-        ))))),
+        LuzObj::Function(Rc::new(RefCell::new(LuzFunction::new_native(
+            1,
+            Rc::new(RefCell::new(
+                |_: &mut Runner, args: Vec<LuzObj>, _vararg: Vec<LuzObj>| {
+                    let arg = args.get(0).unwrap_or(&LuzObj::Nil);
+                    Ok(vec![LuzObj::String(arg.get_type().to_string())])
+                },
+            )),
+        )))),
     );
 
     table.insert(
         LuzObj::str("assert"),
-        LuzObj::Function(Rc::new(RefCell::new(LuzFunction::new_native(Rc::new(
-            RefCell::new(|_: &mut Runner, args: Vec<LuzObj>| {
-                let condition = args.get(0).cloned().unwrap_or(LuzObj::Nil);
-                if condition.is_truthy() {
-                    Ok(vec![condition])
-                } else {
-                    let message = args
-                        .get(1)
-                        .cloned()
-                        .unwrap_or(LuzObj::String("assertion failed!".to_string()));
-                    Err(LuzError::RuntimeError(message.to_string()))
-                }
-            }),
-        ))))),
+        LuzObj::Function(Rc::new(RefCell::new(LuzFunction::new_native(
+            2,
+            Rc::new(RefCell::new(
+                |_: &mut Runner, args: Vec<LuzObj>, _vararg: Vec<LuzObj>| {
+                    let condition = args.get(0).cloned().unwrap_or(LuzObj::Nil);
+                    if condition.is_truthy() {
+                        Ok(vec![condition])
+                    } else {
+                        let message = args
+                            .get(1)
+                            .cloned()
+                            .unwrap_or(LuzObj::String("assertion failed!".to_string()));
+                        Err(LuzError::RuntimeError(message.to_string()))
+                    }
+                },
+            )),
+        )))),
     );
 
     Table::new(table, None)
