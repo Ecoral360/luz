@@ -1,6 +1,7 @@
 use std::{
     cell::{Ref, RefCell, RefMut},
     rc::Rc,
+    usize,
 };
 
 use derive_builder::Builder;
@@ -149,6 +150,22 @@ impl CompilerCtx {
 
     pub(crate) fn push_inst(&mut self, inst: Instruction) {
         self.scope_mut().instructions.push(inst);
+        let idx = self
+            .scope_mut()
+            .instructions
+            .iter()
+            .enumerate()
+            .find_map(|(i, inst)| {
+                if matches!(inst, Instruction::NOP) {
+                    Some(i)
+                } else {
+                    None
+                }
+            });
+
+        if let Some(idx) = idx {
+            self.scope_mut().instructions.swap_remove(idx);
+        }
     }
 
     pub(crate) fn get_or_add_const(&mut self, obj: LuzObj) -> u32 {
@@ -216,6 +233,10 @@ impl Scope {
 
     pub fn instructions(&self) -> &Vec<Instruction> {
         &self.instructions
+    }
+
+    pub fn instructions_mut(&mut self) -> &mut Vec<Instruction> {
+        &mut self.instructions
     }
 
     pub fn constants(&self) -> &Vec<LuzObj> {

@@ -209,7 +209,9 @@ unop = _{
 }
 // operator tokens
 binop = _{
-    Plus
+    And
+  | Or
+  | Plus
   | Minus
   | Star
   | Slash
@@ -228,8 +230,6 @@ binop = _{
   | Lt
   | Gt
   | Eq
-  | And
-  | Or
 }
 
 Pound       = { "#" }

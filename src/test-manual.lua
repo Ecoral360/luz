@@ -1,8 +1,6 @@
-local x = 2
-print(type(1<x), 1, 2 + x)
-print(type(""), 12)
+local x = 12
+print(type(true) and type("a") and type(3) and x .. "a")
 
--- assert(type(true) == 'boolean' and type(false) == 'boolean')
 -- assert(type(nil) == 'nil'
 --    and type(-3) == 'number'
 --    and type'x' == 'string'

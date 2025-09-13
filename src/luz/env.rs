@@ -50,15 +50,18 @@ fn make_env_table() -> Table {
         LuzObj::Function(Rc::new(RefCell::new(LuzFunction::new_native(
             2,
             Rc::new(RefCell::new(
-                |_: &mut Runner, args: Vec<LuzObj>, _vararg: Vec<LuzObj>| {
+                |_: &mut Runner, mut args: Vec<LuzObj>, _vararg: Vec<LuzObj>| {
                     let condition = args.get(0).cloned().unwrap_or(LuzObj::Nil);
                     if condition.is_truthy() {
                         Ok(vec![condition])
                     } else {
-                        let message = args
-                            .get(1)
-                            .cloned()
-                            .unwrap_or(LuzObj::String("assertion failed!".to_string()));
+                        let message_or_nil = args.pop().expect("Second arg");
+                        let message = if message_or_nil.is_nil() {
+                            LuzObj::String("assertion failed!".to_string())
+                        } else {
+                            message_or_nil
+                        };
+
                         Err(LuzError::RuntimeError(message.to_string()))
                     }
                 },

@@ -1,8 +1,11 @@
+use std::thread::scope;
+
 use crate::{
     ast::{AssignStat, Binop, CmpOp, Exp, FuncCall, FunctionDefStat, LogicCmpOp, ReturnStat, Stat},
     compiler::{
         ctx::{CompilerCtx, CompilerCtxBuilder, RegOrUpvalue, Upvalue},
-        instructions::{Instruction, MAX_HALF_sBx},
+        instructions::{iABC, Instruction, MAX_HALF_sBx},
+        opcode::LuaOpCode,
         visitor::Visitor,
     },
     luz::{
@@ -180,7 +183,7 @@ impl Compiler {
 
                 if varlist.len() > explist.len() && !Exp::is_multires(explist) {
                     for var in varlist[explist.len()..].iter() {
-                        let reg = ctx.get_or_push_free_register();
+                        let reg = ctx.claim_next_free_register();
                         ctx.push_inst(Instruction::op_loadnil(reg, 0));
                     }
                 }
@@ -273,10 +276,19 @@ impl Compiler {
         let result_reg = ctx.get_or_push_free_register();
         if is_c_imm || is_b_imm {
             ctx.push_inst(Instruction::op_addi(result_reg, lhs_addr, false, rhs_addr));
+
+            ctx.push_inst(Instruction::op_mmbini(lhs_addr, rhs_addr, 6, is_b_imm));
         } else {
             ctx.push_inst(Instruction::op_arithmetic(
                 *op, result_reg, lhs_addr, is_b_const, rhs_addr, is_c_const,
             ));
+            if is_c_const {
+                ctx.push_inst(Instruction::op_mmbink(lhs_addr, rhs_addr, 6, false));
+            } else if is_b_const {
+                ctx.push_inst(Instruction::op_mmbink(rhs_addr, lhs_addr, 6, true));
+            } else {
+                ctx.push_inst(Instruction::op_mmbin(lhs_addr, rhs_addr, 6));
+            }
         }
         Ok(())
     }
@@ -286,29 +298,135 @@ impl Compiler {
             unreachable!()
         };
 
-        match op {
-            LogicCmpOp::And => todo!(),
-            LogicCmpOp::Or => todo!(),
+        let post_instructions = self.visit_inner_logicop(ctx, exp, 0, 0)?;
+        for inst in post_instructions {
+            ctx.push_inst(inst);
         }
-
         Ok(())
     }
 
-    // fn load_upvalue(
-    //     &mut self,
-    //     ctx: &mut CompilerCtx,
-    //     upvalue: Upvalue,
-    //     in_table: bool,
-    // ) -> Result<u8, LuzError> {
-    //     let dest = ctx.get_or_push_free_register();
-    //     if in_table {
-    //         Instruction::op_gettabup(dest, upvalue.addr, tabattr_addrk);
-    //     } else {
-    //         Instruction::op_getupval(dest, upvalue.addr);
-    //     }
-    //
-    //     todo!()
-    // }
+    fn visit_inner_logicop(
+        &mut self,
+        ctx: &mut CompilerCtx,
+        exp: &Exp,
+        jmp_size: usize,
+        depth: usize,
+    ) -> Result<Vec<Instruction>, LuzError> {
+        let Exp::LogicCmpOp { op, lhs, rhs } = exp else {
+            unreachable!()
+        };
+        let nb_inst_before = ctx.scope().instructions().len();
+
+        self.visit_exp(rhs, ctx);
+
+        let mut rhs_instructions = {
+            let mut scope = ctx.scope_mut();
+            scope
+                .instructions_mut()
+                .drain(nb_inst_before..)
+                .collect::<Vec<_>>()
+        };
+
+        if depth != 0 {
+            let rhs_last_inst = {
+                if rhs_instructions
+                    .last()
+                    .expect("There must be an instruction here")
+                    .op()
+                    == LuaOpCode::OP_MOVE
+                {
+                    rhs_instructions.pop()
+                } else {
+                    None
+                }
+            };
+            if let Some(last_move) = rhs_last_inst {
+                let Instruction::iABC(iABC { c, b, k, a, op }) = last_move else {
+                    unreachable!()
+                };
+                let val = b;
+                let dest = a;
+                rhs_instructions.push(Instruction::op_testset(dest, val, true));
+            } else {
+                let reg = ctx.get_or_push_free_register();
+                rhs_instructions.push(Instruction::op_test(reg, true));
+            }
+            rhs_instructions.push(Instruction::op_jmp(jmp_size as u32));
+        }
+
+        let rhs_len = rhs_instructions.len();
+        let mut post_instructions = if matches!(**lhs, Exp::LogicCmpOp { .. }) {
+            self.visit_inner_logicop(ctx, lhs, jmp_size + rhs_len, depth + 1)?
+        } else {
+            self.visit_exp(lhs, ctx);
+            vec![]
+        };
+
+        match **lhs {
+            Exp::CmpOp { .. } => {
+                {
+                    let nb_drop = ctx.scope().instructions().len() - 3;
+                    let mut scope = ctx.scope_mut();
+                    scope.instructions_mut().truncate(nb_drop);
+                }
+                if matches!(**rhs, Exp::CmpOp { .. }) {
+                    ctx.push_inst(Instruction::op_jmp((jmp_size + rhs_len - 2) as u32));
+                    for inst in rhs_instructions {
+                        ctx.push_inst(inst);
+                    }
+                } else {
+                    ctx.push_inst(Instruction::op_jmp((jmp_size + rhs_len) as u32));
+                    let next_addr = ctx.get_or_push_free_register();
+                    for inst in rhs_instructions {
+                        ctx.push_inst(inst);
+                    }
+                    ctx.push_inst(Instruction::op_jmp(jmp_size as u32));
+
+                    post_instructions.push(Instruction::op_lfalseskip(next_addr));
+                    post_instructions.push(Instruction::op_loadtrue(next_addr));
+                }
+            }
+            Exp::LogicCmpOp { .. } => {
+                for inst in rhs_instructions {
+                    ctx.push_inst(inst);
+                }
+            }
+            _ => {
+                let last_inst = {
+                    let mut scope = ctx.scope_mut();
+                    if scope
+                        .instructions()
+                        .last()
+                        .expect("There must be an instruction here")
+                        .op()
+                        == LuaOpCode::OP_MOVE
+                    {
+                        scope.instructions_mut().pop()
+                    } else {
+                        None
+                    }
+                };
+                if let Some(last_move) = last_inst {
+                    let Instruction::iABC(iABC { c, b, k, a, op }) = last_move else {
+                        unreachable!()
+                    };
+                    let val = b;
+                    let dest = a;
+                    ctx.push_inst(Instruction::op_testset(dest, val, true));
+                } else {
+                    let reg = ctx.get_or_push_free_register();
+                    ctx.push_inst(Instruction::op_test(reg, true));
+                }
+                ctx.push_inst(Instruction::op_jmp((jmp_size + rhs_len) as u32));
+                // we are at the top level of this "and"
+                for inst in rhs_instructions {
+                    ctx.push_inst(inst);
+                }
+            }
+        }
+
+        Ok(post_instructions)
+    }
 
     fn visit_cmpop(&mut self, ctx: &mut CompilerCtx, exp: &Exp) -> Result<(), LuzError> {
         let Exp::CmpOp { mut op, lhs, rhs } = exp else {
@@ -371,7 +489,7 @@ impl Compiler {
 
         match op {
             CmpOp::Eq | CmpOp::Neq => {
-                if is_lhs_immidiate {
+                if is_rhs_immidiate {
                     ctx.push_inst(Instruction::op_eqi(lhs_addr, rhs_addr, op == CmpOp::Neq));
                 } else {
                     ctx.push_inst(Instruction::op_eq(
@@ -456,6 +574,15 @@ impl Compiler {
                 // ctx.claim_next_free_register();
                 Ok(())
             }
+            LuzObj::Boolean(b) => {
+                let reg = ctx.get_or_push_free_register();
+                if *b {
+                    ctx.push_inst(Instruction::op_loadtrue(reg));
+                } else {
+                    ctx.push_inst(Instruction::op_loadfalse(reg));
+                }
+                Ok(())
+            }
             _ => {
                 let addr = ctx.get_or_add_const(lit.clone());
                 let reg = ctx.get_or_push_free_register();
@@ -504,7 +631,7 @@ impl Visitor for Compiler {
             Exp::Var(exp) => todo!(),
             Exp::Unop(unop, exp) => todo!(),
             Exp::CmpOp { op, lhs, rhs } => self.visit_cmpop(ctx, exp),
-            Exp::LogicCmpOp { op, lhs, rhs } => todo!(),
+            Exp::LogicCmpOp { op, lhs, rhs } => self.visit_logicop(ctx, exp),
             Exp::Access(exp_access) => todo!(),
             Exp::FuncDef(func_def) => todo!(),
             Exp::FuncCall(func_call) => self.visit_function_call(ctx, func_call),

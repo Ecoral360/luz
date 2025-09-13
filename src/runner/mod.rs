@@ -115,7 +115,7 @@ impl Runner {
                         rhs,
                     )?;
 
-                    if res.is_truthy() != *k {
+                    if res.is_truthy() == *k {
                         return Ok(InstructionResult::Skip(1));
                     }
                 }
@@ -132,8 +132,57 @@ impl Runner {
                     };
                     let res = lhs.apply_cmp(cmp_op, LuzObj::Numeral(Numeral::Int(rhs)))?;
 
-                    if res.is_truthy() != *k {
+                    if res.is_truthy() == *k {
                         return Ok(InstructionResult::Skip(1));
+                    }
+                }
+                LuaOpCode::OP_EQK => {
+                    let lhs = self.get_reg_val(*a)?;
+                    let rhs = self.get_const_val(*b)?;
+
+                    let res = lhs.apply_cmp(CmpOp::Eq, rhs)?;
+
+                    if res.is_truthy() == *k {
+                        return Ok(InstructionResult::Skip(1));
+                    }
+                }
+
+                LuaOpCode::OP_EQ => {
+                    let lhs = self.get_reg_val(*a)?;
+                    let rhs = self.get_reg_val(*b)?;
+
+                    let res = lhs.apply_cmp(CmpOp::Eq, rhs)?;
+
+                    if res.is_truthy() == *k {
+                        return Ok(InstructionResult::Skip(1));
+                    }
+                }
+
+                LuaOpCode::OP_EQI => {
+                    let lhs = self.get_reg_val(*a)?;
+                    let rhs = (*b as i64) - 128;
+
+                    let res = lhs.apply_cmp(CmpOp::Eq, LuzObj::Numeral(Numeral::Int(rhs)))?;
+
+                    if res.is_truthy() == *k {
+                        return Ok(InstructionResult::Skip(1));
+                    }
+                }
+
+                LuaOpCode::OP_TEST => {
+                    let val = self.get_reg_val(*a)?;
+
+                    if !(val.is_truthy() == *k) {
+                        return Ok(InstructionResult::Skip(1));
+                    }
+                }
+                LuaOpCode::OP_TESTSET => {
+                    let val = self.get_reg_val(*b)?;
+
+                    if !(val.is_truthy() == *k) {
+                        return Ok(InstructionResult::Skip(1));
+                    } else {
+                        self.scope_mut().set_reg_val(*a, val);
                     }
                 }
                 LuaOpCode::OP_LOADTRUE => {
@@ -169,6 +218,13 @@ impl Runner {
                     self.scope
                         .borrow_mut()
                         .set_reg_val(a, lhs.apply_binop(Binop::Add, rhs)?);
+                }
+
+                LuaOpCode::OP_MMBINI => {
+                }
+                LuaOpCode::OP_MMBINK => {
+                }
+                LuaOpCode::OP_MMBIN => {
                 }
 
                 LuaOpCode::OP_CONCAT => {
@@ -364,6 +420,7 @@ impl Runner {
                 }
                 op => todo!("isJ {:?}", op),
             },
+            Instruction::NOP => unimplemented!()
         }
         Ok(InstructionResult::Continue)
     }

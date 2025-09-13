@@ -20,7 +20,6 @@ lazy_static::lazy_static! {
 
         // Precedence is defined lowest to highest
         PrattParser::new()
-            .op(Op::postfix(Rule::PostfixExp))
                         // Logic op
             .op(Op::infix(Rule::Or, Left))
             .op(Op::infix(Rule::And, Left))
@@ -50,15 +49,8 @@ lazy_static::lazy_static! {
                 Op::infix(Rule::Pourcent, Left))
             .op(Op::prefix(Rule::Not) | Op::prefix(Rule::Pound) | Op::prefix(Rule::Neg) | Op::prefix(Rule::Tilde))
             .op(Op::infix(Rule::Caret, Right))
-            // Ternary
 
-            // Logic op
-
-            // Comparaison op
-
-            // Bitwise op
-
-            // Arithmetic op
+            .op(Op::postfix(Rule::PostfixExp))
     };
 }
 

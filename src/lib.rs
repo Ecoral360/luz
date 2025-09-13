@@ -22,7 +22,6 @@ pub fn run(input: &str) -> Result<(), LuzError> {
     let mut stmts = LuaParser::parse(Rule::Chunk, input);
     match &mut stmts {
         Ok(stmts) => {
-            // dbg!(&stmts);
             let stmts = parse_script(stmts)?;
             dbg!(stmts);
             Ok(())
@@ -46,7 +45,6 @@ pub fn run_file(path: &str) -> Result<(), LuzError> {
 
     match &mut stmts {
         Ok(stmts) => {
-            // dbg!(&stmts);
             let stmts = parse_script(stmts)?;
             // dbg!(&stmts);
             run_compiler(stmts)

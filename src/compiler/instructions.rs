@@ -8,10 +8,23 @@ use crate::{ast::Binop, compiler::opcode::LuaOpCode};
 #[allow(unused)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Instruction {
+    NOP,
     iABC(iABC),
     iABx(iABx),
     iAsBx(iAsBx),
     isJ(isJ),
+}
+
+impl Instruction {
+    pub fn op(&self) -> LuaOpCode {
+        match self {
+            Instruction::iABC(i_abc) => i_abc.op,
+            Instruction::iABx(i_abx) => i_abx.op,
+            Instruction::iAsBx(i_as_bx) => i_as_bx.op,
+            Instruction::isJ(is_j) => is_j.op,
+            _ => unimplemented!(),
+        }
+    }
 }
 
 #[allow(non_upper_case_globals)]
@@ -27,6 +40,7 @@ impl Display for Instruction {
             Instruction::iABx(i_abx) => write!(f, "{}", i_abx),
             Instruction::iAsBx(i_asbx) => write!(f, "{}", i_asbx),
             Instruction::isJ(i_sj) => write!(f, "{}", i_sj),
+            _ => write!(f, "NOP"),
         }
     }
 }
@@ -34,6 +48,21 @@ impl Display for Instruction {
 impl Instruction {
     pub fn op_addi(a: u8, b: u8, is_b_const: bool, c: u8) -> Instruction {
         iABC::new(c, b, is_b_const, a, LuaOpCode::OP_ADDI).into()
+    }
+    pub fn op_mmbini(obj_reg: u8, arg_i: u8, metamethod: u8, flip: bool) -> Instruction {
+        LuaOpCode::OP_MMBINI
+            .to_iabc(obj_reg, flip, arg_i, metamethod)
+            .into()
+    }
+    pub fn op_mmbink(obj_reg: u8, arg_k: u8, metamethod: u8, flip: bool) -> Instruction {
+        LuaOpCode::OP_MMBINK
+            .to_iabc(obj_reg, flip, arg_k, metamethod)
+            .into()
+    }
+    pub fn op_mmbin(obj_reg: u8, arg_reg: u8, metamethod: u8) -> Instruction {
+        LuaOpCode::OP_MMBIN
+            .to_iabc(obj_reg, false, arg_reg, metamethod)
+            .into()
     }
 
     pub fn op_loadnil(a: u8, b: u32) -> Instruction {
@@ -129,6 +158,21 @@ impl Instruction {
     pub fn op_loadtrue(reg: u8) -> Instruction {
         LuaOpCode::OP_LOADTRUE.to_iabc(reg, false, 0, 0).into()
     }
+    pub fn op_loadfalse(reg: u8) -> Instruction {
+        LuaOpCode::OP_LOADFALSE.to_iabc(reg, false, 0, 0).into()
+    }
+
+    pub fn op_test(reg: u8, apply_not: bool) -> Instruction {
+        LuaOpCode::OP_TEST
+            .to_iabc(reg, !apply_not, 0, (!apply_not) as u8)
+            .into()
+    }
+
+    pub fn op_testset(reg: u8, val_reg: u8, apply_not: bool) -> Instruction {
+        LuaOpCode::OP_TESTSET
+            .to_iabc(reg, !apply_not, val_reg, (!apply_not) as u8)
+            .into()
+    }
 
     pub fn op_eq(lhs: u8, rhs: u8, is_rhs_const: bool, apply_not: bool) -> Instruction {
         let opcode = if is_rhs_const {
@@ -136,14 +180,12 @@ impl Instruction {
         } else {
             LuaOpCode::OP_EQ
         };
-        opcode
-            .to_iabc(lhs, !apply_not, rhs, (!apply_not) as u8)
-            .into()
+        opcode.to_iabc(lhs, apply_not, rhs, apply_not as u8).into()
     }
 
     pub fn op_eqi(lhs: u8, rhs_i: u8, apply_not: bool) -> Instruction {
         LuaOpCode::OP_EQI
-            .to_iabc(lhs, !apply_not, rhs_i, (!apply_not) as u8)
+            .to_iabc(lhs, apply_not, rhs_i, apply_not as u8)
             .into()
     }
     pub fn op_lt(lhs: u8, rhs: u8, is_rhs_immidiate: bool, apply_not: bool) -> Instruction {
@@ -152,9 +194,7 @@ impl Instruction {
         } else {
             LuaOpCode::OP_LT
         };
-        opcode
-            .to_iabc(lhs, !apply_not, rhs, (!apply_not) as u8)
-            .into()
+        opcode.to_iabc(lhs, apply_not, rhs, apply_not as u8).into()
     }
 
     pub fn op_le(lhs: u8, rhs: u8, is_rhs_immidiate: bool, apply_not: bool) -> Instruction {
@@ -163,15 +203,13 @@ impl Instruction {
         } else {
             LuaOpCode::OP_LE
         };
-        opcode
-            .to_iabc(lhs, !apply_not, rhs, (!apply_not) as u8)
-            .into()
+        opcode.to_iabc(lhs, apply_not, rhs, apply_not as u8).into()
     }
 
     pub fn op_gt(lhs: u8, rhs: u8, is_rhs_immidiate: bool, apply_not: bool) -> Instruction {
         if is_rhs_immidiate {
             LuaOpCode::OP_GTI
-                .to_iabc(lhs, !apply_not, rhs, (!apply_not) as u8)
+                .to_iabc(lhs, apply_not, rhs, apply_not as u8)
                 .into()
         } else {
             Instruction::op_le(lhs, rhs, is_rhs_immidiate, !apply_not)
@@ -181,7 +219,7 @@ impl Instruction {
     pub fn op_ge(lhs: u8, rhs: u8, is_rhs_immidiate: bool, apply_not: bool) -> Instruction {
         if is_rhs_immidiate {
             LuaOpCode::OP_GEI
-                .to_iabc(lhs, !apply_not, rhs, (!apply_not) as u8)
+                .to_iabc(lhs, apply_not, rhs, apply_not as u8)
                 .into()
         } else {
             Instruction::op_lt(lhs, rhs, is_rhs_immidiate, !apply_not)
@@ -284,16 +322,29 @@ impl Display for iABC {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let b = match self.op {
             LuaOpCode::OP_ADD if self.k => -(self.b as i32 + 1),
-            LuaOpCode::OP_GTI | LuaOpCode::OP_LTI | LuaOpCode::OP_GEI | LuaOpCode::OP_LEI => {
-                self.b as i32 - 128
-            }
+            LuaOpCode::OP_GTI
+            | LuaOpCode::OP_LTI
+            | LuaOpCode::OP_GEI
+            | LuaOpCode::OP_LEI
+            | LuaOpCode::OP_EQI => self.b as i32 - 128,
             _ => self.b as i32,
         };
         let c = match self.op {
             LuaOpCode::OP_ADDI => self.c as i32 - 128,
             _ => self.c as i32,
         };
-        write!(f, "{:?} {} {} {}", self.op, self.a, b, c)
+        match self.op {
+            LuaOpCode::OP_LOADFALSE | LuaOpCode::OP_LOADTRUE | LuaOpCode::OP_LFALSESKIP => {
+                write!(f, "{:?} {}", self.op, self.a)
+            }
+            LuaOpCode::OP_TEST => {
+                write!(f, "{:?} {} {}", self.op, self.a, self.k as u8)
+            }
+            LuaOpCode::OP_MMBINI => {
+                write!(f, "{:?} {} {} {} {}", self.op, self.a, self.b - 128, self.c, self.k as u8)
+            }
+            _ => write!(f, "{:?} {} {} {}", self.op, self.a, b, c),
+        }
     }
 }
 
