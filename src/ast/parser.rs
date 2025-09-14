@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::vec;
 
 use pest::iterators::Pair;
@@ -135,9 +136,7 @@ fn parse_top_expr(pair: Pair<Rule>) -> Result<Exp, LuzError> {
         }
         Rule::Nil => Exp::Literal(LuzObj::Nil),
         Rule::Boolean => Exp::Literal(LuzObj::Boolean(pair.as_str() == "true")),
-        Rule::LiteralString => {
-            Exp::Literal(LuzObj::String(pair.as_str()[1..pair.as_str().len() - 1].to_string()))
-        }
+        Rule::LiteralString => Exp::Literal(LuzObj::from_literal_str(pair.as_str())?),
         Rule::Ellipse => Exp::Vararg,
         Rule::Var => {
             let mut inner = pair.into_inner();
@@ -150,19 +149,7 @@ fn parse_top_expr(pair: Pair<Rule>) -> Result<Exp, LuzError> {
         }
         Rule::Numeral => {
             let string = pair.as_str();
-            if let Ok(int) = string.parse::<i64>() {
-                Exp::Literal(Numeral::Int(int).into())
-            } else if let Ok(float) = string.parse::<f64>() {
-                Exp::Literal(Numeral::Float(float).into())
-            } else if string.starts_with("0x") {
-                if let Ok(hex) = i64::from_str_radix(&string[2..], 16) {
-                    Exp::Literal(Numeral::Int(hex).into())
-                } else {
-                    Err(LuzError::NumberParsing(string.to_string()))?
-                }
-            } else {
-                todo!("{:?}", pair.as_str())
-            }
+            Exp::Literal(LuzObj::Numeral(Numeral::from_str(string)?))
         }
         Rule::Name => Exp::Name(pair.as_str().to_string()),
 

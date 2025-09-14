@@ -145,14 +145,47 @@ impl FromStr for Numeral {
     type Err = LuzError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // Lua specs seem to only coerse string to float
-        // if let Ok(int) = s.parse::<i64>() {
-        //     Ok(Self::Int(int))
-        // } else
-        if let Ok(float) = s.parse::<f64>() {
-            Ok(Self::Float(float))
+        let mut string = s.trim();
+        let sign = if string.starts_with('-') {
+            string = &string[1..];
+            -1
         } else {
-            Err(LuzError::NumberParsing(s.to_string()))
+            1
+        };
+
+        if let Ok(int) = string.parse::<i64>() {
+            Ok(Numeral::Int(sign * int).into())
+        } else if let Ok(float) = string.parse::<f64>() {
+            Ok(Numeral::Float(sign as f64 * float).into())
+        } else if string.to_lowercase().starts_with("0x") {
+            if let Some(dot_pos) = string.find(&['.', ',']) {
+                // Decimal hex number
+                let int_part = &string[2..dot_pos];
+                let frac_part = &string[dot_pos + 1..];
+                let int = if int_part.is_empty() {
+                    0
+                } else {
+                    i64::from_str_radix(int_part, 16)
+                        .map_err(|_| LuzError::NumberParsing(string.to_string()))?
+                };
+                let frac = if frac_part.is_empty() {
+                    0.0
+                } else {
+                    let denom = 16f64.powi(frac_part.len() as i32);
+                    let numer = i64::from_str_radix(frac_part, 16)
+                        .map_err(|_| LuzError::NumberParsing(string.to_string()))?;
+                    (numer as f64) / denom
+                };
+                Ok(Numeral::Float(sign as f64 * (int as f64 + frac)).into())
+            } else {
+                if let Ok(hex) = i64::from_str_radix(&string[2..], 16) {
+                    Ok(Numeral::Int(sign * hex).into())
+                } else {
+                    Err(LuzError::NumberParsing(string.to_string()))?
+                }
+            }
+        } else {
+            todo!("Number conversion of {:?}", s)
         }
     }
 }

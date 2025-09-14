@@ -6,8 +6,8 @@ use derive_new::new;
 
 use crate::{
     compiler::ctx::ScopeRef,
-    luz::{err::LuzError, obj::LuzObj},
-    runner::Runner,
+    luz::obj::LuzObj,
+    runner::{err::LuzRuntimeError, Runner},
 };
 
 #[derive(Debug, Clone, Builder, new)]
@@ -26,15 +26,27 @@ pub enum LuzFunction {
     },
     Native {
         nb_fixed_params: u32,
-        fn_ptr: Rc<RefCell<dyn FnMut(&mut Runner, Vec<LuzObj>, Vec<LuzObj>) -> Result<Vec<LuzObj>, LuzError>>>,
+        fn_ptr: Rc<
+            RefCell<
+                dyn FnMut(
+                    &mut Runner,
+                    Vec<LuzObj>,
+                    Vec<LuzObj>,
+                ) -> Result<Vec<LuzObj>, LuzRuntimeError>,
+            >,
+        >,
     },
 }
 
 impl LuzFunction {
     pub fn nb_fixed_params(&self) -> u32 {
         match self {
-            LuzFunction::User { nb_fixed_params, .. } => *nb_fixed_params,
-            LuzFunction::Native { nb_fixed_params, .. } => *nb_fixed_params,
+            LuzFunction::User {
+                nb_fixed_params, ..
+            } => *nb_fixed_params,
+            LuzFunction::Native {
+                nb_fixed_params, ..
+            } => *nb_fixed_params,
         }
     }
 }

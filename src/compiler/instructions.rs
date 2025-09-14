@@ -164,13 +164,13 @@ impl Instruction {
 
     pub fn op_test(reg: u8, apply_not: bool) -> Instruction {
         LuaOpCode::OP_TEST
-            .to_iabc(reg, !apply_not, 0, (!apply_not) as u8)
+            .to_iabc(reg, apply_not, 0, apply_not as u8)
             .into()
     }
 
     pub fn op_testset(reg: u8, val_reg: u8, apply_not: bool) -> Instruction {
         LuaOpCode::OP_TESTSET
-            .to_iabc(reg, !apply_not, val_reg, (!apply_not) as u8)
+            .to_iabc(reg, apply_not, val_reg, apply_not as u8)
             .into()
     }
 
@@ -185,7 +185,7 @@ impl Instruction {
 
     pub fn op_eqi(lhs: u8, rhs_i: u8, apply_not: bool) -> Instruction {
         LuaOpCode::OP_EQI
-            .to_iabc(lhs, apply_not, rhs_i, apply_not as u8)
+            .to_iabc(lhs, !apply_not, rhs_i, (!apply_not) as u8)
             .into()
     }
     pub fn op_lt(lhs: u8, rhs: u8, is_rhs_immidiate: bool, apply_not: bool) -> Instruction {
@@ -212,7 +212,7 @@ impl Instruction {
                 .to_iabc(lhs, apply_not, rhs, apply_not as u8)
                 .into()
         } else {
-            Instruction::op_le(lhs, rhs, is_rhs_immidiate, !apply_not)
+            Instruction::op_lt(lhs, rhs, is_rhs_immidiate, !apply_not)
         }
     }
 
@@ -259,6 +259,22 @@ impl Instruction {
             .to_iabc(dest, false, upval_addr, tabattr_addrk)
             .into()
     }
+    pub fn op_getfield(dest: u8, tabaddr: u8, tabattr_addrk: u8) -> Instruction {
+        LuaOpCode::OP_GETFIELD
+            .to_iabc(dest, false, tabaddr, tabattr_addrk)
+            .into()
+    }
+    pub fn op_geti(dest: u8, tabaddr: u8, tabattr_i: u8) -> Instruction {
+        LuaOpCode::OP_GETI
+            .to_iabc(dest, false, tabaddr, tabattr_i)
+            .into()
+    }
+    pub fn op_gettable(dest: u8, tabaddr: u8, tabattr_addr: u8) -> Instruction {
+        LuaOpCode::OP_GETTABLE
+            .to_iabc(dest, false, tabaddr, tabattr_addr)
+            .into()
+    }
+
     pub fn op_settabup(
         upval_dest_addr: u8,
         tabattr_addrk: u8,
@@ -341,7 +357,15 @@ impl Display for iABC {
                 write!(f, "{:?} {} {}", self.op, self.a, self.k as u8)
             }
             LuaOpCode::OP_MMBINI => {
-                write!(f, "{:?} {} {} {} {}", self.op, self.a, self.b - 128, self.c, self.k as u8)
+                write!(
+                    f,
+                    "{:?} {} {} {} {}",
+                    self.op,
+                    self.a,
+                    self.b - 128,
+                    self.c,
+                    self.k as u8
+                )
             }
             _ => write!(f, "{:?} {} {} {}", self.op, self.a, b, c),
         }

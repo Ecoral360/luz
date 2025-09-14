@@ -1,7 +1,9 @@
 use core::fmt;
 use std::cell::RefCell;
+use std::char;
 use std::fmt::Display;
 use std::hash::Hash;
+use std::mem::transmute;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -48,6 +50,137 @@ impl LuzObj {
     pub fn str(string: &str) -> Self {
         Self::String(string.to_owned())
     }
+
+    pub fn from_literal_str(s: &str) -> Result<Self, LuzError> {
+        if s.starts_with("[") {
+            let level = s.chars().skip(1).take_while(|c| *c == '=').count() + 2;
+            let string = if s.chars().next().unwrap() == '\n' {
+                &s[level + 1..s.len() - level]
+            } else {
+                &s[level..s.len() - level]
+            };
+            return Ok(LuzObj::String(string.to_string()));
+        }
+
+        let s = &s[1..s.len() - 1];
+
+        let mut string = String::with_capacity(s.len());
+        let mut chars = s.chars().peekable();
+        while let Some(c) = chars.next() {
+            match c {
+                '\\' => {
+                    let Some(escape) = chars.next() else {
+                        return Err(LuzError::InvalidStringEscape {
+                            escape: '$',
+                            str: s.to_string(),
+                        });
+                    };
+                    match escape {
+                        'a' => string.push('\x07'),
+                        'b' => string.push('\x08'),
+                        'f' => string.push('\x0c'),
+                        'n' => string.push('\x0a'),
+                        'r' => string.push('\x0d'),
+                        't' => string.push('\x09'),
+                        'v' => string.push('\x0b'),
+                        '\'' => string.push('\''),
+                        '"' => string.push('"'),
+                        '\n' => string.push('\n'),
+                        '\\' => string.push('\\'),
+                        'z' => {
+                            while let Some(nc) = chars.peek() {
+                                if !nc.is_ascii_whitespace() {
+                                    break;
+                                }
+                                _ = chars.next();
+                            }
+                        }
+                        'x' => {
+                            let code_str = format!(
+                                "{}{}",
+                                chars.next().ok_or(LuzError::InvalidStringEscape {
+                                    escape: 'x',
+                                    str: s.to_string(),
+                                })?,
+                                chars.next().ok_or(LuzError::InvalidStringEscape {
+                                    escape: 'x',
+                                    str: s.to_string(),
+                                })?
+                            );
+                            let code = u8::from_str_radix(&code_str, 16).map_err(|_| {
+                                LuzError::InvalidStringEscape {
+                                    escape: 'x',
+                                    str: s.to_string(),
+                                }
+                            })?;
+                            string.push(code as char);
+                        }
+                        d if d.is_ascii_digit() => {
+                            let mut d_str = format!("{}", d);
+                            for _ in 0..2 {
+                                if chars.peek().is_some_and(|c| c.is_ascii_digit()) {
+                                    d_str.push(chars.next().unwrap());
+                                } else {
+                                    break;
+                                }
+                            }
+
+                            let code =
+                                d_str
+                                    .parse::<u8>()
+                                    .map_err(|_| LuzError::InvalidStringEscape {
+                                        escape: 'd',
+                                        str: s.to_string(),
+                                    })?;
+                            string.push(code as char);
+                        }
+                        'u' => {
+                            // Opening {
+                            let _ = chars.next().ok_or(LuzError::InvalidStringEscape {
+                                escape: 'u',
+                                str: s.to_string(),
+                            })?;
+                            let mut code_str = String::new();
+                            loop {
+                                let digit = chars.next().ok_or(LuzError::InvalidStringEscape {
+                                    escape: 'u',
+                                    str: s.to_string(),
+                                })?;
+                                if digit == '}' {
+                                    break;
+                                }
+                                code_str.push(digit);
+                            }
+                            let code = u32::from_str_radix(&code_str, 16).map_err(|_| {
+                                LuzError::InvalidStringEscape {
+                                    escape: 'd',
+                                    str: s.to_string(),
+                                }
+                            })?;
+
+                            // FIXME: check if there are any problems doing it this way
+                            // I didn't have much of a choice, because rust would only 
+                            // accept valid UTF8 code points, which is not the case
+                            // for lua
+                            unsafe {
+                                string.push(transmute(code));
+                            }
+                        }
+                        esc => Err(LuzError::InvalidStringEscape {
+                            escape: esc,
+                            str: s.to_string(),
+                        })?,
+                    }
+                }
+                _ => string.push(c),
+            }
+        }
+        string.shrink_to_fit();
+        // let s = s.replace("\\\\", to).replace("\\a", "\x07").replace("\\b", "\x08").replace("\\n", "\n").replace("\\r", "\r").replace("\\t", "\t").replace("\\v", "\x0b").replace("", to);
+
+        Ok(Self::String(string))
+    }
+
     /// Returns `true` if the luz obj is [`Nil`].
     ///
     /// [`Nil`]: LuzObj::Nil
@@ -61,6 +194,11 @@ impl LuzObj {
     #[inline]
     pub fn is_truthy(&self) -> bool {
         matches!(self, Self::Nil | Self::Boolean(false)) == false
+    }
+    #[must_use]
+    #[inline]
+    pub fn is_true(&self) -> bool {
+        matches!(self, Self::Boolean(true))
     }
 
     #[inline]
@@ -310,6 +448,13 @@ impl LuzObj {
             CmpOp::GtEq => self >= rhs,
         }
         .into())
+    }
+
+    pub fn repr(&self) -> String {
+        match self {
+            Self::String(s) => format!("{:?}", s),
+            _ => self.to_string(),
+        }
     }
 }
 

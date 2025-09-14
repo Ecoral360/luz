@@ -6,7 +6,7 @@ use std::{
 use crate::{
     ast::{Binop, CmpOp},
     compiler::{
-        ctx::Scope,
+        ctx::{Scope, ScopeRef},
         instructions::{iABC, iABx, iAsBx, isJ, Instruction, MAX_HALF_sBx, MAX_HALF_sJ},
         opcode::LuaOpCode,
     },
@@ -15,6 +15,8 @@ use crate::{
         obj::{LuzFunction, LuzObj, LuzType, Numeral},
     },
 };
+
+pub mod err;
 
 pub enum InstructionResult {
     Continue,
@@ -37,7 +39,28 @@ impl Runner {
         }
     }
 
-    fn scope(&self) -> Ref<Scope> {
+    pub fn clone_scope(&self) -> Rc<RefCell<Scope>> {
+        Rc::clone(&self.scope)
+    }
+
+    pub fn env_scope(&self) -> Option<ScopeRef> {
+        let mut scope = Rc::clone(&self.scope);
+        loop {
+            let s = Rc::clone(&scope);
+            let s = s.borrow();
+            let Some(ref p) = s.parent() else {
+                return None;
+            };
+            let p = Rc::clone(p);
+            if p.borrow().name() == "GLOBAL" {
+                return Some(p);
+            } else {
+                scope = p;
+            }
+        }
+    }
+
+    pub fn scope(&self) -> Ref<Scope> {
         self.scope.borrow()
     }
 
@@ -164,7 +187,7 @@ impl Runner {
 
                     let res = lhs.apply_cmp(CmpOp::Eq, LuzObj::Numeral(Numeral::Int(rhs)))?;
 
-                    if res.is_truthy() == *k {
+                    if res.is_truthy() != *k {
                         return Ok(InstructionResult::Skip(1));
                     }
                 }
@@ -220,12 +243,9 @@ impl Runner {
                         .set_reg_val(a, lhs.apply_binop(Binop::Add, rhs)?);
                 }
 
-                LuaOpCode::OP_MMBINI => {
-                }
-                LuaOpCode::OP_MMBINK => {
-                }
-                LuaOpCode::OP_MMBIN => {
-                }
+                LuaOpCode::OP_MMBINI => {}
+                LuaOpCode::OP_MMBINK => {}
+                LuaOpCode::OP_MMBIN => {}
 
                 LuaOpCode::OP_CONCAT => {
                     let start = *a;
@@ -338,6 +358,20 @@ impl Runner {
                         }
                     }
                 }
+                LuaOpCode::OP_GETFIELD => {
+                    let table = self.get_reg_val(*b)?;
+
+                    let LuzObj::Table(table) = table else {
+                        return Err(LuzError::Type {
+                            wrong: table.get_type(),
+                            expected: vec![LuzType::Table],
+                        });
+                    };
+                    let key = self.get_const_val(*c)?;
+                    let table = table.borrow();
+                    let val = table.get(&key);
+                    self.scope.borrow_mut().set_reg_val(*a, val.clone());
+                }
                 LuaOpCode::OP_GETTABUP => {
                     let iABC { a, b, c, .. } = *i_abc;
                     let table = self
@@ -420,7 +454,7 @@ impl Runner {
                 }
                 op => todo!("isJ {:?}", op),
             },
-            Instruction::NOP => unimplemented!()
+            Instruction::NOP => unimplemented!(),
         }
         Ok(InstructionResult::Continue)
     }
@@ -489,9 +523,4 @@ impl Runner {
 
         Ok(())
     }
-}
-
-fn from_excess_of_bx(val: u32) -> i32 {
-    // (val as i32) - 131071
-    val as i32
 }

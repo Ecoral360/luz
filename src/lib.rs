@@ -1,12 +1,15 @@
-use std::fs;
+use std::{cell::RefCell, fs, rc::Rc};
 
+use log::{debug, error, info, trace, warn};
 use luz::err::LuzError;
 use pest::Parser;
 use pest_derive::Parser;
 
 use crate::{
     ast::{parser::parse_script, Stat},
-    compiler::{ctx::CompilerCtx, visitor::Visitor, Compiler},
+    compiler::{ctx::{CompilerCtx, ScopeRef, Upvalue}, visitor::Visitor, Compiler},
+    luz::obj::{LuzFunction, LuzObj},
+    runner::{err::LuzRuntimeError, Runner},
 };
 
 pub mod ast;
@@ -19,12 +22,13 @@ pub mod runner;
 pub struct LuaParser;
 
 pub fn run(input: &str) -> Result<(), LuzError> {
-    let mut stmts = LuaParser::parse(Rule::Chunk, input);
+    let mut stmts = LuaParser::parse(Rule::Chunk, &input);
+
     match &mut stmts {
         Ok(stmts) => {
             let stmts = parse_script(stmts)?;
-            dbg!(stmts);
-            Ok(())
+            trace!("{:#?}", &stmts);
+            run_compiler(stmts)
         }
         Err(err) => {
             dbg!(err);
@@ -41,19 +45,7 @@ pub fn run_file(path: &str) -> Result<(), LuzError> {
         0
     };
 
-    let mut stmts = LuaParser::parse(Rule::Chunk, &input[start..]);
-
-    match &mut stmts {
-        Ok(stmts) => {
-            let stmts = parse_script(stmts)?;
-            // dbg!(&stmts);
-            run_compiler(stmts)
-        }
-        Err(err) => {
-            dbg!(err);
-            panic!();
-        }
-    }
+    run(&input[start..])
 }
 
 fn run_compiler(stmts: Vec<Stat>) -> Result<(), LuzError> {
@@ -62,9 +54,44 @@ fn run_compiler(stmts: Vec<Stat>) -> Result<(), LuzError> {
     for stmt in stmts {
         compiler.visit_stat(&stmt, &mut ctx)?;
     }
-    ctx.print_instructions();
+    debug!("{}", ctx.instructions_to_string());
     let mut runner = runner::Runner::new(ctx.scope_clone());
     let res = runner.run()?;
-    println!("Result: {:?}", res);
+    info!("{:?}", res);
     Ok(())
+}
+
+pub fn load(
+    input: &str,
+    name: String,
+    parent_scope: Option<ScopeRef>,
+    upvalues: Vec<Upvalue>,
+) -> Result<LuzFunction, LuzError> {
+    let mut stmts = LuaParser::parse(Rule::Chunk, &input)?;
+
+    let stmts = parse_script(&mut stmts)?;
+    trace!("{:#?}", &stmts);
+
+    let mut compiler = Compiler {};
+    let mut ctx = CompilerCtx::new_chunk(name, parent_scope, upvalues);
+    for stmt in stmts {
+        compiler.visit_stat(&stmt, &mut ctx)?;
+    }
+
+    debug!("{}", ctx.instructions_to_string());
+
+    let mut runner = runner::Runner::new(ctx.scope_clone());
+    // let res = runner.run()?;
+    // info!("{:?}", res);
+    // Ok(())
+    Ok(LuzFunction::new_native(
+        0,
+        Rc::new(RefCell::new(
+            move |_: &mut Runner, _args: Vec<LuzObj>, _vararg: Vec<LuzObj>| {
+                runner
+                    .run()
+                    .map_err(|e| LuzRuntimeError::message(e.to_string()))
+            },
+        )),
+    ))
 }

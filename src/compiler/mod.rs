@@ -1,7 +1,10 @@
 use std::thread::scope;
 
 use crate::{
-    ast::{AssignStat, Binop, CmpOp, Exp, FuncCall, FunctionDefStat, LogicCmpOp, ReturnStat, Stat},
+    ast::{
+        AssignStat, Binop, CmpOp, Exp, ExpAccess, FuncCall, FunctionDefStat, LogicCmpOp,
+        ReturnStat, Stat,
+    },
     compiler::{
         ctx::{CompilerCtx, CompilerCtxBuilder, RegOrUpvalue, Upvalue},
         instructions::{iABC, Instruction, MAX_HALF_sBx},
@@ -24,6 +27,27 @@ pub struct Compiler {}
 
 #[allow(unused)]
 impl Compiler {
+    fn handle_immidiate(
+        &mut self,
+        ctx: &mut CompilerCtx,
+        exp: &Exp,
+    ) -> Result<Option<u8>, LuzError> {
+        match exp {
+            Exp::Literal(lit) => match lit {
+                LuzObj::Numeral(Numeral::Int(i)) => Ok(Some((*i + 128) as u8)),
+                LuzObj::Numeral(Numeral::Int(i))
+                    if (-(MAX_HALF_sBx as i64)..(MAX_HALF_sBx as i64)).contains(i) =>
+                {
+                    let reg = ctx.get_or_push_free_register();
+                    ctx.push_inst(Instruction::op_loadi(reg, *i as u32));
+                    Ok(None)
+                }
+                _ => Ok(None),
+            },
+            _ => Ok(None),
+        }
+    }
+
     fn handle_exp(
         &mut self,
         ctx: &mut CompilerCtx,
@@ -174,7 +198,7 @@ impl Compiler {
                     .new_with(CompilerCtxBuilder::default().nb_expected((varlist.len() + 1) as u8));
 
                 for var in varlist {
-                    ctx.push_free_register(Some(var.0.clone()));
+                    ctx.rename_or_push_free_register(var.0.clone());
                 }
                 for exp in explist {
                     self.visit_exp(exp, &mut new_ctx)?;
@@ -305,6 +329,38 @@ impl Compiler {
         Ok(())
     }
 
+    fn visit_access(
+        &mut self,
+        ctx: &mut CompilerCtx,
+        exp_access: &ExpAccess,
+    ) -> Result<(), LuzError> {
+        let ExpAccess { exp, value } = exp_access;
+        let dest = ctx.get_or_push_free_register();
+
+        self.visit_exp(exp, ctx);
+        let tabaddr = ctx.claim_next_free_register();
+
+        let prop = self.handle_immidiate(ctx, value)?;
+        if let Some(imm) = prop {
+            ctx.push_inst(Instruction::op_geti(dest, tabaddr, imm));
+        }
+        match **value {
+            Exp::Name(ref n) => {
+                let attr = ctx.get_or_add_const(LuzObj::String(n.clone()));
+                ctx.push_inst(Instruction::op_getfield(dest, tabaddr, attr as u8));
+            }
+            _ => {
+                self.visit_exp(value, ctx);
+                let reg = ctx.get_or_push_free_register();
+                ctx.push_inst(Instruction::op_gettable(dest, tabaddr, reg));
+            }
+        }
+
+        ctx.unclaim_registers(&[tabaddr]);
+
+        Ok(())
+    }
+
     fn visit_inner_logicop(
         &mut self,
         ctx: &mut CompilerCtx,
@@ -327,7 +383,7 @@ impl Compiler {
                 .collect::<Vec<_>>()
         };
 
-        if depth != 0 {
+        if depth != 0 && !matches!(**rhs, Exp::CmpOp { .. }) {
             let rhs_last_inst = {
                 if rhs_instructions
                     .last()
@@ -368,11 +424,23 @@ impl Compiler {
                     let nb_drop = ctx.scope().instructions().len() - 3;
                     let mut scope = ctx.scope_mut();
                     scope.instructions_mut().truncate(nb_drop);
+                    let Instruction::iABC(iABC { k, .. }) =
+                        scope.instructions_mut().last_mut().unwrap()
+                    else {
+                        unreachable!();
+                    };
+                    *k = !*k;
                 }
                 if matches!(**rhs, Exp::CmpOp { .. }) {
                     ctx.push_inst(Instruction::op_jmp((jmp_size + rhs_len - 2) as u32));
+                    if depth != 0 {
+                        rhs_instructions.truncate(rhs_len - 3);
+                    }
                     for inst in rhs_instructions {
                         ctx.push_inst(inst);
+                    }
+                    if depth != 0 {
+                        ctx.push_inst(Instruction::op_jmp(jmp_size as u32));
                     }
                 } else {
                     ctx.push_inst(Instruction::op_jmp((jmp_size + rhs_len) as u32));
@@ -632,7 +700,7 @@ impl Visitor for Compiler {
             Exp::Unop(unop, exp) => todo!(),
             Exp::CmpOp { op, lhs, rhs } => self.visit_cmpop(ctx, exp),
             Exp::LogicCmpOp { op, lhs, rhs } => self.visit_logicop(ctx, exp),
-            Exp::Access(exp_access) => todo!(),
+            Exp::Access(exp_access) => self.visit_access(ctx, exp_access),
             Exp::FuncDef(func_def) => todo!(),
             Exp::FuncCall(func_call) => self.visit_function_call(ctx, func_call),
             Exp::TableConstructor(exp_table_constructor) => todo!(),

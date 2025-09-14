@@ -31,6 +31,19 @@ impl CompilerCtx {
             nb_expected: 1,
         }
     }
+    pub fn new_chunk(name: String, parent_scope: Option<ScopeRef>, upvalues: Vec<Upvalue>) -> Self {
+        let mut scope = Scope::new(name, parent_scope);
+        // scope
+        //     .upvalues
+        //     .push(Upvalue::new("_ENV".to_owned(), 0, 0, true));
+
+        scope.upvalues = upvalues;
+
+        Self {
+            scope: Rc::new(RefCell::new(scope)),
+            nb_expected: 1,
+        }
+    }
 
     pub fn new_with(&self, builder: &mut CompilerCtxBuilder) -> Self {
         CompilerCtx {
@@ -104,6 +117,16 @@ impl CompilerCtx {
         match self.target_register() {
             Some(v) => v,
             None => self.push_free_register(None),
+        }
+    }
+
+    pub(crate) fn rename_or_push_free_register(&mut self, name: String) -> u8 {
+        match self.target_register() {
+            Some(v) => {
+                self.scope_mut().regs[v as usize].name = Some(name);
+                v
+            }
+            None => self.push_free_register(Some(name)),
         }
     }
 
@@ -189,8 +212,8 @@ impl CompilerCtx {
         self.scope().instructions.clone()
     }
 
-    pub fn print_instructions(&self) {
-        self.scope.borrow().print_instructions();
+    pub fn instructions_to_string(&self) -> String {
+        self.scope.borrow().instructions_to_string()
     }
 }
 
@@ -307,8 +330,10 @@ impl Scope {
                 ),
                 RegOrUpvalue::Upvalue(upvalue) => {
                     let in_table = if upvalue.name == "_ENV" {
-                        self.constants
-                            .push(LuzObj::String(register_name.to_string()));
+                        let obj = LuzObj::String(register_name.to_string());
+                        if !self.constants.contains(&obj) {
+                            self.constants.push(obj);
+                        }
                         true
                     } else {
                         false
@@ -320,9 +345,16 @@ impl Scope {
                 }
             };
 
-            self.upvalues.push(upvalue.clone());
-
-            Ok((in_table, RegOrUpvalue::Upvalue(upvalue)))
+            let existing_upvalue = self.upvalues.iter().find(|up| up.name == upvalue.name);
+            match existing_upvalue {
+                Some(existing_upvalue) => {
+                    Ok((in_table, RegOrUpvalue::Upvalue(existing_upvalue.clone())))
+                }
+                None => {
+                    self.upvalues.push(upvalue.clone());
+                    Ok((in_table, RegOrUpvalue::Upvalue(upvalue)))
+                }
+            }
         } else {
             Err(LuzError::CompileError(format!(
                 "name {:?} is not declared",
@@ -373,36 +405,43 @@ impl Scope {
         }
     }
 
-    pub fn print_instructions(&self) {
-        if self.name == "main" {
-            println!("main");
+    pub fn instructions_to_string(&self) -> String {
+        let mut result = if self.name == "main" {
+            String::from("main\n")
         } else {
-            println!("function {:?}", self.name);
-        }
+            format!("function {:?}\n", self.name)
+        };
+
         for (i, inst) in self.instructions.iter().enumerate() {
-            println!("[{}] {}", i + 1, inst);
-        }
-        println!("---- Constants:");
-        for (i, inst) in self.constants.iter().enumerate() {
-            println!("{} {:?}", i, inst);
+            result += &format!("[{}] {}\n", i + 1, inst);
         }
 
-        println!("---- Locals:");
+        result += "---- Constants:\n";
+        for (i, inst) in self.constants.iter().enumerate() {
+            result += &format!("{} {} {}\n", i, inst.get_type(), inst.repr());
+        }
+
+        result += "---- Locals:\n";
         for (i, inst) in self.regs.iter().enumerate() {
             if let Some(name) = &inst.name {
-                println!("{} {}", i, name);
+                result += &format!("{} {}\n", i, name);
             }
         }
 
-        println!("---- Upvalues:");
+        result += "---- Upvalues:\n";
         for (i, inst) in self.upvalues.iter().enumerate() {
-            println!("{} {} {} {}", i, inst.name, inst.in_stack, inst.parent_addr);
+            result += &format!(
+                "{} {} {} {}\n",
+                i, inst.name, inst.in_stack, inst.parent_addr
+            );
         }
 
-        println!();
+        result.push('\n');
         for scope in &self.sub_scopes {
-            scope.borrow().print_instructions();
+            result += &scope.borrow().instructions_to_string();
         }
+
+        result
     }
 
     pub fn sub_scopes(&self) -> &[Rc<RefCell<Scope>>] {
@@ -423,6 +462,14 @@ impl Scope {
 
     pub fn set_vararg(&mut self, vararg: Vec<LuzObj>) {
         self.vararg = vararg;
+    }
+
+    pub fn parent(&self) -> Option<&Rc<RefCell<Scope>>> {
+        self.parent.as_ref()
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
     }
 }
 

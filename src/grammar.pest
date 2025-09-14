@@ -1,4 +1,4 @@
-WHITESPACE = _{ " " | NEWLINE }
+WHITESPACE = _{ " " | "\t" | "\x0b" | "\x0c" | NEWLINE   }
 COMMENT    = _{ "--" ~ (longString | (!NEWLINE ~ ANY)* ~ NEWLINE?) }
 
 Chunk = { SOI ~ block ~ EOI }
@@ -162,13 +162,13 @@ Numeral = @{
 }
 
 hexNumeral     = {
-    ("-" | "+")? ~ ^"0x" ~ ASCII_HEX_DIGIT+ ~ ("." ~ ASCII_HEX_DIGIT+)? ~ (^"p" ~ ("-" | "+")? ~ ASCII_HEX_DIGIT+)?
+    ("-" | "+")? ~ ^"0x" ~ ASCII_HEX_DIGIT+ ~ ("." ~ ASCII_HEX_DIGIT+)? ~ (^"p" ~ ("-" | "+")? ~ ASCII_DIGIT+)?
 }
 decimalNumeral = {
-    ("-" | "+")? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? ~ (^"e" ~ ("-" | "+")? ~ ASCII_DIGIT+)?
+    ("-" | "+")? ~ ((ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT*)?) | ("." ~ ASCII_DIGIT+)) ~ (^"e" ~ ("-" | "+")? ~ ASCII_DIGIT+)?
 }
 
-LiteralString = { longString | shortString }
+LiteralString = @{ longString | shortString }
 
 longString  = @{
     "[" ~ PUSH("=")* ~ "[" ~ NEWLINE? ~ (!("]" ~ PEEK_ALL ~ "]") ~ ANY)* ~ "]" ~ POP_ALL ~ "]"
