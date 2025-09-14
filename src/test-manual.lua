@@ -5,14 +5,18 @@
 --
 -- local debug = require "debug"
 
-local function dostring (x) return assert(load(x), "")() end
+local x = { 1, 2, [4] = 45, 4 }
 
-dostring("x \v\f = \t\r 'a\0a' \v\f\f")
-assert(x == 'a\0a' and string.len(x) == 3)
+return x[0]
 
-_ENV = {}
-
-return print
+-- local function dostring (x) return assert(load(x), "")() end
+--
+-- dostring("x \v\f = \t\r 'a\0a' \v\f\f")
+-- assert(x == 'a\0a' and string.len(x) == 3)
+--
+-- _ENV = {}
+--
+-- return print
 
 -- escape sequences
 -- assert('\n\"\'\\' == [[

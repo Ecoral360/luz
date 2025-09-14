@@ -1,7 +1,7 @@
 use crate::{
     ast::{
-        AssignStat, Binop, CmpOp, Exp, ExpAccess, FuncCall, FunctionDefStat, LogicCmpOp,
-        ReturnStat, Stat,
+        AssignStat, Binop, CmpOp, Exp, ExpAccess, ExpTableConstructor, ExpTableConstructorField,
+        FuncCall, FunctionDefStat, LogicCmpOp, ReturnStat, Stat,
     },
     compiler::{
         ctx::{CompilerCtx, CompilerCtxBuilder, RegOrUpvalue, Upvalue},
@@ -11,7 +11,7 @@ use crate::{
     },
     luz::{
         err::LuzError,
-        obj::{LuzObj, Numeral},
+        obj::{self, LuzObj, Numeral},
     },
 };
 
@@ -29,12 +29,13 @@ impl Compiler {
         &mut self,
         ctx: &mut CompilerCtx,
         exp: &Exp,
+        loadi: bool,
     ) -> Result<Option<u8>, LuzError> {
         match exp {
             Exp::Literal(lit) => match lit {
                 LuzObj::Numeral(Numeral::Int(i)) => Ok(Some((*i + 128) as u8)),
                 LuzObj::Numeral(Numeral::Int(i))
-                    if (-(MAX_HALF_sBx as i64)..(MAX_HALF_sBx as i64)).contains(i) =>
+                    if loadi && (-(MAX_HALF_sBx as i64)..(MAX_HALF_sBx as i64)).contains(i) =>
                 {
                     let reg = ctx.get_or_push_free_register();
                     ctx.push_inst(Instruction::op_loadi(reg, *i as u32));
@@ -93,6 +94,52 @@ impl Compiler {
                 Ok(ExpEval::InRegister(ctx.target_register_or_err()?))
             }
         }
+    }
+
+    fn assign_to_table(
+        &mut self,
+        ctx: &mut CompilerCtx,
+        tabaddr: u8,
+        prop: &Exp,
+        value: &Exp,
+    ) -> Result<(), LuzError> {
+        let value = self.handle_exp(ctx, value, false, true, false)?;
+        let (is_val_const, val_reg) = match value {
+            ExpEval::InRegister(reg) => (false, reg),
+            ExpEval::InConstant(kreg) => (true, kreg),
+            ExpEval::InUpvalue { in_table, upvalue } => todo!(),
+            _ => unreachable!("Not supported by op_settabup {:?}", value),
+        };
+
+        let prop_imm = self.handle_immidiate(ctx, &prop, true)?;
+        if let Some(imm) = prop_imm {
+            ctx.push_inst(Instruction::op_seti(tabaddr, imm, val_reg, is_val_const));
+        } else {
+            match prop {
+                Exp::Name(ref n) => {
+                    let attr = ctx.get_or_add_const(LuzObj::String(n.clone()));
+                    ctx.push_inst(Instruction::op_setfield(
+                        tabaddr,
+                        attr as u8,
+                        val_reg,
+                        is_val_const,
+                    ));
+                }
+                _ => {
+                    self.visit_exp(&prop, ctx)?;
+                    let reg = ctx.get_or_push_free_register();
+                    ctx.push_inst(Instruction::op_settable(
+                        tabaddr,
+                        reg,
+                        val_reg,
+                        is_val_const,
+                    ));
+                }
+            }
+        }
+
+        ctx.unclaim_registers(&[tabaddr]);
+        Ok(())
     }
 }
 
@@ -212,7 +259,7 @@ impl Compiler {
                             self.visit_exp(&exp, ctx)?;
                             let tabaddr = ctx.claim_next_free_register();
 
-                            let prop_imm = self.handle_immidiate(ctx, &prop)?;
+                            let prop_imm = self.handle_immidiate(ctx, &prop, true)?;
                             if let Some(imm) = prop_imm {
                                 ctx.push_inst(Instruction::op_seti(
                                     tabaddr,
@@ -220,26 +267,27 @@ impl Compiler {
                                     val_reg,
                                     is_val_const,
                                 ));
-                            }
-                            match **prop {
-                                Exp::Name(ref n) => {
-                                    let attr = ctx.get_or_add_const(LuzObj::String(n.clone()));
-                                    ctx.push_inst(Instruction::op_setfield(
-                                        tabaddr,
-                                        attr as u8,
-                                        val_reg,
-                                        is_val_const,
-                                    ));
-                                }
-                                _ => {
-                                    self.visit_exp(&prop, ctx)?;
-                                    let reg = ctx.get_or_push_free_register();
-                                    ctx.push_inst(Instruction::op_settable(
-                                        tabaddr,
-                                        reg,
-                                        val_reg,
-                                        is_val_const,
-                                    ));
+                            } else {
+                                match **prop {
+                                    Exp::Name(ref n) => {
+                                        let attr = ctx.get_or_add_const(LuzObj::String(n.clone()));
+                                        ctx.push_inst(Instruction::op_setfield(
+                                            tabaddr,
+                                            attr as u8,
+                                            val_reg,
+                                            is_val_const,
+                                        ));
+                                    }
+                                    _ => {
+                                        self.visit_exp(&prop, ctx)?;
+                                        let reg = ctx.get_or_push_free_register();
+                                        ctx.push_inst(Instruction::op_settable(
+                                            tabaddr,
+                                            reg,
+                                            val_reg,
+                                            is_val_const,
+                                        ));
+                                    }
                                 }
                             }
 
@@ -397,19 +445,20 @@ impl Compiler {
         self.visit_exp(exp, ctx)?;
         let tabaddr = ctx.claim_next_free_register();
 
-        let prop = self.handle_immidiate(ctx, value)?;
+        let prop = self.handle_immidiate(ctx, value, false)?;
         if let Some(imm) = prop {
             ctx.push_inst(Instruction::op_geti(dest, tabaddr, imm));
-        }
-        match **value {
-            Exp::Name(ref n) => {
-                let attr = ctx.get_or_add_const(LuzObj::String(n.clone()));
-                ctx.push_inst(Instruction::op_getfield(dest, tabaddr, attr as u8));
-            }
-            _ => {
-                self.visit_exp(value, ctx)?;
-                let reg = ctx.get_or_push_free_register();
-                ctx.push_inst(Instruction::op_gettable(dest, tabaddr, reg));
+        } else {
+            match **value {
+                Exp::Name(ref n) => {
+                    let attr = ctx.get_or_add_const(LuzObj::String(n.clone()));
+                    ctx.push_inst(Instruction::op_getfield(dest, tabaddr, attr as u8));
+                }
+                _ => {
+                    self.visit_exp(value, ctx)?;
+                    let reg = ctx.get_or_push_free_register();
+                    ctx.push_inst(Instruction::op_gettable(dest, tabaddr, reg));
+                }
             }
         }
 
@@ -693,6 +742,47 @@ impl Compiler {
         Ok(())
     }
 
+    fn visit_table_constructor(
+        &mut self,
+        ctx: &mut CompilerCtx,
+        exp_table_constructor: &ExpTableConstructor,
+    ) -> Result<(), LuzError> {
+        let ExpTableConstructor {
+            arr_fields,
+            obj_fields,
+            last_exp,
+            variadic,
+        } = exp_table_constructor;
+
+        let dest = ctx.get_or_push_free_register();
+
+        ctx.push_inst(Instruction::op_newtable(
+            dest,
+            obj_fields.len() as u8,
+            arr_fields.len() as u8,
+        ));
+        ctx.claim_next_free_register();
+
+        let mut claimed = vec![];
+        for arr_field in arr_fields {
+            self.visit_exp(arr_field, ctx)?;
+            claimed.push(ctx.claim_next_free_register());
+        }
+
+        // Unclaim dest to allow field to be set to it
+        ctx.unclaim_registers(&[dest]);
+        for obj_field in obj_fields {
+            let ExpTableConstructorField { key, val } = obj_field;
+            self.assign_to_table(ctx, dest, key, val)?;
+            claimed.push(ctx.claim_next_free_register());
+        }
+
+        ctx.push_inst(Instruction::op_setlist(dest, arr_fields.len() as u8, 0));
+
+        ctx.unclaim_registers(&claimed);
+        Ok(())
+    }
+
     fn visit_literal(&mut self, ctx: &mut CompilerCtx, lit: &LuzObj) -> Result<(), LuzError> {
         match lit {
             LuzObj::Numeral(Numeral::Int(i)) if *i >= 0 && *i <= 255 => {
@@ -762,7 +852,9 @@ impl Visitor for Compiler {
             Exp::Access(exp_access) => self.visit_access(ctx, exp_access),
             Exp::FuncDef(func_def) => todo!(),
             Exp::FuncCall(func_call) => self.visit_function_call(ctx, func_call),
-            Exp::TableConstructor(exp_table_constructor) => todo!(),
+            Exp::TableConstructor(exp_table_constructor) => {
+                self.visit_table_constructor(ctx, exp_table_constructor)
+            }
         }
     }
 

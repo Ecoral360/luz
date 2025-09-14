@@ -58,7 +58,27 @@ impl Table {
                     self.table.get(key).unwrap_or(&LuzObj::Nil)
                 }
             }
-            LuzType::Number => todo!(),
+            LuzType::Number => {
+                let LuzObj::Numeral(num) = key else {
+                    unreachable!()
+                };
+                match num {
+                    Numeral::Int(i) => {
+                        if (0..self.arr.len()).contains(&(*i as usize)) {
+                            self.arr.get(*i as usize).unwrap_or(&LuzObj::Nil)
+                        } else {
+                            self.table.get(key).unwrap_or(&LuzObj::Nil)
+                        }
+                    }
+                    Numeral::Float(f) => {
+                        if f.floor() == *f {
+                            self.arr.get(*f as usize).unwrap_or(&LuzObj::Nil)
+                        } else {
+                            self.table.get(key).unwrap_or(&LuzObj::Nil)
+                        }
+                    }
+                }
+            }
             LuzType::Boolean
             | LuzType::String
             | LuzType::Function
@@ -74,7 +94,7 @@ impl Table {
     }
 
     pub fn insert(&mut self, key: LuzObj, item: LuzObj) {
-        if key == LuzObj::Numeral(Numeral::Int(self.arr.len() as i64)) {
+        if key == LuzObj::Numeral(Numeral::Int(self.arr.len() as i64 + 1)) {
             self.arr.push(item);
         } else {
             self.table.insert(key, item);

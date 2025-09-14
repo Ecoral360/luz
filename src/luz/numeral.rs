@@ -14,6 +14,16 @@ pub enum Numeral {
     Int(i64),
     Float(f64),
 }
+
+impl Numeral {
+    pub fn is_int(&self) -> bool {
+        matches!(self, Self::Int(_))
+    }
+    pub fn is_float(&self) -> bool {
+        matches!(self, Self::Float(_))
+    }
+}
+
 impl PartialOrd for Numeral {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(match (self, other) {

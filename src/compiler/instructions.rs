@@ -290,7 +290,12 @@ impl Instruction {
             .to_iabc(upval_dest_addr, is_val_const, tabattr_addrk, val)
             .into()
     }
-    pub fn op_setfield(dest_addr: u8, tabattr_addrk: u8, val: u8, is_val_const: bool) -> Instruction {
+    pub fn op_setfield(
+        dest_addr: u8,
+        tabattr_addrk: u8,
+        val: u8,
+        is_val_const: bool,
+    ) -> Instruction {
         LuaOpCode::OP_SETFIELD
             .to_iabc(dest_addr, is_val_const, tabattr_addrk, val)
             .into()
@@ -300,7 +305,12 @@ impl Instruction {
             .to_iabc(dest_addr, is_val_const, tabattr_i, val)
             .into()
     }
-    pub fn op_settable(dest_addr: u8, tabattr_addr: u8, val: u8, is_val_const: bool) -> Instruction {
+    pub fn op_settable(
+        dest_addr: u8,
+        tabattr_addr: u8,
+        val: u8,
+        is_val_const: bool,
+    ) -> Instruction {
         LuaOpCode::OP_SETI
             .to_iabc(dest_addr, is_val_const, tabattr_addr, val)
             .into()
@@ -308,6 +318,17 @@ impl Instruction {
 
     pub fn op_varargprep(dest: u8) -> Instruction {
         LuaOpCode::OP_VARARGPREP.to_iabc(dest, false, 0, 0).into()
+    }
+
+    pub fn op_newtable(dest: u8, obj_fields_len: u8, arr_fields_len: u8) -> Instruction {
+        LuaOpCode::OP_NEWTABLE
+            .to_iabc(dest, false, obj_fields_len, arr_fields_len)
+            .into()
+    }
+    pub fn op_setlist(dest: u8, nb_fields: u8, start_addr: u8) -> Instruction {
+        LuaOpCode::OP_SETLIST
+            .to_iabc(dest, false, nb_fields, start_addr)
+            .into()
     }
 }
 
@@ -362,11 +383,12 @@ impl Display for iABC {
             | LuaOpCode::OP_LTI
             | LuaOpCode::OP_GEI
             | LuaOpCode::OP_LEI
-            | LuaOpCode::OP_EQI => self.b as i32 - 128,
+            | LuaOpCode::OP_EQI
+            | LuaOpCode::OP_SETI => self.b as i32 - 128,
             _ => self.b as i32,
         };
         let c = match self.op {
-            LuaOpCode::OP_ADDI => self.c as i32 - 128,
+            LuaOpCode::OP_ADDI | LuaOpCode::OP_GETI => self.c as i32 - 128,
             _ => self.c as i32,
         };
         match self.op {

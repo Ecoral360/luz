@@ -1,5 +1,6 @@
 use std::{
     cell::{Ref, RefCell, RefMut},
+    collections::HashMap,
     rc::Rc,
 };
 
@@ -12,7 +13,7 @@ use crate::{
     },
     luz::{
         err::LuzError,
-        obj::{LuzFunction, LuzObj, LuzType, Numeral},
+        obj::{LuzFunction, LuzObj, LuzType, Numeral, Table},
     },
 };
 
@@ -401,6 +402,30 @@ impl Runner {
                         self.scope.borrow_mut().set_reg_val(a, LuzObj::Nil);
                     };
                 }
+                LuaOpCode::OP_GETTABLE => {
+                    let table = self.get_reg_val(*b)?;
+
+                    if let LuzObj::Table(table) = table {
+                        let key = self.get_reg_val(*c)?;
+                        let table = table.borrow();
+                        let val = table.get(&key);
+                        self.scope.borrow_mut().set_reg_val(*a, val.clone());
+                    } else {
+                        self.scope.borrow_mut().set_reg_val(*a, LuzObj::Nil);
+                    };
+                }
+                LuaOpCode::OP_GETI => {
+                    let table = self.get_reg_val(*b)?;
+
+                    if let LuzObj::Table(table) = table {
+                        let key = (*c as i64) - 128;
+                        let table = table.borrow();
+                        let val = table.get(&LuzObj::Numeral(Numeral::Int(key)));
+                        self.scope.borrow_mut().set_reg_val(*a, val.clone());
+                    } else {
+                        self.scope.borrow_mut().set_reg_val(*a, LuzObj::Nil);
+                    };
+                }
                 LuaOpCode::OP_SETTABUP => {
                     let table = self
                         .scope()
@@ -475,6 +500,31 @@ impl Runner {
                     };
                     let mut table = table.borrow_mut();
                     table.insert(key, val);
+                }
+                LuaOpCode::OP_NEWTABLE => {
+                    let mut table = HashMap::new();
+
+                    let table_obj = Table::new(table, None);
+
+                    self.scope_mut()
+                        .set_reg_val(*a, LuzObj::Table(Rc::new(RefCell::new(table_obj))));
+                }
+                LuaOpCode::OP_SETLIST => {
+                    let table = self.get_reg_val(*a)?;
+
+                    let LuzObj::Table(table) = table else {
+                        return Err(LuzError::Type {
+                            wrong: table.get_type(),
+                            expected: vec![LuzType::Table],
+                        });
+                    };
+
+                    for i in 1..=*b {
+                        let val = self.get_reg_val(*a + i)?;
+                        table
+                            .borrow_mut()
+                            .insert(LuzObj::Numeral(Numeral::Int((*c + i) as i64)), val);
+                    }
                 }
                 op => todo!("iABC {:?}", op),
             },

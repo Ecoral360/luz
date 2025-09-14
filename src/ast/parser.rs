@@ -164,7 +164,11 @@ fn parse_top_expr(pair: Pair<Rule>) -> Result<Exp, LuzError> {
                 let mut arr_fields = vec![];
                 let mut obj_fields = vec![];
                 let mut fields_inner = fields.into_inner();
-                let last_field = fields_inner.next_back();
+                let last_field = fields_inner
+                    .next_back()
+                    .map(|f| f.into_inner().next())
+                    .flatten();
+
                 for field in fields_inner {
                     parse_table_field(&mut arr_fields, &mut obj_fields, field)?;
                 }
@@ -173,13 +177,20 @@ fn parse_top_expr(pair: Pair<Rule>) -> Result<Exp, LuzError> {
                     Some(last_field_val)
                         if matches!(last_field_val.as_node_tag(), Some("value_field")) =>
                     {
+                        let exp = parse_top_expr(last_field_val)?;
+                        let last_exp = if exp.is_multire() {
+                            Some(Box::new(exp))
+                        } else {
+                            arr_fields.push(exp);
+                            None
+                        };
                         Exp::TableConstructor(ExpTableConstructor::new(
-                            arr_fields,
-                            obj_fields,
-                            Some(Box::new(parse_top_expr(last_field_val)?)),
+                            arr_fields, obj_fields, last_exp,
                         ))
                     }
-                    _ => Exp::TableConstructor(ExpTableConstructor::new(vec![], vec![], None)),
+                    _ => Exp::TableConstructor(ExpTableConstructor::new(
+                        arr_fields, obj_fields, None,
+                    )),
                 }
             } else {
                 Exp::TableConstructor(ExpTableConstructor::new(vec![], vec![], None))
@@ -225,6 +236,7 @@ fn parse_table_field(
     field: Pair<Rule>,
 ) -> Result<(), LuzError> {
     let mut field_inner = field.into_inner();
+
     let field_inner_first = field_inner.peek().expect("Field key/value");
 
     let exp = parse_top_expr(field_inner.next().expect("Field key/value"))?;
