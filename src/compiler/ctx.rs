@@ -191,7 +191,7 @@ impl CompilerCtx {
         }
     }
 
-    pub(crate) fn get_or_add_const(&mut self, obj: LuzObj) -> u32 {
+    pub fn get_or_add_const(&mut self, obj: LuzObj) -> u32 {
         let mut scope = self.scope_mut();
         let addr = scope
             .constants
@@ -264,6 +264,22 @@ impl Scope {
 
     pub fn constants(&self) -> &Vec<LuzObj> {
         &self.constants
+    }
+
+    pub fn get_or_add_const(&mut self, obj: LuzObj) -> u32 {
+        let addr = self
+            .constants
+            .iter()
+            .enumerate()
+            .find(|(_, con)| **con == obj)
+            .map(|(i, _)| i);
+
+        if let Some(addr) = addr {
+            return addr as u32;
+        }
+
+        self.constants.push(obj);
+        (self.constants.len() - 1) as u32
     }
 
     pub fn regs(&self) -> &Vec<Register> {
@@ -402,6 +418,20 @@ impl Scope {
             p.regs[upvalue.parent_addr as usize].val.clone()
         } else {
             p.get_upvalue_value(upvalue.parent_addr)
+        }
+    }
+
+    pub fn set_upvalue_value(&mut self, upvalue_addr: u8, value: LuzObj) {
+        let upvalue = &self.upvalues[upvalue_addr as usize];
+        let mut p = self
+            .parent
+            .as_ref()
+            .expect("Needs parent to have upvalue")
+            .borrow_mut();
+        if upvalue.in_stack {
+            p.regs[upvalue.parent_addr as usize].val.replace(value);
+        } else {
+            p.set_upvalue_value(upvalue.parent_addr, value);
         }
     }
 

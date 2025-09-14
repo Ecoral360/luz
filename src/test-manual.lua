@@ -9,9 +9,12 @@ local function dostring (x) return assert(load(x), "")() end
 
 dostring("x \v\f = \t\r 'a\0a' \v\f\f")
 assert(x == 'a\0a' and string.len(x) == 3)
--- _G.x = nil
---
--- -- escape sequences
+
+_ENV = {}
+
+return print
+
+-- escape sequences
 -- assert('\n\"\'\\' == [[
 --
 -- "'\]])

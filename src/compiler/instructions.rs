@@ -275,6 +275,11 @@ impl Instruction {
             .into()
     }
 
+    pub fn op_setupval(upval_dest_addr: u8, val_reg: u8) -> Instruction {
+        LuaOpCode::OP_SETUPVAL
+            .to_iabc(val_reg, false, upval_dest_addr, 0)
+            .into()
+    }
     pub fn op_settabup(
         upval_dest_addr: u8,
         tabattr_addrk: u8,
@@ -283,6 +288,21 @@ impl Instruction {
     ) -> Instruction {
         LuaOpCode::OP_SETTABUP
             .to_iabc(upval_dest_addr, is_val_const, tabattr_addrk, val)
+            .into()
+    }
+    pub fn op_setfield(dest_addr: u8, tabattr_addrk: u8, val: u8, is_val_const: bool) -> Instruction {
+        LuaOpCode::OP_SETFIELD
+            .to_iabc(dest_addr, is_val_const, tabattr_addrk, val)
+            .into()
+    }
+    pub fn op_seti(dest_addr: u8, tabattr_i: u8, val: u8, is_val_const: bool) -> Instruction {
+        LuaOpCode::OP_SETI
+            .to_iabc(dest_addr, is_val_const, tabattr_i, val)
+            .into()
+    }
+    pub fn op_settable(dest_addr: u8, tabattr_addr: u8, val: u8, is_val_const: bool) -> Instruction {
+        LuaOpCode::OP_SETI
+            .to_iabc(dest_addr, is_val_const, tabattr_addr, val)
             .into()
     }
 

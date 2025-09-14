@@ -19,7 +19,7 @@ use crate::ast::{Binop, CmpOp, Unop};
 use crate::luz::thread::LuzThread;
 use crate::luz::userdata::Userdata;
 
-#[derive(Debug, Clone, From)]
+#[derive(Debug, From)]
 pub enum LuzObj {
     Numeral(Numeral),
     Boolean(bool),
@@ -29,6 +29,21 @@ pub enum LuzObj {
     Thread(Arc<Mutex<LuzThread>>),
     Userdata(Arc<Mutex<Userdata>>),
     Nil,
+}
+
+impl Clone for LuzObj {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Numeral(arg0) => Self::Numeral(arg0.clone()),
+            Self::Boolean(arg0) => Self::Boolean(arg0.clone()),
+            Self::String(arg0) => Self::String(arg0.clone()),
+            Self::Function(arg0) => Self::Function(Rc::clone(arg0)),
+            Self::Table(arg0) => Self::Table(Rc::clone(arg0)),
+            Self::Thread(arg0) => Self::Thread(Arc::clone(arg0)),
+            Self::Userdata(arg0) => Self::Userdata(arg0.clone()),
+            Self::Nil => Self::Nil,
+        }
+    }
 }
 
 impl Display for LuzObj {
@@ -159,7 +174,7 @@ impl LuzObj {
                             })?;
 
                             // FIXME: check if there are any problems doing it this way
-                            // I didn't have much of a choice, because rust would only 
+                            // I didn't have much of a choice, because rust would only
                             // accept valid UTF8 code points, which is not the case
                             // for lua
                             unsafe {

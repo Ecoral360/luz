@@ -23,7 +23,7 @@ macro_rules! luz_fn {
 }
 
 macro_rules! luz_table {
-    ($($key:ident : $val:expr)*) => {{
+    ($($key:ident : $val:expr),* $(,)?) => {{
         #[allow(unused_mut)]
         let mut table = HashMap::new();
         {
@@ -34,7 +34,7 @@ macro_rules! luz_table {
     }};
 }
 
-fn make_env_table() -> Table {
+fn make_env_table() -> LuzObj {
     let mut table = HashMap::new();
 
     table.insert(
@@ -121,20 +121,49 @@ fn make_env_table() -> Table {
                     ));
                 };
                 Ok(vec![LuzObj::Numeral(Numeral::Int(s.chars().count() as i64))])
-            })
+            }),
+            lower: luz_fn!([1, _runner, args, _vararg]() {
+                let mut args = VecDeque::from(args);
+                let Some(LuzObj::String(s)) = args.pop_front() else {
+                    return Err(LuzRuntimeError::message(
+                        "bad argument #1 to 'string.lower' (string value expected)",
+                    ));
+                };
+                Ok(vec![LuzObj::String(s.to_lowercase())])
+            }),
+            upper: luz_fn!([1, _runner, args, _vararg]() {
+                let mut args = VecDeque::from(args);
+                let Some(LuzObj::String(s)) = args.pop_front() else {
+                    return Err(LuzRuntimeError::message(
+                        "bad argument #1 to 'string.upper' (string value expected)",
+                    ));
+                };
+                Ok(vec![LuzObj::String(s.to_uppercase())])
+            }),
         },
     );
 
-    Table::new(table, None)
+    let global_env = LuzObj::Table(Rc::new(RefCell::new(Table::new(table, None))));
+    {
+        let LuzObj::Table(ref global_table) = global_env else {
+            unreachable!()
+        };
+        let global_table_ref = Rc::clone(global_table);
+        global_table
+            .borrow_mut()
+            .insert(LuzObj::str("_G"), LuzObj::Table(global_table_ref));
+    }
+    global_env
 }
 
 pub fn get_builtin_scope() -> Rc<RefCell<Scope>> {
     let mut env = Scope::new(String::from("GLOBAL"), None);
+    // env.get_or_add_const(obj)
 
     env.push_reg(
         RegisterBuilder::default()
             .name(Some(String::from("_ENV")))
-            .val(Some(LuzObj::Table(Rc::new(RefCell::new(make_env_table())))))
+            .val(Some(make_env_table()))
             .free(false),
     );
 

@@ -1,5 +1,3 @@
-use std::thread::scope;
-
 use crate::{
     ast::{
         AssignStat, Binop, CmpOp, Exp, ExpAccess, FuncCall, FunctionDefStat, LogicCmpOp,
@@ -54,6 +52,7 @@ impl Compiler {
         exp: &Exp,
         supports_immidiate: bool,
         supports_constants: bool,
+        loadi: bool,
     ) -> Result<ExpEval, LuzError> {
         match exp {
             Exp::Literal(lit) => match lit {
@@ -63,7 +62,7 @@ impl Compiler {
                     Ok(ExpEval::InImmediate((*i + 128) as u8))
                 }
                 LuzObj::Numeral(Numeral::Int(i))
-                    if (-(MAX_HALF_sBx as i64)..(MAX_HALF_sBx as i64)).contains(i) =>
+                    if loadi && (-(MAX_HALF_sBx as i64)..(MAX_HALF_sBx as i64)).contains(i) =>
                 {
                     let reg = ctx.get_or_push_free_register();
                     ctx.push_inst(Instruction::op_loadi(reg, *i as u32));
@@ -145,15 +144,17 @@ impl Compiler {
             AssignStat::Normal { varlist, explist } => {
                 let mut explist_iter = explist.iter();
                 for var_exp in varlist {
-                    let Exp::Var(var) = var_exp else {
-                        unreachable!("{:#?}", var_exp);
+                    let var = if let Exp::Var(var) = var_exp {
+                        var
+                    } else {
+                        var_exp
                     };
-                    match **var {
+                    match var {
                         Exp::Name(ref name) => {
                             let (is_intable, src) = ctx.scope_mut().get_reg_or_upvalue(name)?;
                             match src {
                                 RegOrUpvalue::Register(src) => {
-                                    self.visit_exp(explist_iter.next().expect("value"), ctx);
+                                    self.visit_exp(explist_iter.next().expect("value"), ctx)?;
                                 }
                                 RegOrUpvalue::Upvalue(src) => {
                                     if is_intable {
@@ -164,6 +165,7 @@ impl Compiler {
                                             ctx,
                                             explist_iter.next().expect("value"),
                                             false,
+                                            true,
                                             true,
                                         )?;
 
@@ -176,7 +178,6 @@ impl Compiler {
                                                 res
                                             ),
                                         };
-
                                         ctx.push_inst(Instruction::op_settabup(
                                             src.addr,
                                             name_k as u8,
@@ -184,10 +185,65 @@ impl Compiler {
                                             is_val_const,
                                         ));
                                     } else {
-                                        // ctx.push_inst(Instruction::op_getupval(reg, src.addr));
+                                        self.visit_exp(explist_iter.next().expect("value"), ctx)?;
+                                        let reg = ctx.get_or_push_free_register();
+                                        ctx.push_inst(Instruction::op_setupval(src.addr, reg));
                                     }
                                 }
                             }
+                        }
+                        Exp::Access(ref exp_access) => {
+                            let ExpAccess { exp, value: prop } = exp_access;
+
+                            let value = self.handle_exp(
+                                ctx,
+                                explist_iter.next().expect("value"),
+                                false,
+                                true,
+                                false,
+                            )?;
+                            let (is_val_const, val_reg) = match value {
+                                ExpEval::InRegister(reg) => (false, reg),
+                                ExpEval::InConstant(kreg) => (true, kreg),
+                                ExpEval::InUpvalue { in_table, upvalue } => todo!(),
+                                _ => unreachable!("Not supported by op_settabup {:?}", value),
+                            };
+
+                            self.visit_exp(&exp, ctx)?;
+                            let tabaddr = ctx.claim_next_free_register();
+
+                            let prop_imm = self.handle_immidiate(ctx, &prop)?;
+                            if let Some(imm) = prop_imm {
+                                ctx.push_inst(Instruction::op_seti(
+                                    tabaddr,
+                                    imm,
+                                    val_reg,
+                                    is_val_const,
+                                ));
+                            }
+                            match **prop {
+                                Exp::Name(ref n) => {
+                                    let attr = ctx.get_or_add_const(LuzObj::String(n.clone()));
+                                    ctx.push_inst(Instruction::op_setfield(
+                                        tabaddr,
+                                        attr as u8,
+                                        val_reg,
+                                        is_val_const,
+                                    ));
+                                }
+                                _ => {
+                                    self.visit_exp(&prop, ctx)?;
+                                    let reg = ctx.get_or_push_free_register();
+                                    ctx.push_inst(Instruction::op_settable(
+                                        tabaddr,
+                                        reg,
+                                        val_reg,
+                                        is_val_const,
+                                    ));
+                                }
+                            }
+
+                            ctx.unclaim_registers(&[tabaddr]);
                         }
                         _ => todo!("Assign normal: {:#?}", var),
                     }
@@ -249,8 +305,9 @@ impl Compiler {
             return Ok(());
         }
 
-        let lhs_addr = self.handle_exp(ctx, lhs, matches!(op, Binop::Add), true)?;
-        let rhs_addr = self.handle_exp(ctx, rhs, matches!(op, Binop::Add | Binop::Sub), true)?;
+        let lhs_addr = self.handle_exp(ctx, lhs, matches!(op, Binop::Add), true, true)?;
+        let rhs_addr =
+            self.handle_exp(ctx, rhs, matches!(op, Binop::Add | Binop::Sub), true, true)?;
 
         let is_b_const = matches!(lhs_addr, ExpEval::InConstant(_));
         let is_b_imm = matches!(lhs_addr, ExpEval::InImmediate(_));
@@ -337,7 +394,7 @@ impl Compiler {
         let ExpAccess { exp, value } = exp_access;
         let dest = ctx.get_or_push_free_register();
 
-        self.visit_exp(exp, ctx);
+        self.visit_exp(exp, ctx)?;
         let tabaddr = ctx.claim_next_free_register();
 
         let prop = self.handle_immidiate(ctx, value)?;
@@ -350,7 +407,7 @@ impl Compiler {
                 ctx.push_inst(Instruction::op_getfield(dest, tabaddr, attr as u8));
             }
             _ => {
-                self.visit_exp(value, ctx);
+                self.visit_exp(value, ctx)?;
                 let reg = ctx.get_or_push_free_register();
                 ctx.push_inst(Instruction::op_gettable(dest, tabaddr, reg));
             }
@@ -373,7 +430,7 @@ impl Compiler {
         };
         let nb_inst_before = ctx.scope().instructions().len();
 
-        self.visit_exp(rhs, ctx);
+        self.visit_exp(rhs, ctx)?;
 
         let mut rhs_instructions = {
             let mut scope = ctx.scope_mut();
@@ -414,7 +471,7 @@ impl Compiler {
         let mut post_instructions = if matches!(**lhs, Exp::LogicCmpOp { .. }) {
             self.visit_inner_logicop(ctx, lhs, jmp_size + rhs_len, depth + 1)?
         } else {
-            self.visit_exp(lhs, ctx);
+            self.visit_exp(lhs, ctx)?;
             vec![]
         };
 
@@ -501,8 +558,10 @@ impl Compiler {
             unreachable!()
         };
 
-        let lhs_addr = self.handle_exp(ctx, lhs, true, matches!(op, CmpOp::Eq | CmpOp::Neq))?;
-        let rhs_addr = self.handle_exp(ctx, rhs, true, matches!(op, CmpOp::Eq | CmpOp::Neq))?;
+        let lhs_addr =
+            self.handle_exp(ctx, lhs, true, matches!(op, CmpOp::Eq | CmpOp::Neq), true)?;
+        let rhs_addr =
+            self.handle_exp(ctx, rhs, true, matches!(op, CmpOp::Eq | CmpOp::Neq), true)?;
 
         let is_lhs_immidiate = matches!(lhs_addr, ExpEval::InImmediate(_));
         let is_lhs_constant = matches!(lhs_addr, ExpEval::InConstant(_));
