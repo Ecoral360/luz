@@ -5,7 +5,7 @@ use pest::iterators::Pair;
 use pest::{iterators::Pairs, pratt_parser::PrattParser};
 
 use crate::ast::{
-    AssignStat, Attrib, Exp, ExpTableConstructor, ExpTableConstructorField, ForInStat,
+    AssignStat, Attrib, DoStat, Exp, ExpTableConstructor, ExpTableConstructorField, ForInStat,
     ForRangeStat, FuncCall, FuncDef, IfStat, RepeaStat, ReturnStat, Stat, WhileStat,
 };
 use crate::luz::err::LuzError;
@@ -374,7 +374,9 @@ fn invert<T, E>(x: Option<Result<T, E>>) -> Result<Option<T>, E> {
 pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
     Ok(match pair.as_rule() {
         Rule::Chunk | Rule::block => parse_stmts(&mut pair.into_inner())?,
-        Rule::DoStat => parse_stmt(pair.into_inner().next().expect("Do body"))?,
+        Rule::DoStat => vec![Stat::Do(DoStat {
+            block: parse_stmt(pair.into_inner().next().expect("Do body"))?,
+        })],
         Rule::BreakStat => vec![Stat::Break],
         Rule::GotoStat => vec![GotoStat::new(
             pair.into_inner()

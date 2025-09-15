@@ -123,7 +123,9 @@ impl CompilerCtx {
     pub(crate) fn rename_or_push_free_register(&mut self, name: String) -> u8 {
         match self.target_register() {
             Some(v) => {
+                let start = self.scope().next_reg_start();
                 self.scope_mut().regs[v as usize].name = Some(name);
+                self.scope_mut().regs[v as usize].range = Some(RegisterRange::new(start, None));
                 v
             }
             None => self.push_free_register(Some(name)),
@@ -137,23 +139,32 @@ impl CompilerCtx {
     }
 
     pub(crate) fn find_reg(&self, register_name: &str) -> Option<u8> {
-        self.scope()
-            .regs
-            .iter()
-            .find(|reg| matches!(&reg.name, Some(x) if x == register_name))
-            .map(|reg| reg.addr)
+        self.scope().find_reg(register_name)
     }
 
     pub(crate) fn push_free_register(&mut self, register_name: Option<String>) -> u8 {
         let addr = self.scope().regs.len() as u8;
-        let reg = Register::new(register_name, addr);
+        let range = register_name.as_ref().and(Some(RegisterRange::new(
+            self.scope().next_reg_start(),
+            None,
+        )));
+
+        let reg = Register::new(register_name, addr, range);
         self.scope_mut().regs.push(reg);
         addr
     }
 
+    pub(crate) fn set_end_of_register(&mut self, register_name: &str) {
+        self.scope_mut().set_end_of_register(register_name);
+    }
+
     pub(crate) fn push_claimed_register(&mut self, register_name: Option<String>) -> u8 {
         let addr = self.scope().regs.len() as u8;
-        let mut reg = Register::new(register_name, addr);
+        let range = register_name.as_ref().and(Some(RegisterRange::new(
+            self.scope().next_reg_start(),
+            None,
+        )));
+        let mut reg = Register::new(register_name, addr, range);
         reg.free = false;
         self.scope_mut().regs.push(reg);
         addr
@@ -262,6 +273,10 @@ impl Scope {
         matches!(self.name.as_deref(), Some("GLOBAL"))
     }
 
+    pub fn next_reg_start(&self) -> u8 {
+        self.instructions.len() as u8 + 2
+    }
+
     pub fn instructions(&self) -> &Vec<Instruction> {
         &self.instructions
     }
@@ -320,9 +335,8 @@ impl Scope {
         register_name: &str,
     ) -> Result<(bool, RegOrUpvalue), LuzError> {
         let reg = self
-            .regs
-            .iter()
-            .find(|reg| matches!(&reg.name, Some(x) if x == register_name));
+            .find_reg(register_name)
+            .map(|addr| &self.regs[addr as usize]);
 
         if let Some(v) = reg {
             return Ok((false, RegOrUpvalue::Register(v.clone())));
@@ -388,17 +402,24 @@ impl Scope {
     }
 
     pub fn find_reg(&self, register_name: &str) -> Option<u8> {
+        let curr = self.next_reg_start();
+
         self.regs
             .iter()
-            .find(|reg| matches!(&reg.name, Some(x) if x == register_name))
+            .rfind(|reg| matches!(&reg.name, Some(x) if x == register_name && reg.range.as_ref().is_none_or(|r| r.contains(curr - 1))))
             .map(|reg| reg.addr)
     }
 
-    pub fn set_reg_free(&self, register_name: &str) -> Option<u8> {
-        self.regs
-            .iter()
-            .find(|reg| matches!(&reg.name, Some(x) if x == register_name))
-            .map(|reg| reg.addr)
+    pub fn set_end_of_register(&mut self, register_name: &str) {
+        let end = self.next_reg_start();
+
+        let reg = self
+            .find_reg(register_name)
+            .map(|addr| &mut self.regs[addr as usize]);
+
+        if let Some(reg) = reg {
+            reg.range.as_mut().map(|range| range.end = Some(end));
+        }
     }
 
     pub fn get_const(&self, addr: u8) -> &LuzObj {
@@ -476,7 +497,16 @@ impl Scope {
         result += "---- Locals:\n";
         for (i, inst) in self.regs.iter().enumerate() {
             if let Some(name) = &inst.name {
-                result += &format!("{} {}\n", i, name);
+                let Some(RegisterRange { start, end }) = inst.range else {
+                    unreachable!("There must be a range if there is a name")
+                };
+                result += &format!(
+                    "{} {} {} {}\n",
+                    i,
+                    name,
+                    start,
+                    end.unwrap_or(self.instructions().len() as u8 + 1)
+                );
             }
         }
 
@@ -527,12 +557,33 @@ impl Scope {
 
 #[derive(Debug, new, Clone, Builder)]
 pub struct Register {
+    #[builder(default)]
     pub name: Option<String>,
     pub addr: u8,
+
+    #[builder(default)]
     #[new(default)]
     pub val: Option<LuzObj>,
+
+    #[builder(default)]
     #[new(value = "true")]
     pub free: bool,
+
+    #[builder(default)]
+    range: Option<RegisterRange>,
+}
+
+#[derive(Debug, new, Clone)]
+pub struct RegisterRange {
+    pub start: u8,
+
+    pub end: Option<u8>,
+}
+
+impl RegisterRange {
+    pub fn contains(&self, addr: u8) -> bool {
+        self.start <= addr && self.end.is_none_or(|end| addr <= end)
+    }
 }
 
 #[derive(Debug, new, Clone)]

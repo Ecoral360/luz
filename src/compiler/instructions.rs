@@ -266,7 +266,7 @@ impl Instruction {
     }
 
     pub fn op_loadi(reg: u8, imm: u32) -> Instruction {
-        LuaOpCode::OP_LOADI.to_iasbx(reg, imm + MAX_HALF_sBx).into()
+        LuaOpCode::OP_LOADI.to_iasbx(reg, imm.wrapping_add(MAX_HALF_sBx)).into()
     }
 
     pub fn op_move(dest: u8, src: u8) -> Instruction {
@@ -275,6 +275,16 @@ impl Instruction {
 
     pub fn op_closure(reg: u8, sub_scope_idx: u32) -> Instruction {
         iABx::new(sub_scope_idx, reg, LuaOpCode::OP_CLOSURE).into()
+    }
+    pub fn op_self(
+        func_addr: u8,
+        self_addr: u8,
+        func_attr: u8,
+        is_func_attr_const: bool,
+    ) -> Instruction {
+        LuaOpCode::OP_SELF
+            .to_iabc(func_addr, is_func_attr_const, self_addr, func_attr)
+            .into()
     }
 
     pub fn op_getupval(dest: u8, upval_addr: u8) -> Instruction {
@@ -423,7 +433,20 @@ impl iABC {
             }
             LuaOpCode::OP_SETFIELD => {
                 let local = scope.get_const(self.b);
-                format!("{} ; {}", self, local.repr())
+                let val = if self.k {
+                    scope.get_const(self.c).repr()
+                } else {
+                    String::new()
+                };
+                format!("{} ; {} {}", self, local.repr(), val)
+            }
+            LuaOpCode::OP_SELF => {
+                let val = if self.k {
+                    scope.get_const(self.c).repr()
+                } else {
+                    String::new()
+                };
+                format!("{} ; {}", self, val)
             }
             LuaOpCode::OP_RETURN => {
                 format!("{} ; {} out", self, self.b - 1)
@@ -437,7 +460,7 @@ impl iABC {
 
 impl Display for iABC {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let showk = matches!(self.op, LuaOpCode::OP_SETFIELD);
+        let showk = matches!(self.op, LuaOpCode::OP_SETFIELD | LuaOpCode::OP_SELF);
 
         let b = match self.op {
             LuaOpCode::OP_ADD if self.k => -(self.b as i32 + 1),
@@ -575,7 +598,7 @@ impl iAsBx {
 
 impl Display for iAsBx {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?} {} {}", self.op, self.a, self.b - MAX_HALF_sBx)
+        write!(f, "{:?} {} {}", self.op, self.a, self.b.wrapping_sub(MAX_HALF_sBx))
     }
 }
 

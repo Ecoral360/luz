@@ -1,7 +1,7 @@
 use crate::{
     ast::{
-        AssignStat, Binop, CmpOp, Exp, ExpAccess, ExpTableConstructor, ExpTableConstructorField,
-        FuncCall, FuncDef, ReturnStat, Stat,
+        AssignStat, Binop, CmpOp, DoStat, Exp, ExpAccess, ExpTableConstructor,
+        ExpTableConstructorField, FuncCall, FuncDef, ReturnStat, Stat,
     },
     compiler::{
         ctx::{CompilerCtx, CompilerCtxBuilder, RegOrUpvalue, Upvalue},
@@ -45,6 +45,29 @@ impl Compiler {
             },
             _ => Ok(None),
         }
+    }
+
+    fn handle_consecutive_exp(&mut self, ctx: &mut CompilerCtx, exp: &Exp) -> Result<u8, LuzError> {
+        let res = self.handle_exp(ctx, exp, false, false, true)?;
+        let reg = ctx.get_or_push_free_register();
+        match res {
+            ExpEval::InImmediate(_) => {}
+            ExpEval::InRegister(r) => {
+                if reg != r {
+                    ctx.push_inst(Instruction::op_move(reg, r))
+                }
+            }
+            ExpEval::InConstant(_) => {}
+            ExpEval::InUpvalue { in_table, upvalue } => {
+                if in_table {
+                    let name_k = ctx.get_or_add_const(LuzObj::String(upvalue.name.to_owned()));
+                    ctx.push_inst(Instruction::op_gettabup(reg, upvalue.addr, name_k as u8));
+                } else {
+                    ctx.push_inst(Instruction::op_getupval(reg, upvalue.addr));
+                }
+            }
+        }
+        Ok(reg)
     }
 
     fn handle_exp(
@@ -152,68 +175,25 @@ enum ExpEval {
 
 #[allow(unused)]
 impl Compiler {
-    // fn visit_function_def_stat(
-    //     &mut self,
-    //     ctx: &mut CompilerCtx,
-    //     func_def: &FunctionDefStat,
-    // ) -> Result<(), LuzError> {
-    //     match func_def {
-    //         FunctionDefStat::Normal {
-    //             name,
-    //             method,
-    //             params,
-    //             body,
-    //         } => {
-    //             let (is_intable, src) = ctx.scope_mut().get_reg_or_upvalue(&name[0])?;
-    //             match src {
-    //                 RegOrUpvalue::Register(register) => {
-    //                     ctx.push_inst(Instruction::op_getfield(reg, reg, register.addr));
-    //                 }
-    //                 RegOrUpvalue::Upvalue(upvalue) => {
-    //                     ctx.push_inst(Instruction::op_getupval(reg, upvalue.addr));
-    //                 }
-    //             }
-    //             let reg = ctx.claim_next_free_register();
-    //             for sub_name in &name[..name.len() - 1] {}
-    //             let idx = ctx.push_scope(name[0].clone());
-    //             ctx.scope_mut().set_nb_params(params.fixed.len() as u32);
-    //             for param in &params.fixed {
-    //                 ctx.push_claimed_register(Some(param.clone()));
-    //             }
-    //             if params.is_vararg {
-    //                 let vararg_reg = ctx.push_claimed_register(None);
-    //                 ctx.push_inst(Instruction::op_varargprep(vararg_reg));
-    //             }
-    //             for stat in body {
-    //                 self.visit_stat(stat, ctx)?;
-    //             }
-    //             ctx.pop_scope()?;
-    //             let dest = ctx.get_or_push_free_register();
-    //             ctx.push_inst(Instruction::op_closure(dest, idx as u32));
-    //             if name.len() > 1 {
-    //             } else {
-    //             }
-    //         }
-    //         FunctionDefStat::Local { name, params, body } => {
-    //             let reg = ctx.push_claimed_register(Some(name.clone()));
-    //             let idx = ctx.push_scope(name.clone());
-    //             ctx.scope_mut().set_nb_params(params.fixed.len() as u32);
-    //             for param in &params.fixed {
-    //                 ctx.push_claimed_register(Some(param.clone()));
-    //             }
-    //             if params.is_vararg {
-    //                 let vararg_reg = ctx.push_claimed_register(None);
-    //                 ctx.push_inst(Instruction::op_varargprep(vararg_reg));
-    //             }
-    //             for stat in body {
-    //                 self.visit_stat(stat, ctx)?;
-    //             }
-    //             ctx.pop_scope()?;
-    //             ctx.push_inst(Instruction::op_closure(reg, idx as u32));
-    //         }
-    //     }
-    //     Ok(())
-    // }
+    fn visit_do_stat(&mut self, ctx: &mut CompilerCtx, do_stat: &DoStat) -> Result<(), LuzError> {
+        let DoStat { block } = do_stat;
+        let vars_before = ctx.scope().regs().len();
+        for stmt in block {
+            self.visit_stat(stmt, ctx);
+        }
+
+        let mut scope = ctx.scope_mut();
+        let regs = scope.regs()[vars_before..]
+            .iter()
+            .filter_map(|reg| reg.name.clone())
+            .collect::<Vec<_>>();
+
+        for reg in regs {
+            scope.set_end_of_register(&reg);
+        }
+
+        Ok(())
+    }
 
     fn visit_assign(&mut self, ctx: &mut CompilerCtx, assign: &AssignStat) -> Result<(), LuzError> {
         match assign {
@@ -230,7 +210,10 @@ impl Compiler {
                             let (is_intable, src) = ctx.scope_mut().get_reg_or_upvalue(name)?;
                             match src {
                                 RegOrUpvalue::Register(src) => {
-                                    self.visit_exp(explist_iter.next().expect("value"), ctx)?;
+                                    self.handle_consecutive_exp(
+                                        ctx,
+                                        explist_iter.next().expect("value"),
+                                    )?;
                                 }
                                 RegOrUpvalue::Upvalue(src) => {
                                     if is_intable {
@@ -261,7 +244,10 @@ impl Compiler {
                                             is_val_const,
                                         ));
                                     } else {
-                                        self.visit_exp(explist_iter.next().expect("value"), ctx)?;
+                                        self.handle_consecutive_exp(
+                                            ctx,
+                                            explist_iter.next().expect("value"),
+                                        )?;
                                         let reg = ctx.get_or_push_free_register();
                                         ctx.push_inst(Instruction::op_setupval(src.addr, reg));
                                     }
@@ -319,8 +305,6 @@ impl Compiler {
                                     }
                                 }
                             }
-
-                            ctx.unclaim_registers(&[tabaddr]);
                         }
                         _ => todo!("Assign normal: {:#?}", var),
                     }
@@ -334,7 +318,7 @@ impl Compiler {
                     ctx.rename_or_push_free_register(var.0.clone());
                 }
                 for exp in explist {
-                    self.visit_exp(exp, &mut new_ctx)?;
+                    self.handle_consecutive_exp(&mut new_ctx, exp)?;
                     ctx.claim_next_free_register();
                 }
 
@@ -358,7 +342,7 @@ impl Compiler {
             ctx.new_with(CompilerCtxBuilder::default().nb_expected((size + 1) as u8))
         };
         for exp in stat.explist.iter() {
-            self.visit_exp(exp, &mut new_ctx)?;
+            self.handle_consecutive_exp(ctx, exp)?;
             ctx.claim_next_free_register();
         }
         ctx.push_inst(Instruction::op_return(start, false, size as u8 + 1));
@@ -370,10 +354,10 @@ impl Compiler {
             unreachable!()
         };
         if *op == Binop::Concat {
-            self.visit_exp(lhs, ctx)?;
+            self.handle_consecutive_exp(ctx, lhs)?;
             let lhs_addr = ctx.claim_next_free_register();
 
-            self.visit_exp(rhs, ctx)?;
+            self.handle_consecutive_exp(ctx, rhs)?;
             let rhs_addr = ctx.get_or_push_free_register();
 
             ctx.push_inst(Instruction::op_concat(lhs_addr, rhs_addr - lhs_addr + 1));
@@ -381,6 +365,8 @@ impl Compiler {
 
             return Ok(());
         }
+
+        let result_reg = ctx.get_or_push_free_register();
 
         let lhs_addr = self.handle_exp(ctx, lhs, matches!(op, Binop::Add), true, true)?;
         let rhs_addr =
@@ -431,7 +417,6 @@ impl Compiler {
             (lhs_addr, rhs_addr) = (rhs_addr, lhs_addr);
         }
 
-        let result_reg = ctx.get_or_push_free_register();
         if is_c_imm || is_b_imm {
             ctx.push_inst(Instruction::op_addi(result_reg, lhs_addr, false, rhs_addr));
 
@@ -491,8 +476,7 @@ impl Compiler {
             }
         }
 
-        ctx.unclaim_registers(&[tabaddr]);
-
+        // ctx.unclaim_registers(&[tabaddr]);
         Ok(())
     }
 
@@ -763,34 +747,59 @@ impl Compiler {
             variadic,
         } = f_call;
         self.visit_exp(func, ctx)?;
-        let f_addr = ctx.claim_next_free_register();
+        let mut f_addr = ctx.claim_next_free_register();
 
-        let mut claimed = vec![f_addr];
-        if !Exp::is_multires(args) {
-            for arg in args {
-                let mut one_exp_ctx = ctx.new_with(CompilerCtxBuilder::default().nb_expected(2));
-                self.visit_exp(arg, &mut one_exp_ctx)?;
-                claimed.push(ctx.claim_next_free_register());
-            }
+        let mut claimed = vec![];
+
+        if let Some(m) = method_name {
+            let reg = ctx.get_or_push_free_register();
+            let method_name_const = ctx.get_or_add_const(LuzObj::String(m.clone()));
+            ctx.push_inst(Instruction::op_self(
+                reg,
+                f_addr,
+                method_name_const as u8,
+                true,
+            ));
+            f_addr = reg;
+            // the function
+            claimed.push(ctx.claim_next_free_register());
+            // 'self' arg
+            claimed.push(ctx.claim_next_free_register());
         } else {
+            // if no 'self', claim the function
+            claimed.push(f_addr);
+        }
+
+        if !args.is_empty() {
             for arg in &args[..args.len() - 1] {
                 let mut one_exp_ctx = ctx.new_with(CompilerCtxBuilder::default().nb_expected(2));
-                self.visit_exp(arg, &mut one_exp_ctx)?;
+                self.handle_consecutive_exp(&mut one_exp_ctx, arg)?;
                 claimed.push(ctx.claim_next_free_register());
             }
-            let mut all_out_ctx = ctx.new_with(CompilerCtxBuilder::default().nb_expected(0));
-            self.visit_exp(&args[args.len() - 1], &mut all_out_ctx)?;
+            let mut all_out_ctx = ctx.new_with(
+                CompilerCtxBuilder::default().nb_expected(if Exp::is_multires(args) {
+                    0
+                } else {
+                    2
+                }),
+            );
+            self.handle_consecutive_exp(&mut all_out_ctx, &args[args.len() - 1])?;
             claimed.push(ctx.claim_next_free_register());
         }
 
         let nb_expected = ctx.nb_expected();
         let nb_to_unclaim = ctx.scope().regs().len();
         ctx.unclaim_registers(&claimed);
+
         // ctx.unclaim_register_range(f_addr, claimed);
 
         ctx.push_inst(Instruction::op_call(
             f_addr,
-            if *variadic { 0 } else { (args.len() + 1) as u8 },
+            if *variadic {
+                0
+            } else {
+                (args.len() + 1 + method_name.as_ref().map_or(0, |_| 1)) as u8
+            },
             nb_expected,
         ));
         Ok(())
@@ -808,7 +817,7 @@ impl Compiler {
             variadic,
         } = exp_table_constructor;
 
-        let dest = ctx.claim_next_free_register();
+        let dest = ctx.get_or_push_free_register();
 
         ctx.push_inst(Instruction::op_newtable(
             dest,
@@ -871,7 +880,7 @@ impl Compiler {
         match src {
             RegOrUpvalue::Register(src) => {
                 if reg != src.addr {
-                    ctx.push_inst(Instruction::op_move(reg, src.addr))
+                    ctx.unclaim_registers(&[src.addr]);
                 }
             }
             RegOrUpvalue::Upvalue(src) => {
@@ -937,7 +946,7 @@ impl Visitor for Compiler {
             // Stat::FunctionDef(function_def_stat) => {
             //     self.visit_function_def_stat(ctx, function_def_stat)
             // }
-            Stat::Do(do_stat) => todo!(),
+            Stat::Do(do_stat) => self.visit_do_stat(ctx, do_stat),
             Stat::While(while_stat) => todo!(),
             Stat::Repeat(repea_stat) => todo!(),
             Stat::If(if_stat) => todo!(),

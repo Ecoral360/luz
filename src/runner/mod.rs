@@ -303,6 +303,26 @@ impl Runner {
                     let vararg = self.vararg.take().expect("Var arg");
                     self.scope_mut().set_vararg(vararg);
                 }
+                LuaOpCode::OP_SELF => {
+                    let self_table = self.get_reg_val(*b)?;
+
+                    self.scope_mut().set_reg_val(*a + 1, self_table.clone());
+
+                    let LuzObj::Table(self_table) = self_table else {
+                        return Err(LuzError::Type {
+                            wrong: self_table.get_type(),
+                            expected: vec![LuzType::Table],
+                        });
+                    };
+                    let key = if *k {
+                        self.get_const_val(*c)?
+                    } else {
+                        self.get_reg_val(*c)?
+                    };
+                    let table = self_table.borrow();
+                    let val = table.get(&key);
+                    self.scope.borrow_mut().set_reg_val(*a, val.clone());
+                }
                 LuaOpCode::OP_CALL => {
                     let iABC {
                         c: nb_expected_results,
