@@ -66,6 +66,14 @@ impl LuzObj {
         Self::String(string.to_owned())
     }
 
+    pub fn int(i: i64) -> Self {
+        Self::Numeral(Numeral::Int(i))
+    }
+
+    pub fn float(f: f64) -> Self {
+        Self::Numeral(Numeral::Float(f))
+    }
+
     pub fn from_literal_str(s: &str) -> Result<Self, LuzError> {
         if s.starts_with("[") {
             let level = s.chars().skip(1).take_while(|c| *c == '=').count() + 2;
@@ -194,6 +202,36 @@ impl LuzObj {
         // let s = s.replace("\\\\", to).replace("\\a", "\x07").replace("\\b", "\x08").replace("\\n", "\n").replace("\\r", "\r").replace("\\t", "\t").replace("\\v", "\x0b").replace("", to);
 
         Ok(Self::String(string))
+    }
+
+    pub fn not(&self) -> Self {
+        Self::Boolean(!self.is_truthy())
+    }
+
+    pub fn len(&self) -> LuzObj {
+        match self {
+            LuzObj::Numeral(numeral) => todo!(),
+            LuzObj::Boolean(_) => todo!(),
+            LuzObj::String(s) => LuzObj::int(s.len() as i64),
+            LuzObj::Function(ref_cell) => todo!(),
+            LuzObj::Table(ref_cell) => todo!(),
+            LuzObj::Thread(mutex) => todo!(),
+            LuzObj::Userdata(mutex) => todo!(),
+            LuzObj::Nil => todo!(),
+        }
+    }
+
+    pub fn bnot(&self) -> LuzObj {
+        match self {
+            LuzObj::Numeral(numeral) => todo!(),
+            LuzObj::Boolean(_) => todo!(),
+            LuzObj::String(s) => LuzObj::int(s.len() as i64),
+            LuzObj::Function(ref_cell) => todo!(),
+            LuzObj::Table(ref_cell) => todo!(),
+            LuzObj::Thread(mutex) => todo!(),
+            LuzObj::Userdata(mutex) => todo!(),
+            LuzObj::Nil => todo!(),
+        }
     }
 
     /// Returns `true` if the luz obj is [`Nil`].

@@ -3,7 +3,7 @@ use std::str::FromStr;
 use derive_more::derive::From;
 use derive_new::new;
 
-use crate::luz::{err::LuzError, obj::FuncParams};
+use crate::luz::err::LuzError;
 
 use super::{Exp, FuncCall};
 
@@ -12,7 +12,7 @@ pub enum Stat {
     Assign(AssignStat),
     Return(ReturnStat),
     FuncCall(FuncCall),
-    FunctionDef(FunctionDefStat),
+    // FunctionDef(FunctionDefStat),
     Do(DoStat),
     While(WhileStat),
     Repeat(RepeaStat),
@@ -50,20 +50,20 @@ pub struct DoStat {
     pub block: Vec<Stat>,
 }
 
-#[derive(Debug, Clone, new)]
-pub enum FunctionDefStat {
-    Normal {
-        name: Vec<String>,
-        method: Option<String>,
-        params: FuncParams,
-        body: Vec<Stat>,
-    },
-    Local {
-        name: String,
-        params: FuncParams,
-        body: Vec<Stat>,
-    },
-}
+// #[derive(Debug, Clone, new)]
+// pub enum FunctionDefStat {
+//     Normal {
+//         name: Vec<String>,
+//         method: Option<String>,
+//         params: FuncParams,
+//         body: Vec<Stat>,
+//     },
+//     Local {
+//         name: String,
+//         params: FuncParams,
+//         body: Vec<Stat>,
+//     },
+// }
 
 #[derive(Debug, Clone, new)]
 pub struct IfStat {

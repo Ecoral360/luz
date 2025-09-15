@@ -22,7 +22,7 @@ pub struct CompilerCtx {
 
 impl CompilerCtx {
     pub fn new_main() -> Self {
-        let mut scope = Scope::new(String::from("main"), Some(get_builtin_scope()));
+        let mut scope = Scope::new(Some(String::from("main")), Some(get_builtin_scope()));
         scope
             .upvalues
             .push(Upvalue::new("_ENV".to_owned(), 0, 0, true));
@@ -32,7 +32,7 @@ impl CompilerCtx {
         }
     }
     pub fn new_chunk(name: String, parent_scope: Option<ScopeRef>, upvalues: Vec<Upvalue>) -> Self {
-        let mut scope = Scope::new(name, parent_scope);
+        let mut scope = Scope::new(Some(name), parent_scope);
         // scope
         //     .upvalues
         //     .push(Upvalue::new("_ENV".to_owned(), 0, 0, true));
@@ -71,7 +71,7 @@ impl CompilerCtx {
         self.scope.borrow_mut()
     }
 
-    pub(crate) fn push_scope(&mut self, scope_name: String) -> usize {
+    pub(crate) fn push_scope(&mut self, scope_name: Option<String>) -> usize {
         let new_scope = Rc::new(RefCell::new(Scope::new(
             scope_name,
             Some(Rc::clone(&self.scope)),
@@ -219,7 +219,7 @@ impl CompilerCtx {
 
 #[derive(Debug, new, Clone)]
 pub struct Scope {
-    name: String,
+    name: Option<String>,
     parent: Option<ScopeRef>,
 
     #[new(default)]
@@ -251,7 +251,15 @@ pub enum RegOrUpvalue {
 
 impl Scope {
     pub fn new_ref(name: String, parent: Option<ScopeRef>) -> ScopeRef {
-        Rc::new(RefCell::new(Scope::new(name, parent)))
+        Rc::new(RefCell::new(Scope::new(Some(name), parent)))
+    }
+
+    pub fn new_global() -> Self {
+        Self::new(Some(String::from("GLOBAL")), None)
+    }
+
+    pub fn is_global(&self) -> bool {
+        matches!(self.name.as_deref(), Some("GLOBAL"))
     }
 
     pub fn instructions(&self) -> &Vec<Instruction> {
@@ -320,13 +328,13 @@ impl Scope {
             return Ok((false, RegOrUpvalue::Register(v.clone())));
         }
 
-        if let Some(up_addr) = self.get_upvalue(register_name) {
+        if let Some(up_addr) = self.get_upvalue_with_name(register_name) {
             return Ok((false, RegOrUpvalue::Upvalue(up_addr.clone())));
         }
 
         if let Some(p) = &self.parent {
-            if p.borrow().name == "GLOBAL" {
-                if let Some(env_addr) = self.get_upvalue("_ENV") {
+            if p.borrow().is_global() {
+                if let Some(env_addr) = self.get_upvalue_with_name("_ENV") {
                     return Ok((true, RegOrUpvalue::Upvalue(env_addr.clone())));
                 } else {
                     return Err(LuzError::CompileError(format!(
@@ -393,10 +401,21 @@ impl Scope {
             .map(|reg| reg.addr)
     }
 
-    pub fn get_upvalue(&self, name: &str) -> Option<&Upvalue> {
-        self.upvalues.iter().find(|con| con.name == name)
+    pub fn get_const(&self, addr: u8) -> &LuzObj {
+        &self.constants[addr as usize]
     }
 
+    pub fn get_reg(&self, addr: u8) -> &Register {
+        &self.regs[addr as usize]
+    }
+
+    pub fn get_upvalue(&self, addr: u8) -> &Upvalue {
+        &self.upvalues[addr as usize]
+    }
+
+    pub fn get_upvalue_with_name(&self, name: &str) -> Option<&Upvalue> {
+        self.upvalues.iter().find(|con| con.name == name)
+    }
     pub fn get_upvalue_addr(&self, name: &str) -> Option<u8> {
         self.upvalues.iter().enumerate().find_map(|(i, con)| {
             if con.name == name {
@@ -436,14 +455,17 @@ impl Scope {
     }
 
     pub fn instructions_to_string(&self) -> String {
-        let mut result = if self.name == "main" {
+        let mut result = if matches!(self.name.as_deref(), Some("main")) {
             String::from("main\n")
         } else {
-            format!("function {:?}\n", self.name)
+            format!(
+                "function {}\n",
+                self.name.as_ref().unwrap_or(&String::new())
+            )
         };
 
         for (i, inst) in self.instructions.iter().enumerate() {
-            result += &format!("[{}] {}\n", i + 1, inst);
+            result += &format!("[{}] {}\n", i + 1, inst.debug(self));
         }
 
         result += "---- Constants:\n";
@@ -498,8 +520,8 @@ impl Scope {
         self.parent.as_ref()
     }
 
-    pub fn name(&self) -> &str {
-        &self.name
+    pub fn name(&self) -> Option<&String> {
+        self.name.as_ref()
     }
 }
 

@@ -1,7 +1,7 @@
 use crate::{
     ast::{
         AssignStat, Binop, CmpOp, Exp, ExpAccess, ExpTableConstructor, ExpTableConstructorField,
-        FuncCall, FunctionDefStat, LogicCmpOp, ReturnStat, Stat,
+        FuncCall, FuncDef, ReturnStat, Stat,
     },
     compiler::{
         ctx::{CompilerCtx, CompilerCtxBuilder, RegOrUpvalue, Upvalue},
@@ -11,7 +11,7 @@ use crate::{
     },
     luz::{
         err::LuzError,
-        obj::{self, LuzObj, Numeral},
+        obj::{LuzObj, Numeral},
     },
 };
 
@@ -74,11 +74,9 @@ impl Compiler {
                         Ok(ExpEval::InConstant(ctx.get_or_add_const(lit.clone()) as u8))
                     } else {
                         let constant = ctx.get_or_add_const(lit.clone());
-                        ctx.push_inst(Instruction::op_loadk(
-                            ctx.target_register_or_err()?,
-                            constant,
-                        ));
-                        Ok(ExpEval::InRegister(ctx.target_register_or_err()?))
+                        let reg = ctx.get_or_push_free_register();
+                        ctx.push_inst(Instruction::op_loadk(reg, constant));
+                        Ok(ExpEval::InRegister(reg))
                     }
                 }
             },
@@ -91,7 +89,8 @@ impl Compiler {
             }
             _ => {
                 self.visit_exp(exp, ctx)?;
-                Ok(ExpEval::InRegister(ctx.target_register_or_err()?))
+                let reg = ctx.get_or_push_free_register();
+                Ok(ExpEval::InRegister(reg))
             }
         }
     }
@@ -153,38 +152,68 @@ enum ExpEval {
 
 #[allow(unused)]
 impl Compiler {
-    fn visit_function_def(
-        &mut self,
-        ctx: &mut CompilerCtx,
-        func_def: &FunctionDefStat,
-    ) -> Result<(), LuzError> {
-        match func_def {
-            FunctionDefStat::Normal {
-                name,
-                method,
-                params,
-                body,
-            } => todo!(),
-            FunctionDefStat::Local { name, params, body } => {
-                let reg = ctx.push_claimed_register(Some(name.clone()));
-                let idx = ctx.push_scope(name.clone());
-                ctx.scope_mut().set_nb_params(params.fixed.len() as u32);
-                for param in &params.fixed {
-                    ctx.push_claimed_register(Some(param.clone()));
-                }
-                if params.is_vararg {
-                    let vararg_reg = ctx.push_claimed_register(None);
-                    ctx.push_inst(Instruction::op_varargprep(vararg_reg));
-                }
-                for stat in body {
-                    self.visit_stat(stat, ctx)?;
-                }
-                ctx.pop_scope()?;
-                ctx.push_inst(Instruction::op_closure(reg, idx as u32));
-            }
-        }
-        Ok(())
-    }
+    // fn visit_function_def_stat(
+    //     &mut self,
+    //     ctx: &mut CompilerCtx,
+    //     func_def: &FunctionDefStat,
+    // ) -> Result<(), LuzError> {
+    //     match func_def {
+    //         FunctionDefStat::Normal {
+    //             name,
+    //             method,
+    //             params,
+    //             body,
+    //         } => {
+    //             let (is_intable, src) = ctx.scope_mut().get_reg_or_upvalue(&name[0])?;
+    //             match src {
+    //                 RegOrUpvalue::Register(register) => {
+    //                     ctx.push_inst(Instruction::op_getfield(reg, reg, register.addr));
+    //                 }
+    //                 RegOrUpvalue::Upvalue(upvalue) => {
+    //                     ctx.push_inst(Instruction::op_getupval(reg, upvalue.addr));
+    //                 }
+    //             }
+    //             let reg = ctx.claim_next_free_register();
+    //             for sub_name in &name[..name.len() - 1] {}
+    //             let idx = ctx.push_scope(name[0].clone());
+    //             ctx.scope_mut().set_nb_params(params.fixed.len() as u32);
+    //             for param in &params.fixed {
+    //                 ctx.push_claimed_register(Some(param.clone()));
+    //             }
+    //             if params.is_vararg {
+    //                 let vararg_reg = ctx.push_claimed_register(None);
+    //                 ctx.push_inst(Instruction::op_varargprep(vararg_reg));
+    //             }
+    //             for stat in body {
+    //                 self.visit_stat(stat, ctx)?;
+    //             }
+    //             ctx.pop_scope()?;
+    //             let dest = ctx.get_or_push_free_register();
+    //             ctx.push_inst(Instruction::op_closure(dest, idx as u32));
+    //             if name.len() > 1 {
+    //             } else {
+    //             }
+    //         }
+    //         FunctionDefStat::Local { name, params, body } => {
+    //             let reg = ctx.push_claimed_register(Some(name.clone()));
+    //             let idx = ctx.push_scope(name.clone());
+    //             ctx.scope_mut().set_nb_params(params.fixed.len() as u32);
+    //             for param in &params.fixed {
+    //                 ctx.push_claimed_register(Some(param.clone()));
+    //             }
+    //             if params.is_vararg {
+    //                 let vararg_reg = ctx.push_claimed_register(None);
+    //                 ctx.push_inst(Instruction::op_varargprep(vararg_reg));
+    //             }
+    //             for stat in body {
+    //                 self.visit_stat(stat, ctx)?;
+    //             }
+    //             ctx.pop_scope()?;
+    //             ctx.push_inst(Instruction::op_closure(reg, idx as u32));
+    //         }
+    //     }
+    //     Ok(())
+    // }
 
     fn visit_assign(&mut self, ctx: &mut CompilerCtx, assign: &AssignStat) -> Result<(), LuzError> {
         match assign {
@@ -242,6 +271,9 @@ impl Compiler {
                         Exp::Access(ref exp_access) => {
                             let ExpAccess { exp, value: prop } = exp_access;
 
+                            self.visit_exp(&exp, ctx)?;
+                            let tabaddr = ctx.claim_next_free_register();
+
                             let value = self.handle_exp(
                                 ctx,
                                 explist_iter.next().expect("value"),
@@ -255,9 +287,6 @@ impl Compiler {
                                 ExpEval::InUpvalue { in_table, upvalue } => todo!(),
                                 _ => unreachable!("Not supported by op_settabup {:?}", value),
                             };
-
-                            self.visit_exp(&exp, ctx)?;
-                            let tabaddr = ctx.claim_next_free_register();
 
                             let prop_imm = self.handle_immidiate(ctx, &prop, true)?;
                             if let Some(imm) = prop_imm {
@@ -697,6 +726,31 @@ impl Compiler {
         Ok(())
     }
 
+    fn visit_function_def_exp(
+        &mut self,
+        ctx: &mut CompilerCtx,
+        func_def: &FuncDef,
+    ) -> Result<(), LuzError> {
+        let FuncDef { params, body } = func_def;
+
+        let reg = ctx.get_or_push_free_register();
+        let idx = ctx.push_scope(None);
+        ctx.scope_mut().set_nb_params(params.fixed.len() as u32);
+        for param in &params.fixed {
+            ctx.push_claimed_register(Some(param.clone()));
+        }
+        if params.is_vararg {
+            let vararg_reg = ctx.push_claimed_register(None);
+            ctx.push_inst(Instruction::op_varargprep(vararg_reg));
+        }
+        for stat in body {
+            self.visit_stat(stat, ctx)?;
+        }
+        ctx.pop_scope()?;
+        ctx.push_inst(Instruction::op_closure(reg, idx as u32));
+        Ok(())
+    }
+
     fn visit_function_call(
         &mut self,
         ctx: &mut CompilerCtx,
@@ -754,14 +808,13 @@ impl Compiler {
             variadic,
         } = exp_table_constructor;
 
-        let dest = ctx.get_or_push_free_register();
+        let dest = ctx.claim_next_free_register();
 
         ctx.push_inst(Instruction::op_newtable(
             dest,
             obj_fields.len() as u8,
             arr_fields.len() as u8,
         ));
-        ctx.claim_next_free_register();
 
         let mut claimed = vec![];
         for arr_field in arr_fields {
@@ -770,15 +823,17 @@ impl Compiler {
         }
 
         // Unclaim dest to allow field to be set to it
-        ctx.unclaim_registers(&[dest]);
         for obj_field in obj_fields {
             let ExpTableConstructorField { key, val } = obj_field;
             self.assign_to_table(ctx, dest, key, val)?;
             claimed.push(ctx.claim_next_free_register());
         }
 
-        ctx.push_inst(Instruction::op_setlist(dest, arr_fields.len() as u8, 0));
+        if !arr_fields.is_empty() {
+            ctx.push_inst(Instruction::op_setlist(dest, arr_fields.len() as u8, 0));
+        }
 
+        ctx.unclaim_registers(&[dest]);
         ctx.unclaim_registers(&claimed);
         Ok(())
     }
@@ -831,6 +886,21 @@ impl Compiler {
 
         Ok(())
     }
+
+    fn visit_unop(&mut self, ctx: &mut CompilerCtx, exp: &Exp) -> Result<(), LuzError> {
+        let Exp::Unop(unop, exp) = exp else {
+            unreachable!()
+        };
+
+        let dest = ctx.get_or_push_free_register();
+
+        self.visit_exp(exp, ctx);
+        let val_addr = ctx.get_or_push_free_register();
+
+        ctx.push_inst(Instruction::op_unop(*unop, dest, val_addr));
+
+        Ok(())
+    }
 }
 
 #[allow(unused)]
@@ -846,11 +916,11 @@ impl Visitor for Compiler {
             Exp::Vararg => todo!(),
             Exp::Name(name) => self.visit_name(ctx, name),
             Exp::Var(exp) => todo!(),
-            Exp::Unop(unop, exp) => todo!(),
+            Exp::Unop(..) => self.visit_unop(ctx, exp),
             Exp::CmpOp { op, lhs, rhs } => self.visit_cmpop(ctx, exp),
             Exp::LogicCmpOp { op, lhs, rhs } => self.visit_logicop(ctx, exp),
             Exp::Access(exp_access) => self.visit_access(ctx, exp_access),
-            Exp::FuncDef(func_def) => todo!(),
+            Exp::FuncDef(func_def) => self.visit_function_def_exp(ctx, func_def),
             Exp::FuncCall(func_call) => self.visit_function_call(ctx, func_call),
             Exp::TableConstructor(exp_table_constructor) => {
                 self.visit_table_constructor(ctx, exp_table_constructor)
@@ -864,7 +934,9 @@ impl Visitor for Compiler {
             Stat::Assign(assign_stat) => self.visit_assign(ctx, assign_stat),
             Stat::Return(return_stat) => self.visit_return(ctx, return_stat),
             Stat::FuncCall(func_call) => self.visit_function_call(ctx, func_call),
-            Stat::FunctionDef(function_def_stat) => self.visit_function_def(ctx, function_def_stat),
+            // Stat::FunctionDef(function_def_stat) => {
+            //     self.visit_function_def_stat(ctx, function_def_stat)
+            // }
             Stat::Do(do_stat) => todo!(),
             Stat::While(while_stat) => todo!(),
             Stat::Repeat(repea_stat) => todo!(),

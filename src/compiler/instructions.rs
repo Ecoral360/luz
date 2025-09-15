@@ -2,7 +2,13 @@ use std::fmt::Display;
 
 use derive_new::new;
 
-use crate::{ast::Binop, compiler::opcode::LuaOpCode};
+use crate::{
+    ast::{Binop, Unop},
+    compiler::{
+        ctx::{Scope, ScopeRef},
+        opcode::LuaOpCode,
+    },
+};
 
 #[allow(non_camel_case_types)]
 #[allow(unused)]
@@ -32,6 +38,18 @@ pub const MAX_HALF_sBx: u32 = 131072;
 
 #[allow(non_upper_case_globals)]
 pub const MAX_HALF_sJ: u32 = 16777216;
+
+impl Instruction {
+    pub fn debug(&self, scope: &Scope) -> String {
+        match self {
+            Instruction::iABC(i_abc) => i_abc.debug(scope),
+            Instruction::iABx(i_abx) => i_abx.debug(scope),
+            Instruction::iAsBx(i_asbx) => i_asbx.debug(scope),
+            Instruction::isJ(i_sj) => i_sj.debug(scope),
+            _ => String::from("NOP"),
+        }
+    }
+}
 
 impl Display for Instruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -143,6 +161,17 @@ impl Instruction {
             }
         };
         opcode.to_iabc(dest_reg, is_lhs_const, lhs, rhs).into()
+    }
+
+    pub fn op_unop(unop: Unop, dest: u8, val_addr: u8) -> Instruction {
+        let op = match unop {
+            Unop::Neg => LuaOpCode::OP_UNM,
+            Unop::Inv => LuaOpCode::OP_BNOT,
+            Unop::Len => LuaOpCode::OP_LEN,
+            Unop::Not => LuaOpCode::OP_NOT,
+        };
+
+        op.to_iabc(dest, false, val_addr, 0).into()
     }
 
     pub fn op_jmp(jmp_dist: u32) -> Instruction {
@@ -375,8 +404,41 @@ impl From<u32> for iABC {
     }
 }
 
+impl iABC {
+    pub fn debug(&self, scope: &Scope) -> String {
+        let s = match self.op {
+            LuaOpCode::OP_GETTABUP => {
+                let upval = scope.get_upvalue(self.b);
+                let local = scope.get_const(self.c);
+                format!("{} ; {} {}", self, upval.name, local.repr())
+            }
+            LuaOpCode::OP_SETTABUP => {
+                let upval = scope.get_upvalue(self.a);
+                let local = scope.get_const(self.b);
+                format!("{} ; {} {}", self, upval.name, local.repr())
+            }
+            LuaOpCode::OP_GETFIELD => {
+                let local = scope.get_const(self.c);
+                format!("{} ; {}", self, local.repr())
+            }
+            LuaOpCode::OP_SETFIELD => {
+                let local = scope.get_const(self.b);
+                format!("{} ; {}", self, local.repr())
+            }
+            LuaOpCode::OP_RETURN => {
+                format!("{} ; {} out", self, self.b - 1)
+            }
+            _ => self.to_string(),
+        };
+
+        s
+    }
+}
+
 impl Display for iABC {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let showk = matches!(self.op, LuaOpCode::OP_SETFIELD);
+
         let b = match self.op {
             LuaOpCode::OP_ADD if self.k => -(self.b as i32 + 1),
             LuaOpCode::OP_GTI
@@ -391,16 +453,15 @@ impl Display for iABC {
             LuaOpCode::OP_ADDI | LuaOpCode::OP_GETI => self.c as i32 - 128,
             _ => self.c as i32,
         };
-        match self.op {
+        let s = match self.op {
             LuaOpCode::OP_LOADFALSE | LuaOpCode::OP_LOADTRUE | LuaOpCode::OP_LFALSESKIP => {
-                write!(f, "{:?} {}", self.op, self.a)
+                format!("{:?} {}", self.op, self.a)
             }
             LuaOpCode::OP_TEST => {
-                write!(f, "{:?} {} {}", self.op, self.a, self.k as u8)
+                format!("{:?} {} {}", self.op, self.a, self.k as u8)
             }
             LuaOpCode::OP_MMBINI => {
-                write!(
-                    f,
+                format!(
                     "{:?} {} {} {} {}",
                     self.op,
                     self.a,
@@ -409,8 +470,10 @@ impl Display for iABC {
                     self.k as u8
                 )
             }
-            _ => write!(f, "{:?} {} {} {}", self.op, self.a, b, c),
-        }
+            _ => format!("{:?} {} {} {}", self.op, self.a, b, c),
+        };
+
+        write!(f, "{}{}", s, if showk && self.k { "k" } else { "" })
     }
 }
 
@@ -444,6 +507,16 @@ impl From<u32> for iABx {
             a: a as u8,
             op: (op as u8).try_into().unwrap(),
         }
+    }
+}
+
+impl iABx {
+    pub fn debug(&self, scope: &Scope) -> String {
+        let s = match self.op {
+            _ => self.to_string(),
+        };
+
+        s
     }
 }
 
@@ -490,6 +563,16 @@ impl From<u32> for iAsBx {
     }
 }
 
+impl iAsBx {
+    pub fn debug(&self, scope: &Scope) -> String {
+        let s = match self.op {
+            _ => self.to_string(),
+        };
+
+        s
+    }
+}
+
 impl Display for iAsBx {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?} {} {}", self.op, self.a, self.b - MAX_HALF_sBx)
@@ -526,6 +609,16 @@ impl From<u32> for isJ {
             a: a as u8,
             op: (op as u8).try_into().unwrap(),
         }
+    }
+}
+
+impl isJ {
+    pub fn debug(&self, scope: &Scope) -> String {
+        let s = match self.op {
+            _ => self.to_string(),
+        };
+
+        s
     }
 }
 

@@ -6,8 +6,7 @@ use pest::{iterators::Pairs, pratt_parser::PrattParser};
 
 use crate::ast::{
     AssignStat, Attrib, Exp, ExpTableConstructor, ExpTableConstructorField, ForInStat,
-    ForRangeStat, FuncCall, FuncDef, FunctionDefStat, IfStat, RepeaStat, ReturnStat, Stat,
-    WhileStat,
+    ForRangeStat, FuncCall, FuncDef, IfStat, RepeaStat, ReturnStat, Stat, WhileStat,
 };
 use crate::luz::err::LuzError;
 use crate::luz::obj::{FuncParamsBuilder, LuzObj, Numeral};
@@ -164,31 +163,35 @@ fn parse_top_expr(pair: Pair<Rule>) -> Result<Exp, LuzError> {
                 let mut arr_fields = vec![];
                 let mut obj_fields = vec![];
                 let mut fields_inner = fields.into_inner();
-                let last_field = fields_inner
-                    .next_back()
-                    .map(|f| f.into_inner().next())
-                    .flatten();
+                let last_field = fields_inner.next_back();
 
                 for field in fields_inner {
                     parse_table_field(&mut arr_fields, &mut obj_fields, field)?;
                 }
 
                 match last_field {
-                    Some(last_field_val)
-                        if matches!(last_field_val.as_node_tag(), Some("value_field")) =>
-                    {
-                        let exp = parse_top_expr(last_field_val)?;
-                        let last_exp = if exp.is_multire() {
-                            Some(Box::new(exp))
+                    Some(last_field_val) => {
+                        let inner_field = last_field_val.clone().into_inner().next().unwrap();
+
+                        if matches!(inner_field.as_node_tag(), Some("value_field")) {
+                            let exp = parse_top_expr(inner_field)?;
+                            let last_exp = if exp.is_multire() {
+                                Some(Box::new(exp))
+                            } else {
+                                arr_fields.push(exp);
+                                None
+                            };
+                            Exp::TableConstructor(ExpTableConstructor::new(
+                                arr_fields, obj_fields, last_exp,
+                            ))
                         } else {
-                            arr_fields.push(exp);
-                            None
-                        };
-                        Exp::TableConstructor(ExpTableConstructor::new(
-                            arr_fields, obj_fields, last_exp,
-                        ))
+                            parse_table_field(&mut arr_fields, &mut obj_fields, last_field_val)?;
+                            Exp::TableConstructor(ExpTableConstructor::new(
+                                arr_fields, obj_fields, None,
+                            ))
+                        }
                     }
-                    _ => Exp::TableConstructor(ExpTableConstructor::new(
+                    None => Exp::TableConstructor(ExpTableConstructor::new(
                         arr_fields, obj_fields, None,
                     )),
                 }
@@ -212,12 +215,14 @@ fn parse_top_expr(pair: Pair<Rule>) -> Result<Exp, LuzError> {
                     .next()
                     .unwrap()
                     .into_inner();
-                let last = parlist.next_back().unwrap();
+                let last = parlist.next_back();
                 let mut fixed = parse_namelist(parlist);
-                if last.as_rule() == Rule::Ellipse {
-                    params.is_vararg(true);
-                } else {
-                    fixed.push(last.as_str().to_string());
+                if let Some(last_param) = last {
+                    if last_param.as_rule() == Rule::Ellipse {
+                        params.is_vararg(true);
+                    } else {
+                        fixed.push(last_param.as_str().to_string());
+                    }
                 }
                 params.fixed(fixed);
             }
@@ -455,23 +460,33 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
                     .next()
                     .unwrap()
                     .into_inner();
-                let last = parlist.next_back().unwrap();
+                let last = parlist.next_back();
                 let mut fixed = if parlist.len() == 0 {
                     vec![]
                 } else {
                     parse_namelist(parlist)
                 };
-                if last.as_rule() == Rule::Ellipse {
-                    params.is_vararg(true);
-                } else {
-                    fixed.push(last.as_str().to_string());
+                if let Some(last_param) = last {
+                    if last_param.as_rule() == Rule::Ellipse {
+                        params.is_vararg(true);
+                    } else {
+                        fixed.push(last_param.as_str().to_string());
+                    }
                 }
                 params.fixed(fixed);
             }
 
             let body = parse_script(&mut signature.next().expect("Function body").into_inner())?;
 
-            vec![FunctionDefStat::new_local(name, params.build().unwrap(), body).into()]
+            vec![Stat::Assign(AssignStat::new_local(
+                vec![(name, None)],
+                vec![Exp::FuncDef(FuncDef {
+                    params: params.build().unwrap(),
+                    body: body,
+                })],
+            ))]
+
+            // vec![FunctionDefStat::new_local(name, params.build().unwrap(), body).into()]
         }
         Rule::FunctionDefStat => {
             let mut inner = pair.into_inner();
@@ -482,13 +497,16 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
             let mut method = None;
             if matches!(last_name.as_node_tag(), Some("method")) {
                 method = Some(last_name.as_str().to_string());
-            } else {
-                namelist.push(last_name.as_str().to_string());
             }
+            namelist.push(last_name.as_str().to_string());
 
             let mut signature = inner.next().expect("Function param & body").into_inner();
             let next = signature.peek().expect("Function body has something");
             let mut params = FuncParamsBuilder::default();
+            let mut fixed = method
+                .as_ref()
+                .map(|_| vec![String::from("self")])
+                .unwrap_or(vec![]);
 
             if let Rule::parlist = next.as_rule() {
                 let mut parlist = signature
@@ -499,20 +517,44 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
                     .unwrap()
                     .into_inner();
                 let last = parlist.next_back().unwrap();
-                let mut fixed = parse_namelist(parlist);
+                fixed.append(&mut parse_namelist(parlist));
                 if last.as_rule() == Rule::Ellipse {
                     params.is_vararg(true);
                 } else {
                     fixed.push(last.as_str().to_string());
                 }
-                params.fixed(fixed);
             }
+
+            params.fixed(fixed);
 
             let body = parse_script(&mut signature.next().expect("Function body").into_inner())?;
 
-            vec![
-                FunctionDefStat::new_normal(namelist, method, params.build().unwrap(), body).into(),
-            ]
+            let access = if namelist.len() > 1 {
+                namelist[1..]
+                    .iter()
+                    .fold(Exp::Name(namelist[0].clone()), |acc, val| {
+                        Exp::Access(ExpAccess {
+                            exp: Box::new(acc),
+                            value: Box::new(Exp::Name(val.clone())),
+                        })
+                    })
+            } else {
+                Exp::Name(namelist[0].clone())
+            };
+
+            vec![Stat::Assign(AssignStat::new_normal(
+                vec![access],
+                vec![Exp::FuncDef(FuncDef {
+                    params: params.build().unwrap(),
+                    body: body,
+                })],
+            ))]
+            // } else {
+            //     vec![
+            //         FunctionDefStat::new_normal(namelist, method, params.build().unwrap(), body)
+            //             .into(),
+            //     ]
+            // }
         }
         Rule::ForRangeStat => {
             let mut inner = pair.into_inner();

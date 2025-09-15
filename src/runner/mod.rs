@@ -15,6 +15,7 @@ use crate::{
         err::LuzError,
         obj::{LuzFunction, LuzObj, LuzType, Numeral, Table},
     },
+    runner::err::LuzRuntimeError,
 };
 
 pub mod err;
@@ -53,7 +54,7 @@ impl Runner {
                 return None;
             };
             let p = Rc::clone(p);
-            if p.borrow().name() == "GLOBAL" {
+            if p.borrow().is_global() {
                 return Some(p);
             } else {
                 scope = p;
@@ -218,6 +219,28 @@ impl Runner {
                 LuaOpCode::OP_LFALSESKIP => {
                     self.scope_mut().set_reg_val(*a, LuzObj::Boolean(false));
                     return Ok(InstructionResult::Skip(1));
+                }
+                LuaOpCode::OP_NOT => {
+                    let val = self.get_reg_val(*b)?;
+                    self.scope_mut().set_reg_val(*a, val.not());
+                }
+                LuaOpCode::OP_LEN => {
+                    let val = self.get_reg_val(*b)?;
+                    self.scope_mut().set_reg_val(*a, val.len());
+                }
+                LuaOpCode::OP_BNOT => {
+                    let val = self.get_reg_val(*b)?;
+                    self.scope_mut().set_reg_val(*a, val.bnot());
+                }
+                LuaOpCode::OP_UNM => {
+                    let val = self.get_reg_val(*b)?;
+                    let LuzObj::Numeral(num) = val else {
+                        return Err(LuzError::LuzRuntimeError(LuzRuntimeError::message(
+                            "Arithmetic operation not supported for the value",
+                        )));
+                    };
+                    self.scope_mut()
+                        .set_reg_val(*a, LuzObj::Numeral(num * Numeral::Int(-1)));
                 }
                 LuaOpCode::OP_ADD
                 | LuaOpCode::OP_ADDK

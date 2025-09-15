@@ -37,42 +37,21 @@ impl Table {
     pub fn get(&self, key: &LuzObj) -> &LuzObj {
         match key.get_type() {
             LuzType::Nil => &LuzObj::Nil,
-            LuzType::Integer => {
-                let LuzObj::Numeral(Numeral::Int(i)) = key else {
-                    unreachable!()
-                };
-                if (0..self.arr.len()).contains(&(*i as usize)) {
-                    self.arr.get(*i as usize).unwrap_or(&LuzObj::Nil)
-                } else {
-                    self.table.get(key).unwrap_or(&LuzObj::Nil)
-                }
-            }
-            LuzType::Float => {
-                let LuzObj::Numeral(Numeral::Float(f)) = key else {
-                    unreachable!()
-                };
-
-                if f.floor() == *f {
-                    self.arr.get(*f as usize).unwrap_or(&LuzObj::Nil)
-                } else {
-                    self.table.get(key).unwrap_or(&LuzObj::Nil)
-                }
-            }
             LuzType::Number => {
                 let LuzObj::Numeral(num) = key else {
                     unreachable!()
                 };
                 match num {
                     Numeral::Int(i) => {
-                        if (0..self.arr.len()).contains(&(*i as usize)) {
-                            self.arr.get(*i as usize).unwrap_or(&LuzObj::Nil)
+                        if (1..=self.arr.len()).contains(&(*i as usize)) {
+                            self.arr.get(*i as usize - 1).unwrap_or(&LuzObj::Nil)
                         } else {
                             self.table.get(key).unwrap_or(&LuzObj::Nil)
                         }
                     }
                     Numeral::Float(f) => {
-                        if f.floor() == *f {
-                            self.arr.get(*f as usize).unwrap_or(&LuzObj::Nil)
+                        if f.floor() == *f && (1..=self.arr.len()).contains(&(*f as usize)) {
+                            self.arr.get(*f as usize - 1).unwrap_or(&LuzObj::Nil)
                         } else {
                             self.table.get(key).unwrap_or(&LuzObj::Nil)
                         }
@@ -86,6 +65,8 @@ impl Table {
             | LuzType::Thread => self.table.get(key).unwrap_or(&LuzObj::Nil),
 
             LuzType::Table => todo!(),
+
+            _ => unreachable!(),
         }
     }
 

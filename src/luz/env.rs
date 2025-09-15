@@ -157,7 +157,7 @@ fn make_env_table() -> LuzObj {
 }
 
 pub fn get_builtin_scope() -> Rc<RefCell<Scope>> {
-    let mut env = Scope::new(String::from("GLOBAL"), None);
+    let mut env = Scope::new_global();
     // env.get_or_add_const(obj)
 
     env.push_reg(
