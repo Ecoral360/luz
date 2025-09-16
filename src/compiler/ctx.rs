@@ -28,7 +28,7 @@ impl CompilerCtx {
             .push(Upvalue::new("_ENV".to_owned(), 0, 0, true));
         Self {
             scope: Rc::new(RefCell::new(scope)),
-            nb_expected: 1,
+            nb_expected: 2,
         }
     }
     pub fn new_chunk(name: String, parent_scope: Option<ScopeRef>, upvalues: Vec<Upvalue>) -> Self {
@@ -41,7 +41,7 @@ impl CompilerCtx {
 
         Self {
             scope: Rc::new(RefCell::new(scope)),
-            nb_expected: 1,
+            nb_expected: 2,
         }
     }
 
@@ -154,12 +154,17 @@ impl CompilerCtx {
         )));
 
         let reg = Register::new(register_name, addr, range);
+
+        if let Some(ref name) = reg.name {
+            self.scope_mut().locals.push(reg.clone());
+        }
+
         self.scope_mut().regs.push(reg);
         addr
     }
 
-    pub(crate) fn set_end_of_register(&mut self, register_name: &str) {
-        self.scope_mut().set_end_of_register(register_name);
+    pub(crate) fn set_end_of_register(&mut self, reg: u8) {
+        self.scope_mut().set_end_of_register(reg);
     }
 
     pub(crate) fn push_claimed_register(&mut self, register_name: Option<String>) -> u8 {
@@ -278,6 +283,9 @@ pub struct Scope {
 
     #[new(default)]
     vararg: Vec<LuzObj>,
+
+    #[new(default)]
+    locals: Vec<Register>,
 }
 
 pub type ScopeRef = Rc<RefCell<Scope>>;
@@ -330,6 +338,10 @@ impl Scope {
 
         self.constants.push(obj);
         (self.constants.len() - 1) as u32
+    }
+
+    pub fn named_regs(&self) -> Vec<&Register> {
+        self.regs.iter().filter(|reg| reg.name.is_some()).collect()
     }
 
     pub fn regs(&self) -> &Vec<Register> {
@@ -437,16 +449,23 @@ impl Scope {
             .map(|reg| reg.addr)
     }
 
-    pub fn set_end_of_register(&mut self, register_name: &str) {
+    pub fn set_end_of_register(&mut self, reg: u8) {
         let end = self.next_reg_start();
 
-        let reg = self
-            .find_reg(register_name)
-            .map(|addr| &mut self.regs[addr as usize]);
+        let reg = &mut self.regs[reg as usize];
 
-        if let Some(reg) = reg {
-            reg.range.as_mut().map(|range| range.end = Some(end));
+        let local_r = self.locals.iter_mut().rfind(|local| {
+            reg.name
+                .as_ref()
+                .is_some_and(|name| name == local.name.as_ref().unwrap())
+        });
+
+        if let Some(Some(range)) = local_r.map(|local| &mut local.range) {
+            range.end = Some(end);
         }
+
+        reg.free = true;
+        reg.name = None;
     }
 
     pub fn rename_register(&mut self, reg: u8, name: String) {

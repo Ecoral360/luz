@@ -107,9 +107,20 @@ impl Runner {
             .ok_or(LuzError::RuntimeError(format!("Register not found {reg}")))?
             .val
             .as_ref()
-            .expect("A value")
+            .expect(&format!("Value not found for {reg}"))
             .clone();
         Ok(val)
+    }
+
+    fn get_reg_val_or_nil(&self, reg: u8) -> LuzObj {
+        let val = self
+            .scope
+            .borrow_mut()
+            .regs()
+            .get(reg as usize)
+            .map(|reg| reg.val.clone().unwrap_or(LuzObj::Nil))
+            .unwrap_or(LuzObj::Nil);
+        val
     }
 
     fn take_reg_val(&mut self, reg: u8) -> Result<Option<LuzObj>, LuzError> {
@@ -208,6 +219,12 @@ impl Runner {
                         return Ok(InstructionResult::Skip(1));
                     } else {
                         self.scope_mut().set_reg_val(*a, val);
+                    }
+                }
+                LuaOpCode::OP_CLOSE => {
+                    let reg_len = self.scope().regs().len();
+                    for addr in *a..reg_len as u8 {
+                        self.scope_mut().set_reg_val(addr, LuzObj::Nil);
                     }
                 }
                 LuaOpCode::OP_LOADTRUE => {
@@ -563,7 +580,7 @@ impl Runner {
                     };
 
                     for i in 1..=*b {
-                        let val = self.get_reg_val(*a + i)?;
+                        let val = self.get_reg_val_or_nil(*a + i);
                         table
                             .borrow_mut()
                             .insert(LuzObj::Numeral(Numeral::Int((*c + i) as i64)), val);
@@ -664,7 +681,9 @@ impl Runner {
         let lhs = if k {
             self.scope.borrow_mut().constants()[b as usize].clone()
         } else {
-            self.scope.borrow_mut().regs()[b as usize]
+            self.scope
+                .borrow_mut()
+                .get_reg(b)
                 .val
                 .as_ref()
                 .expect("A value")

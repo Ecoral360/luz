@@ -67,10 +67,10 @@ pub struct DoStat {
 
 #[derive(Debug, Clone, new)]
 pub struct IfStat {
-    cond: Box<Exp>,
-    then_br: Vec<Stat>,
-    elseif_brs: Vec<(Exp, Vec<Stat>)>,
-    else_br: Option<Vec<Stat>>,
+    pub cond: Box<Exp>,
+    pub then_br: Vec<Stat>,
+    pub elseif_brs: Vec<(Exp, Vec<Stat>)>,
+    pub else_br: Option<Vec<Stat>>,
 }
 
 #[derive(Debug, Clone, new)]

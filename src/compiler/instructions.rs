@@ -20,13 +20,30 @@ pub enum Instruction {
 }
 
 impl Instruction {
+    pub fn find_inst(op: LuaOpCode, insts: &[Instruction]) -> Option<usize> {
+        insts
+            .iter()
+            .enumerate()
+            .find_map(|(i, inst)| if inst.op() == op { Some(i) } else { None })
+    }
+
+    pub fn rfind_inst(op: LuaOpCode, insts: &[Instruction]) -> Option<usize> {
+        insts
+            .iter()
+            .enumerate()
+            .rfind(|(_, inst)| inst.op() == op)
+            .map(|(i, _)| i)
+    }
+}
+
+impl Instruction {
     pub fn op(&self) -> LuaOpCode {
         match self {
             Instruction::iABC(i_abc) => i_abc.op,
             Instruction::iABx(i_abx) => i_abx.op,
             Instruction::iAsBx(i_as_bx) => i_as_bx.op,
             Instruction::isJ(is_j) => is_j.op,
-            _ => unimplemented!(),
+            _ => LuaOpCode::OP_debug,
         }
     }
 }
@@ -68,6 +85,10 @@ impl Instruction {
         Instruction::LOG(s.to_string())
     }
 
+    pub fn op_close(start: u8) -> Instruction {
+        LuaOpCode::OP_CLOSE.to_iabc(start, false, 0, 0).into()
+    }
+
     pub fn op_addi(a: u8, b: u8, is_b_const: bool, c: u8) -> Instruction {
         iABC::new(c, b, is_b_const, a, LuaOpCode::OP_ADDI).into()
     }
@@ -87,8 +108,8 @@ impl Instruction {
             .into()
     }
 
-    pub fn op_loadnil(a: u8, b: u32) -> Instruction {
-        iABx::new(b, a, LuaOpCode::OP_LOADNIL).into()
+    pub fn op_loadnil(start_addr: u8, nb: u32) -> Instruction {
+        iABx::new(nb, start_addr, LuaOpCode::OP_LOADNIL).into()
     }
 
     pub fn op_add(a: u8, b: u8, is_b_const: bool, c: u8, is_c_const: bool) -> Instruction {
@@ -423,6 +444,10 @@ impl From<u32> for iABC {
 impl iABC {
     pub fn debug(&self, scope: &Scope) -> String {
         let s = match self.op {
+            LuaOpCode::OP_EQK => {
+                let local = scope.get_const(self.b);
+                format!("{} ; {}", self, local.repr())
+            }
             LuaOpCode::OP_GETTABUP => {
                 let upval = scope.get_upvalue(self.b);
                 let local = scope.get_const(self.c);
@@ -506,6 +531,7 @@ impl Display for iABC {
         };
         let c = match self.op {
             LuaOpCode::OP_ADDI | LuaOpCode::OP_GETI => self.c as i32 - 128,
+            LuaOpCode::OP_EQK | LuaOpCode::OP_EQI => self.k as i32,
             _ => self.c as i32,
         };
         let s = match self.op {
@@ -568,6 +594,10 @@ impl From<u32> for iABx {
 impl iABx {
     pub fn debug(&self, scope: &Scope) -> String {
         let s = match self.op {
+            LuaOpCode::OP_LOADK => {
+                let local = scope.get_const(self.b as u8);
+                format!("{} ; {}", self, local.repr())
+            }
             _ => self.to_string(),
         };
 

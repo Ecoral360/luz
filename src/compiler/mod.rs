@@ -1,11 +1,11 @@
 use crate::{
     ast::{
         AssignStat, Binop, CmpOp, DoStat, Exp, ExpAccess, ExpTableConstructor,
-        ExpTableConstructorField, FuncCall, FuncDef, ReturnStat, Stat,
+        ExpTableConstructorField, FuncCall, FuncDef, IfStat, ReturnStat, Stat,
     },
     compiler::{
-        ctx::{CompilerCtx, CompilerCtxBuilder, RegOrUpvalue, Upvalue},
-        instructions::{iABC, Instruction, MAX_HALF_sBx},
+        ctx::{CompilerCtx, CompilerCtxBuilder, CompilerCtxBuilderError, RegOrUpvalue, Upvalue},
+        instructions::{iABC, isJ, Instruction, MAX_HALF_sBx, MAX_HALF_sJ},
         opcode::LuaOpCode,
         visitor::Visitor,
     },
@@ -25,6 +25,85 @@ pub struct Compiler {}
 
 #[allow(unused)]
 impl Compiler {
+    fn collect_insts_and_rollback_stat(
+        &mut self,
+        ctx: &mut CompilerCtx,
+        stats: &Vec<Stat>,
+    ) -> Result<Vec<Instruction>, LuzError> {
+        let nb_inst_before = ctx.scope().instructions().len();
+        let to_be_closed = ctx.get_or_push_free_register();
+
+        for stmt in stats {
+            self.visit_stat(stmt, ctx);
+        }
+
+        let mut scope = ctx.scope_mut();
+        let regs = scope.regs()[to_be_closed as usize..]
+            .iter()
+            .map(|reg| reg.addr)
+            .collect::<Vec<u8>>();
+
+        for reg in regs {
+            scope.set_end_of_register(reg);
+        }
+
+        Ok(scope
+            .instructions_mut()
+            .drain(nb_inst_before..)
+            .collect::<Vec<_>>())
+    }
+
+    fn collect_insts_and_rollback_cond(
+        &mut self,
+        ctx: &mut CompilerCtx,
+        exp: &Exp,
+    ) -> Result<Vec<Instruction>, LuzError> {
+        let nb_inst_before = ctx.scope().instructions().len();
+        let to_be_closed = ctx.get_or_push_free_register();
+
+        self.visit_exp(exp, ctx);
+
+        let mut insts = ctx
+            .scope_mut()
+            .instructions_mut()
+            .drain(nb_inst_before..)
+            .collect::<Vec<_>>();
+
+        match exp {
+            Exp::CmpOp { .. } | Exp::LogicCmpOp { .. } => {
+                if insts
+                    .last()
+                    .is_some_and(|inst| inst.op() == LuaOpCode::OP_LOADTRUE)
+                {
+                    insts.pop();
+                    insts.pop();
+                    insts.pop();
+                    let Instruction::iABC(iABC { k, .. }) = insts.last_mut().unwrap() else {
+                        unreachable!()
+                    };
+
+                    *k = !*k;
+                }
+            }
+            _ => {
+                let reg = ctx.get_or_push_free_register();
+                ctx.push_inst(Instruction::op_test(reg, false));
+            }
+        }
+
+        let mut scope = ctx.scope_mut();
+        let regs = scope.regs()[to_be_closed as usize..]
+            .iter()
+            .map(|reg| reg.addr)
+            .collect::<Vec<u8>>();
+
+        for reg in regs {
+            scope.set_end_of_register(reg);
+        }
+
+        Ok(insts)
+    }
+
     fn handle_immidiate(
         &mut self,
         ctx: &mut CompilerCtx,
@@ -59,8 +138,9 @@ impl Compiler {
             }
             ExpEval::InConstant(_) => {}
             ExpEval::InUpvalue { in_table, upvalue } => {
+                let Exp::Name(name) = exp else { unreachable!() };
                 if in_table {
-                    let name_k = ctx.get_or_add_const(LuzObj::String(upvalue.name.to_owned()));
+                    let name_k = ctx.get_or_add_const(LuzObj::String(name.to_owned()));
                     ctx.push_inst(Instruction::op_gettabup(reg, upvalue.addr, name_k as u8));
                 } else {
                     ctx.push_inst(Instruction::op_getupval(reg, upvalue.addr));
@@ -92,15 +172,29 @@ impl Compiler {
                     ctx.push_inst(Instruction::op_loadi(reg, *i as u32));
                     Ok(ExpEval::InRegister(reg))
                 }
-                LuzObj::String(name) => {
-                    let (in_table, src) = ctx.scope_mut().get_reg_or_upvalue(name)?;
-                    match src {
-                        RegOrUpvalue::Register(register) => Ok(ExpEval::InRegister(register.addr)),
-                        RegOrUpvalue::Upvalue(upvalue) => {
-                            Ok(ExpEval::InUpvalue { in_table, upvalue })
-                        }
-                    }
+                LuzObj::Nil => {
+                    let reg = ctx.get_or_push_free_register();
+                    ctx.push_inst(Instruction::op_loadnil(reg, 0));
+                    Ok(ExpEval::InRegister(reg))
                 }
+                LuzObj::Boolean(b) => {
+                    let reg = ctx.get_or_push_free_register();
+                    if *b {
+                        ctx.push_inst(Instruction::op_loadtrue(reg));
+                    } else {
+                        ctx.push_inst(Instruction::op_loadfalse(reg));
+                    }
+                    Ok(ExpEval::InRegister(reg))
+                }
+                // LuzObj::String(name) => {
+                //     let (in_table, src) = ctx.scope_mut().get_reg_or_upvalue(name)?;
+                //     match src {
+                //         RegOrUpvalue::Register(register) => Ok(ExpEval::InRegister(register.addr)),
+                //         RegOrUpvalue::Upvalue(upvalue) => {
+                //             Ok(ExpEval::InUpvalue { in_table, upvalue })
+                //         }
+                //     }
+                // }
                 _ => {
                     if supports_constants {
                         Ok(ExpEval::InConstant(ctx.get_or_add_const(lit.clone()) as u8))
@@ -120,8 +214,8 @@ impl Compiler {
                 }
             }
             _ => {
-                let reg = ctx.get_or_push_free_register();
                 self.visit_exp(exp, ctx)?;
+                let reg = ctx.get_or_push_free_register();
                 Ok(ExpEval::InRegister(reg))
             }
         }
@@ -136,8 +230,7 @@ impl Compiler {
                     RegOrUpvalue::Upvalue(upvalue) => {
                         let reg = ctx.get_or_push_free_register();
                         if in_table {
-                            let name_k =
-                                ctx.get_or_add_const(LuzObj::String(name.to_owned()));
+                            let name_k = ctx.get_or_add_const(LuzObj::String(name.to_owned()));
                             ctx.push_inst(Instruction::op_gettabup(
                                 reg,
                                 upvalue.addr,
@@ -202,6 +295,42 @@ impl Compiler {
         ctx.unclaim_registers(&[tabaddr]);
         Ok(())
     }
+
+    fn concat_branches(
+        &self,
+        has_cmp: bool,
+        mut left: (Vec<Instruction>, bool),
+        right: Vec<Instruction>,
+    ) -> Vec<Instruction> {
+        let last_jmp = Instruction::rfind_inst(LuaOpCode::OP_JMP, &left.0);
+        match last_jmp {
+            Some(jmp_idx) => {
+                let offset = if has_cmp {
+                    if left.1 {
+                        0
+                    } else {
+                        2
+                    }
+                } else {
+                    0
+                };
+                left.0[jmp_idx] = Instruction::op_jmp((right.len() as isize + offset) as u32)
+            }
+            None => {} // None => {
+                       //     left.push(Instruction::op_test(left_test_reg, false));
+                       //     left.push(Instruction::op_jmp(right.len() as u32));
+                       // }
+        }
+        let mut final_insts = vec![];
+        for inst in left.0 {
+            final_insts.push(inst);
+        }
+        for inst in right {
+            final_insts.push(inst);
+        }
+
+        final_insts
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -216,19 +345,87 @@ enum ExpEval {
 impl Compiler {
     fn visit_do_stat(&mut self, ctx: &mut CompilerCtx, do_stat: &DoStat) -> Result<(), LuzError> {
         let DoStat { block } = do_stat;
-        let vars_before = ctx.scope().regs().len();
+        let to_be_closed = ctx.get_or_push_free_register();
         for stmt in block {
             self.visit_stat(stmt, ctx);
         }
 
+        ctx.push_inst(Instruction::op_close(to_be_closed));
+
         let mut scope = ctx.scope_mut();
-        let regs = scope.regs()[vars_before..]
+        let regs = scope.regs()[to_be_closed as usize..]
             .iter()
-            .filter_map(|reg| reg.name.clone())
-            .collect::<Vec<_>>();
+            .map(|reg| reg.addr)
+            .collect::<Vec<u8>>();
 
         for reg in regs {
-            scope.set_end_of_register(&reg);
+            scope.set_end_of_register(reg);
+        }
+
+        Ok(())
+    }
+
+    fn visit_if(&mut self, ctx: &mut CompilerCtx, if_stat: &IfStat) -> Result<(), LuzError> {
+        let IfStat {
+            cond,
+            then_br,
+            elseif_brs,
+            else_br,
+        } = if_stat;
+
+        // self.visit_exp(cond, ctx);
+
+        // let rhs_len = rhs_instructions.len();
+        let mut branches = vec![];
+
+        let cond = self.collect_insts_and_rollback_cond(ctx, cond)?;
+
+        let then_instrs = self.collect_insts_and_rollback_stat(ctx, then_br)?;
+        branches.push((cond, then_instrs));
+
+        for (cond, elseif_br) in elseif_brs {
+            let cond_br = self.collect_insts_and_rollback_cond(ctx, cond)?;
+            let br = self.collect_insts_and_rollback_stat(ctx, elseif_br)?;
+            branches.push((cond_br, br));
+        }
+
+        let else_instrs = if let Some(else_br) = else_br {
+            let else_instrs = self.collect_insts_and_rollback_stat(ctx, else_br)?;
+            else_instrs
+        } else {
+            vec![]
+        };
+
+        let to_else_jmp = branches
+            .iter()
+            .fold(0, |acc, (cond, br)| acc + cond.len() + br.len() + 1);
+
+        let to_end_jmp = to_else_jmp + else_instrs.len();
+
+        let mut insts = branches
+            .into_iter()
+            .rfold(vec![], |mut insts, (cond, branch)| {
+                for inst in cond {
+                    insts.push(inst);
+                }
+                let offset = insts.len();
+                insts.push(Instruction::op_jmp((to_else_jmp - offset) as u32));
+
+                for inst in branch {
+                    insts.push(inst);
+                }
+                let offset = insts.len();
+                insts.push(Instruction::op_jmp((to_end_jmp - offset) as u32));
+
+                insts
+            });
+
+        for inst in else_instrs {
+            insts.push(inst);
+        }
+
+        for inst in insts {
+            ctx.push_inst(inst);
         }
 
         Ok(())
@@ -249,10 +446,12 @@ impl Compiler {
                             let (is_intable, src) = ctx.scope_mut().get_reg_or_upvalue(name)?;
                             match src {
                                 RegOrUpvalue::Register(src) => {
-                                    self.handle_consecutive_exp(
-                                        ctx,
-                                        explist_iter.next().expect("value"),
-                                    )?;
+                                    self.visit_exp(explist_iter.next().expect("value"), ctx)?;
+                                    let dest = ctx.get_or_push_free_register();
+                                    ctx.claim_register(src.addr);
+                                    if src.addr != dest {
+                                        ctx.push_inst(Instruction::op_move(src.addr, dest));
+                                    }
                                 }
                                 RegOrUpvalue::Upvalue(src) => {
                                     if is_intable {
@@ -298,6 +497,9 @@ impl Compiler {
 
                             let tabaddr = ctx.get_or_push_free_register();
                             let res = self.handle_exp(ctx, &obj, false, true, false)?;
+                            if !matches!(**obj, Exp::Name(..)) {
+                                ctx.claim_register(tabaddr);
+                            }
 
                             let value = self.handle_exp(
                                 ctx,
@@ -357,8 +559,8 @@ impl Compiler {
                                                 ));
                                             }
                                             _ => {
-                                                self.visit_exp(&prop, ctx)?;
-                                                let reg = ctx.get_or_push_free_register();
+                                                // let reg = ctx.get_or_push_free_register();
+                                                let reg = self.load_exp(ctx, &prop)?;
                                                 ctx.push_inst(Instruction::op_settable(
                                                     r,
                                                     reg,
@@ -380,13 +582,14 @@ impl Compiler {
             AssignStat::Local { varlist, explist } => {
                 let mut new_ctx = ctx.new_with(CompilerCtxBuilder::default().nb_expected(2));
 
+                let mut claimed = vec![];
                 let mut var_addrs = vec![];
                 for var in varlist {
                     var_addrs.push(ctx.rename_or_push_free_register(var.0.clone()));
                 }
                 for exp in explist {
                     self.visit_exp(exp, &mut new_ctx)?;
-                    ctx.claim_next_free_register();
+                    claimed.push(ctx.claim_next_free_register());
                 }
                 for (var, addr) in varlist.iter().zip(var_addrs) {
                     ctx.rename_register(addr, var.0.clone());
@@ -542,11 +745,31 @@ impl Compiler {
         let Exp::LogicCmpOp { op, lhs, rhs } = exp else {
             unreachable!()
         };
+        let mut has_cmp = None;
+        let mut branches = self.visit_inner_logicop(ctx, exp, 0, &mut has_cmp)?;
 
-        let post_instructions = self.visit_inner_logicop(ctx, exp, 0, 0)?;
-        for inst in post_instructions {
+        let mut insts = branches.into_iter().rfold(vec![], |insts, branch| {
+            self.concat_branches(has_cmp.is_some(), branch, insts)
+        });
+
+        let len = insts.len() - 2;
+        if let [Instruction::iABC(iABC { k, .. }), Instruction::isJ(isJ { b, .. })] =
+            &mut insts[len..]
+        {
+            if *b == MAX_HALF_sJ {
+                *b += 1;
+                *k = !*k;
+            }
+        }
+
+        for inst in insts {
             ctx.push_inst(inst);
         }
+        if let Some(has_cmp) = has_cmp {
+            ctx.push_inst(Instruction::op_lfalseskip(has_cmp));
+            ctx.push_inst(Instruction::op_loadtrue(has_cmp));
+        }
+
         Ok(())
     }
 
@@ -554,135 +777,269 @@ impl Compiler {
         &mut self,
         ctx: &mut CompilerCtx,
         exp: &Exp,
-        jmp_size: usize,
         depth: usize,
-    ) -> Result<Vec<Instruction>, LuzError> {
+        has_cmp: &mut Option<u8>,
+    ) -> Result<Vec<(Vec<Instruction>, bool)>, LuzError> {
         let Exp::LogicCmpOp { op, lhs, rhs } = exp else {
             unreachable!()
         };
         let nb_inst_before = ctx.scope().instructions().len();
 
-        self.visit_exp(rhs, ctx)?;
-
-        let mut rhs_instructions = {
-            let mut scope = ctx.scope_mut();
-            scope
-                .instructions_mut()
-                .drain(nb_inst_before..)
-                .collect::<Vec<_>>()
-        };
-
-        if depth != 0 && !matches!(**rhs, Exp::CmpOp { .. }) {
-            let rhs_last_inst = {
-                if rhs_instructions
-                    .last()
-                    .expect("There must be an instruction here")
-                    .op()
-                    == LuaOpCode::OP_MOVE
-                {
-                    rhs_instructions.pop()
-                } else {
-                    None
-                }
-            };
-            if let Some(last_move) = rhs_last_inst {
-                let Instruction::iABC(iABC { c, b, k, a, op }) = last_move else {
-                    unreachable!()
-                };
-                let val = b;
-                let dest = a;
-                rhs_instructions.push(Instruction::op_testset(dest, val, true));
-            } else {
-                let reg = ctx.get_or_push_free_register();
-                rhs_instructions.push(Instruction::op_test(reg, true));
-            }
-            rhs_instructions.push(Instruction::op_jmp(jmp_size as u32));
-        }
-
-        let rhs_len = rhs_instructions.len();
-        let mut post_instructions = if matches!(**lhs, Exp::LogicCmpOp { .. }) {
-            self.visit_inner_logicop(ctx, lhs, jmp_size + rhs_len, depth + 1)?
-        } else {
-            self.visit_exp(lhs, ctx)?;
-            vec![]
-        };
+        // let rhs_len = rhs_instructions.len();
+        let mut branches = vec![];
 
         match **lhs {
-            Exp::CmpOp { .. } => {
-                {
-                    let nb_drop = ctx.scope().instructions().len() - 3;
-                    let mut scope = ctx.scope_mut();
-                    scope.instructions_mut().truncate(nb_drop);
-                    let Instruction::iABC(iABC { k, .. }) =
-                        scope.instructions_mut().last_mut().unwrap()
-                    else {
-                        unreachable!();
-                    };
-                    *k = !*k;
-                }
-                if matches!(**rhs, Exp::CmpOp { .. }) {
-                    ctx.push_inst(Instruction::op_jmp((jmp_size + rhs_len - 2) as u32));
-                    if depth != 0 {
-                        rhs_instructions.truncate(rhs_len - 3);
-                    }
-                    for inst in rhs_instructions {
-                        ctx.push_inst(inst);
-                    }
-                    if depth != 0 {
-                        ctx.push_inst(Instruction::op_jmp(jmp_size as u32));
-                    }
-                } else {
-                    ctx.push_inst(Instruction::op_jmp((jmp_size + rhs_len) as u32));
-                    let next_addr = ctx.get_or_push_free_register();
-                    for inst in rhs_instructions {
-                        ctx.push_inst(inst);
-                    }
-                    ctx.push_inst(Instruction::op_jmp(jmp_size as u32));
-
-                    post_instructions.push(Instruction::op_lfalseskip(next_addr));
-                    post_instructions.push(Instruction::op_loadtrue(next_addr));
+            Exp::LogicCmpOp { .. } => {
+                for branch in self.visit_inner_logicop(ctx, lhs, depth + 1, has_cmp)? {
+                    branches.push(branch);
                 }
             }
-            Exp::LogicCmpOp { .. } => {
-                for inst in rhs_instructions {
-                    ctx.push_inst(inst);
+            Exp::Name(ref name) => {
+                let dest = ctx.get_or_push_free_register();
+                let (in_table, src) = ctx.scope_mut().get_reg_or_upvalue(name)?;
+                let val = match src {
+                    RegOrUpvalue::Register(register) => register.addr,
+                    RegOrUpvalue::Upvalue(upvalue) => {
+                        let reg = ctx.get_or_push_free_register();
+                        if in_table {
+                            let name_k = ctx.get_or_add_const(LuzObj::String(name.to_owned()));
+                            ctx.push_inst(Instruction::op_gettabup(
+                                reg,
+                                upvalue.addr,
+                                name_k as u8,
+                            ));
+                        } else {
+                            ctx.push_inst(Instruction::op_getupval(reg, upvalue.addr));
+                        }
+                        reg
+                    }
+                };
+                if dest != val {
+                    ctx.push_inst(Instruction::op_testset(dest, val, true));
                 }
+                ctx.push_inst(Instruction::op_jmp(1));
+                let mut lhs_instructions = {
+                    let mut scope = ctx.scope_mut();
+                    scope
+                        .instructions_mut()
+                        .drain(nb_inst_before..)
+                        .collect::<Vec<_>>()
+                };
+                branches.push((lhs_instructions, false));
+            }
+            Exp::CmpOp { .. } => {
+                self.visit_exp(lhs, ctx)?;
+                let mut lhs_instructions = {
+                    let mut scope = ctx.scope_mut();
+                    scope
+                        .instructions_mut()
+                        .drain(nb_inst_before..)
+                        .collect::<Vec<_>>()
+                };
+                let (load_t, load_f) = (
+                    lhs_instructions.pop().unwrap(),
+                    lhs_instructions.pop().unwrap(),
+                );
+                let Instruction::iABC(iABC { a, .. }) = load_t else {
+                    unreachable!()
+                };
+                has_cmp.replace(a);
+
+                let len = lhs_instructions.len();
+                let Instruction::iABC(iABC { k, .. }) = lhs_instructions.get_mut(len - 2).unwrap()
+                else {
+                    unreachable!();
+                };
+                *k = !*k;
+                branches.push((lhs_instructions, true));
             }
             _ => {
-                let last_inst = {
+                self.visit_exp(lhs, ctx)?;
+                let mut lhs_instructions = {
                     let mut scope = ctx.scope_mut();
-                    if scope
-                        .instructions()
+                    scope
+                        .instructions_mut()
+                        .drain(nb_inst_before..)
+                        .collect::<Vec<_>>()
+                };
+                let lhs_test_addr = ctx.get_or_push_free_register();
+                let last_jmp = Instruction::rfind_inst(LuaOpCode::OP_JMP, &lhs_instructions);
+                if last_jmp.is_none() {
+                    lhs_instructions.push(Instruction::op_test(lhs_test_addr, false));
+                }
+                branches.push((lhs_instructions, false));
+            }
+        }
+
+        match **rhs {
+            Exp::CmpOp { .. } => {
+                self.visit_exp(rhs, ctx)?;
+                let mut rhs_instructions = {
+                    let mut scope = ctx.scope_mut();
+                    scope
+                        .instructions_mut()
+                        .drain(nb_inst_before..)
+                        .collect::<Vec<_>>()
+                };
+
+                let nb_drop = rhs_instructions.len() - 2;
+                rhs_instructions.truncate(nb_drop);
+                let Instruction::iABC(iABC { k, .. }) =
+                    rhs_instructions.get_mut(nb_drop - 2).unwrap()
+                else {
+                    unreachable!();
+                };
+                *k = !*k;
+                branches.push((rhs_instructions, true));
+            }
+            Exp::Name(ref name) => {
+                let dest = ctx.get_or_push_free_register();
+                let (in_table, src) = ctx.scope_mut().get_reg_or_upvalue(name)?;
+                let val = match src {
+                    RegOrUpvalue::Register(register) => register.addr,
+                    RegOrUpvalue::Upvalue(upvalue) => {
+                        let reg = ctx.get_or_push_free_register();
+                        if in_table {
+                            let name_k = ctx.get_or_add_const(LuzObj::String(name.to_owned()));
+                            ctx.push_inst(Instruction::op_gettabup(
+                                reg,
+                                upvalue.addr,
+                                name_k as u8,
+                            ));
+                        } else {
+                            ctx.push_inst(Instruction::op_getupval(reg, upvalue.addr));
+                        }
+                        reg
+                    }
+                };
+                if dest != val {
+                    ctx.push_inst(Instruction::op_testset(dest, val, true));
+                }
+                ctx.push_inst(Instruction::op_jmp(1));
+                let mut rhs_instructions = {
+                    let mut scope = ctx.scope_mut();
+                    scope
+                        .instructions_mut()
+                        .drain(nb_inst_before..)
+                        .collect::<Vec<_>>()
+                };
+                branches.push((rhs_instructions, false));
+            }
+            _ => {
+                self.visit_exp(rhs, ctx)?;
+
+                let mut rhs_instructions = {
+                    let mut scope = ctx.scope_mut();
+                    scope
+                        .instructions_mut()
+                        .drain(nb_inst_before..)
+                        .collect::<Vec<_>>()
+                };
+
+                let rhs_last_inst = {
+                    if rhs_instructions
                         .last()
-                        .expect("There must be an instruction here")
-                        .op()
-                        == LuaOpCode::OP_MOVE
+                        .is_some_and(|inst| inst.op() == LuaOpCode::OP_MOVE)
                     {
-                        scope.instructions_mut().pop()
+                        rhs_instructions.pop()
                     } else {
                         None
                     }
                 };
-                if let Some(last_move) = last_inst {
+                if let Some(last_move) = rhs_last_inst {
                     let Instruction::iABC(iABC { c, b, k, a, op }) = last_move else {
                         unreachable!()
                     };
                     let val = b;
                     let dest = a;
-                    ctx.push_inst(Instruction::op_testset(dest, val, true));
+                    rhs_instructions.push(Instruction::op_testset(dest, val, true));
                 } else {
                     let reg = ctx.get_or_push_free_register();
-                    ctx.push_inst(Instruction::op_test(reg, true));
+                    rhs_instructions.push(Instruction::op_test(reg, true));
                 }
-                ctx.push_inst(Instruction::op_jmp((jmp_size + rhs_len) as u32));
-                // we are at the top level of this "and"
-                for inst in rhs_instructions {
-                    ctx.push_inst(inst);
-                }
+                branches.push((rhs_instructions, false));
             }
         }
 
-        Ok(post_instructions)
+        Ok(branches)
+        //
+        //
+        // match **lhs {
+        //     Exp::CmpOp { .. } => {
+        //         {
+        //             let nb_drop = ctx.scope().instructions().len() - 3;
+        //             let mut scope = ctx.scope_mut();
+        //             scope.instructions_mut().truncate(nb_drop);
+        //             let Instruction::iABC(iABC { k, .. }) =
+        //                 scope.instructions_mut().last_mut().unwrap()
+        //             else {
+        //                 unreachable!();
+        //             };
+        //             *k = !*k;
+        //         }
+        //         if matches!(**rhs, Exp::CmpOp { .. }) {
+        //             ctx.push_inst(Instruction::op_jmp((jmp_size + rhs_len - 2) as u32));
+        //             if depth != 0 {
+        //                 rhs_instructions.truncate(rhs_len - 3);
+        //             }
+        //             for inst in rhs_instructions {
+        //                 ctx.push_inst(inst);
+        //             }
+        //             if depth != 0 {
+        //                 ctx.push_inst(Instruction::op_jmp(jmp_size as u32));
+        //             }
+        //         } else {
+        //             ctx.push_inst(Instruction::op_jmp((jmp_size + rhs_len) as u32));
+        //             let next_addr = ctx.get_or_push_free_register();
+        //             for inst in rhs_instructions {
+        //                 ctx.push_inst(inst);
+        //             }
+        //             ctx.push_inst(Instruction::op_jmp(jmp_size as u32));
+        //
+        //             post_instructions.push(Instruction::op_lfalseskip(next_addr));
+        //             post_instructions.push(Instruction::op_loadtrue(next_addr));
+        //         }
+        //     }
+        //     Exp::LogicCmpOp { .. } => {
+        //         for inst in rhs_instructions {
+        //             ctx.push_inst(inst);
+        //         }
+        //     }
+        //     _ => {
+        //         let last_inst = {
+        //             let mut scope = ctx.scope_mut();
+        //             if scope
+        //                 .instructions()
+        //                 .last()
+        //                 .expect("There must be an instruction here")
+        //                 .op()
+        //                 == LuaOpCode::OP_MOVE
+        //             {
+        //                 scope.instructions_mut().pop()
+        //             } else {
+        //                 None
+        //             }
+        //         };
+        //         if let Some(last_move) = last_inst {
+        //             let Instruction::iABC(iABC { c, b, k, a, op }) = last_move else {
+        //                 unreachable!()
+        //             };
+        //             let val = b;
+        //             let dest = a;
+        //             ctx.push_inst(Instruction::op_testset(dest, val, true));
+        //         } else {
+        //             let reg = ctx.get_or_push_free_register();
+        //             ctx.push_inst(Instruction::op_test(reg, true));
+        //         }
+        //         ctx.push_inst(Instruction::op_jmp((jmp_size + rhs_len) as u32));
+        //         // we are at the top level of this "and"
+        //         for inst in rhs_instructions {
+        //             ctx.push_inst(inst);
+        //         }
+        //     }
+        // }
+
+        // Ok(post_instructions)
     }
 
     fn visit_cmpop(&mut self, ctx: &mut CompilerCtx, exp: &Exp) -> Result<(), LuzError> {
@@ -690,6 +1047,7 @@ impl Compiler {
             unreachable!()
         };
 
+        let lhs_result = ctx.get_or_push_free_register();
         let lhs_addr =
             self.handle_exp(ctx, lhs, true, matches!(op, CmpOp::Eq | CmpOp::Neq), true)?;
 
@@ -697,8 +1055,10 @@ impl Compiler {
         let is_lhs_constant = matches!(lhs_addr, ExpEval::InConstant(_));
 
         let (lhs_dirty, mut lhs_addr) = match lhs_addr {
-            ExpEval::InRegister(r) => (Some(ctx.claim_next_free_register()), r),
-            ExpEval::InImmediate(i) => (Some(ctx.claim_next_free_register()), i),
+            ExpEval::InImmediate(i) | ExpEval::InRegister(i) => {
+                ctx.claim_register(lhs_result);
+                (Some(lhs_result), i)
+            }
             ExpEval::InConstant(c) => (None, c),
             ExpEval::InUpvalue { in_table, upvalue } => {
                 self.visit_exp(lhs, ctx)?;
@@ -712,7 +1072,6 @@ impl Compiler {
                 )))
             }
         };
-        dbg!(lhs_addr);
 
         let rhs_addr =
             self.handle_exp(ctx, rhs, true, matches!(op, CmpOp::Eq | CmpOp::Neq), true)?;
@@ -722,11 +1081,11 @@ impl Compiler {
 
         let (rhs_dirty, mut rhs_addr) = match rhs_addr {
             ExpEval::InRegister(r) => (None, r),
-            ExpEval::InImmediate(i) => (Some(ctx.claim_next_free_register()), i),
+            ExpEval::InImmediate(i) => (None, i),
             ExpEval::InConstant(c) => (None, c),
             ExpEval::InUpvalue { in_table, upvalue } => {
-                self.visit_exp(rhs, ctx)?;
                 let reg = ctx.claim_next_free_register();
+                self.visit_exp(rhs, ctx)?;
                 (Some(reg), reg)
             }
             _ => {
@@ -820,14 +1179,23 @@ impl Compiler {
             variadic,
         } = f_call;
         let mut f_addr = self.load_exp(ctx, func)?;
+        let is_f_addr_next_free = f_addr == ctx.get_or_push_free_register();
+
         ctx.claim_register(f_addr);
-        // let mut f_addr = ctx.claim_next_free_register();
 
         let mut claimed = vec![];
 
+        let nb_expected = ctx.nb_expected();
+
         if let Some(m) = method_name {
-            let reg = ctx.get_or_push_free_register();
-            ctx.log_inst(f_addr);
+            let reg = if is_f_addr_next_free {
+                claimed.push(f_addr);
+                f_addr
+            } else {
+                let r = ctx.claim_next_free_register();
+                claimed.push(r);
+                r
+            };
             let method_name_const = ctx.get_or_add_const(LuzObj::String(m.clone()));
             ctx.push_inst(Instruction::op_self(
                 reg,
@@ -835,22 +1203,31 @@ impl Compiler {
                 method_name_const as u8,
                 true,
             ));
-            claimed.push(f_addr);
             f_addr = reg;
-            // the function
-            claimed.push(ctx.claim_next_free_register());
+
             // 'self' arg
             claimed.push(ctx.claim_next_free_register());
         } else {
+            let reg = if is_f_addr_next_free {
+                claimed.push(f_addr);
+                f_addr
+            } else {
+                let r = ctx.claim_next_free_register();
+                ctx.push_inst(Instruction::op_move(r, f_addr));
+                claimed.push(r);
+                r
+            };
+            f_addr = reg;
             // if no 'self', claim the function
-            claimed.push(f_addr);
+            // claimed.push(f_addr);
         }
 
         if !args.is_empty() {
             for arg in &args[..args.len() - 1] {
                 let mut one_exp_ctx = ctx.new_with(CompilerCtxBuilder::default().nb_expected(2));
-                self.visit_exp(arg, &mut one_exp_ctx)?;
-                claimed.push(ctx.claim_next_free_register());
+                let reg = self.handle_consecutive_exp(&mut one_exp_ctx, arg)?;
+                ctx.claim_register(reg);
+                claimed.push(reg);
             }
             let mut all_out_ctx = ctx.new_with(
                 CompilerCtxBuilder::default().nb_expected(if Exp::is_multires(args) {
@@ -859,14 +1236,13 @@ impl Compiler {
                     2
                 }),
             );
-            self.visit_exp(&args[args.len() - 1], &mut all_out_ctx)?;
-            claimed.push(ctx.claim_next_free_register());
+            let reg = self.handle_consecutive_exp(&mut all_out_ctx, &args[args.len() - 1])?;
+            ctx.claim_register(reg);
+            claimed.push(reg);
         }
 
-        let nb_expected = ctx.nb_expected();
         let nb_to_unclaim = ctx.scope().regs().len();
         ctx.unclaim_registers(&claimed);
-
         // ctx.unclaim_register_range(f_addr, claimed);
 
         ctx.push_inst(Instruction::op_call(
@@ -893,7 +1269,7 @@ impl Compiler {
             variadic,
         } = exp_table_constructor;
 
-        let dest = ctx.get_or_push_free_register();
+        let dest = ctx.claim_next_free_register();
 
         ctx.push_inst(Instruction::op_newtable(
             dest,
@@ -903,8 +1279,9 @@ impl Compiler {
 
         let mut claimed = vec![];
         for arr_field in arr_fields {
-            claimed.push(ctx.claim_next_free_register());
-            self.visit_exp(arr_field, ctx)?;
+            let reg = self.handle_consecutive_exp(ctx, arr_field)?;
+            ctx.claim_register(reg);
+            claimed.push(reg);
         }
 
         // Unclaim dest to allow field to be set to it
@@ -925,10 +1302,17 @@ impl Compiler {
 
     fn visit_literal(&mut self, ctx: &mut CompilerCtx, lit: &LuzObj) -> Result<(), LuzError> {
         match lit {
-            LuzObj::Numeral(Numeral::Int(i)) if *i >= 0 && *i <= 255 => {
+            LuzObj::Numeral(Numeral::Int(i))
+                if (-(MAX_HALF_sBx as i64)..(MAX_HALF_sBx as i64)).contains(i) =>
+            {
                 let reg = ctx.get_or_push_free_register();
                 ctx.push_inst(Instruction::op_loadi(reg, *i as u32));
                 // ctx.claim_next_free_register();
+                Ok(())
+            }
+            LuzObj::Nil => {
+                let reg = ctx.get_or_push_free_register();
+                ctx.push_inst(Instruction::op_loadnil(reg, 0));
                 Ok(())
             }
             LuzObj::Boolean(b) => {
@@ -996,6 +1380,7 @@ impl Visitor for Compiler {
 
     #[must_use]
     fn visit_exp(&mut self, exp: &Exp, ctx: &mut Self::Ctx) -> Self::Return {
+        let ctx = &mut ctx.new_with(CompilerCtxBuilder::default().nb_expected(2));
         match exp {
             Exp::Literal(luz_obj) => self.visit_literal(ctx, luz_obj),
             Exp::Binop { .. } => self.visit_binop(ctx, exp),
@@ -1016,6 +1401,7 @@ impl Visitor for Compiler {
 
     #[must_use]
     fn visit_stat(&mut self, stat: &Stat, ctx: &mut Self::Ctx) -> Self::Return {
+        let ctx = &mut ctx.new_with(CompilerCtxBuilder::default().nb_expected(1));
         match stat {
             Stat::Assign(assign_stat) => self.visit_assign(ctx, assign_stat),
             Stat::Return(return_stat) => self.visit_return(ctx, return_stat),
@@ -1026,7 +1412,7 @@ impl Visitor for Compiler {
             Stat::Do(do_stat) => self.visit_do_stat(ctx, do_stat),
             Stat::While(while_stat) => todo!(),
             Stat::Repeat(repea_stat) => todo!(),
-            Stat::If(if_stat) => todo!(),
+            Stat::If(if_stat) => self.visit_if(ctx, if_stat),
             Stat::ForRange(for_range_stat) => todo!(),
             Stat::ForIn(for_in_stat) => todo!(),
             Stat::Break => todo!(),

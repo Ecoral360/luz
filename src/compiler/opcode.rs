@@ -136,6 +136,8 @@ pub enum LuaOpCode {
     OP_VARARGPREP, /*A	(adjust vararg parameters)			*/
 
     OP_EXTRAARG, /*	Ax	extra (larger) argument for previous opcode	*/
+
+    OP_debug
 }
 
 impl LuaOpCode {
