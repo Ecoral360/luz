@@ -613,6 +613,8 @@ impl Runner {
                 op => todo!("isJ {:?}", op),
             },
             Instruction::NOP => unimplemented!(),
+            // IGNORE those
+            Instruction::LOG(_) => {}
         }
         Ok(InstructionResult::Continue)
     }

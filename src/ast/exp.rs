@@ -45,7 +45,7 @@ impl Exp {}
 #[derive(Debug, Clone, new)]
 pub struct ExpAccess {
     pub exp: Box<Exp>,
-    pub value: Box<Exp>,
+    pub prop: Box<Exp>,
 }
 
 #[derive(Debug, Clone, new)]

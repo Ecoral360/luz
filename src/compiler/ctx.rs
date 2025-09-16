@@ -132,6 +132,10 @@ impl CompilerCtx {
         }
     }
 
+    pub(crate) fn rename_register(&mut self, reg: u8, name: String) {
+        self.scope_mut().rename_register(reg, name);
+    }
+
     pub(crate) fn claim_next_free_register(&mut self) -> u8 {
         let next_free = self.get_or_push_free_register();
         self.scope_mut().regs[next_free as usize].free = false;
@@ -170,16 +174,39 @@ impl CompilerCtx {
         addr
     }
 
+    pub(crate) fn push_claimed_register_with_start(
+        &mut self,
+        register_name: Option<String>,
+        start: u8,
+    ) -> u8 {
+        let addr = self.scope().regs.len() as u8;
+        let range = register_name
+            .as_ref()
+            .and(Some(RegisterRange::new(start, None)));
+        let mut reg = Register::new(register_name, addr, range);
+        reg.free = false;
+        self.scope_mut().regs.push(reg);
+        addr
+    }
+
     pub(crate) fn unclaim_register_range(&mut self, start: u8, nb: u8) {
         for i in start..start + nb {
             self.scope_mut().regs[i as usize].free = true;
         }
     }
 
+    pub(crate) fn claim_register(&mut self, reg: u8) {
+        self.scope_mut().regs[reg as usize].free = false;
+    }
+
     pub(crate) fn unclaim_registers(&mut self, regs: &[u8]) {
         for reg in regs {
             self.scope_mut().regs[*reg as usize].free = true;
         }
+    }
+
+    pub(crate) fn log_inst<S: ToString>(&mut self, s: S) {
+        self.push_inst(Instruction::log(s));
     }
 
     pub(crate) fn push_inst(&mut self, inst: Instruction) {
@@ -420,6 +447,13 @@ impl Scope {
         if let Some(reg) = reg {
             reg.range.as_mut().map(|range| range.end = Some(end));
         }
+    }
+
+    pub fn rename_register(&mut self, reg: u8, name: String) {
+        let start = self.next_reg_start() - 2;
+        let reg = &mut self.regs[reg as usize];
+        reg.name = Some(name);
+        reg.range = Some(RegisterRange::new(start, None));
     }
 
     pub fn get_const(&self, addr: u8) -> &LuzObj {

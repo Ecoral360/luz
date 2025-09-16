@@ -65,10 +65,17 @@ fn parse_prefix_exp(prefix_exp: Exp, pair: Pair<Rule>) -> Result<Exp, LuzError> 
         Rule::Access => {
             let mut inner = pair.into_inner();
             let element = inner.next().expect("Accessor");
-            Ok(Exp::Access(ExpAccess::new(
-                Box::new(prefix_exp),
-                Box::new(parse_top_expr(element)?),
-            )))
+            if matches!(element.as_rule(), Rule::Name) {
+                Ok(Exp::Access(ExpAccess::new(
+                    Box::new(prefix_exp),
+                    Box::new(Exp::Literal(LuzObj::String(element.as_str().to_owned()))),
+                )))
+            } else {
+                Ok(Exp::Access(ExpAccess::new(
+                    Box::new(prefix_exp),
+                    Box::new(parse_top_expr(element)?),
+                )))
+            }
         }
         Rule::Call => {
             let mut inner = pair.into_inner();
@@ -244,7 +251,12 @@ fn parse_table_field(
 
     let field_inner_first = field_inner.peek().expect("Field key/value");
 
-    let exp = parse_top_expr(field_inner.next().expect("Field key/value"))?;
+    let field_inner_next = field_inner.next().expect("Field key/value");
+    let exp = if matches!(field_inner_next.as_rule(), Rule::Name) {
+        Exp::Literal(LuzObj::String(field_inner_next.as_str().to_owned()))
+    } else {
+        parse_top_expr(field_inner_next)?
+    };
 
     if matches!(field_inner_first.as_node_tag(), Some("value_field")) {
         arr_fields.push(exp);
@@ -537,7 +549,7 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
                     .fold(Exp::Name(namelist[0].clone()), |acc, val| {
                         Exp::Access(ExpAccess {
                             exp: Box::new(acc),
-                            value: Box::new(Exp::Name(val.clone())),
+                            prop: Box::new(Exp::Literal(LuzObj::String(val.clone()))),
                         })
                     })
             } else {

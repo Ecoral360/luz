@@ -4,17 +4,15 @@ use derive_new::new;
 
 use crate::{
     ast::{Binop, Unop},
-    compiler::{
-        ctx::{Scope, ScopeRef},
-        opcode::LuaOpCode,
-    },
+    compiler::{ctx::Scope, opcode::LuaOpCode},
 };
 
 #[allow(non_camel_case_types)]
 #[allow(unused)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Instruction {
     NOP,
+    LOG(String),
     iABC(iABC),
     iABx(iABx),
     iAsBx(iAsBx),
@@ -46,6 +44,7 @@ impl Instruction {
             Instruction::iABx(i_abx) => i_abx.debug(scope),
             Instruction::iAsBx(i_asbx) => i_asbx.debug(scope),
             Instruction::isJ(i_sj) => i_sj.debug(scope),
+            Instruction::LOG(s) => format!("LOG: {}", s),
             _ => String::from("NOP"),
         }
     }
@@ -58,12 +57,17 @@ impl Display for Instruction {
             Instruction::iABx(i_abx) => write!(f, "{}", i_abx),
             Instruction::iAsBx(i_asbx) => write!(f, "{}", i_asbx),
             Instruction::isJ(i_sj) => write!(f, "{}", i_sj),
+            Instruction::LOG(s) => write!(f, "LOG: {}", s.clone()),
             _ => write!(f, "NOP"),
         }
     }
 }
 
 impl Instruction {
+    pub fn log<S: ToString>(s: S) -> Instruction {
+        Instruction::LOG(s.to_string())
+    }
+
     pub fn op_addi(a: u8, b: u8, is_b_const: bool, c: u8) -> Instruction {
         iABC::new(c, b, is_b_const, a, LuaOpCode::OP_ADDI).into()
     }
@@ -266,7 +270,9 @@ impl Instruction {
     }
 
     pub fn op_loadi(reg: u8, imm: u32) -> Instruction {
-        LuaOpCode::OP_LOADI.to_iasbx(reg, imm.wrapping_add(MAX_HALF_sBx)).into()
+        LuaOpCode::OP_LOADI
+            .to_iasbx(reg, imm.wrapping_add(MAX_HALF_sBx))
+            .into()
     }
 
     pub fn op_move(dest: u8, src: u8) -> Instruction {
@@ -350,7 +356,7 @@ impl Instruction {
         val: u8,
         is_val_const: bool,
     ) -> Instruction {
-        LuaOpCode::OP_SETI
+        LuaOpCode::OP_SETTABLE
             .to_iabc(dest_addr, is_val_const, tabattr_addr, val)
             .into()
     }
@@ -425,7 +431,12 @@ impl iABC {
             LuaOpCode::OP_SETTABUP => {
                 let upval = scope.get_upvalue(self.a);
                 let local = scope.get_const(self.b);
-                format!("{} ; {} {}", self, upval.name, local.repr())
+                let val = if self.k {
+                    scope.get_const(self.c).repr()
+                } else {
+                    String::new()
+                };
+                format!("{} ; {} {} {}", self, upval.name, local.repr(), val)
             }
             LuaOpCode::OP_GETFIELD => {
                 let local = scope.get_const(self.c);
@@ -440,6 +451,19 @@ impl iABC {
                 };
                 format!("{} ; {} {}", self, local.repr(), val)
             }
+            LuaOpCode::OP_CALL => {
+                let args = if self.b == 0 {
+                    String::from("all")
+                } else {
+                    format!("{}", self.b - 1)
+                };
+                let output = if self.c == 0 {
+                    String::from("all")
+                } else {
+                    format!("{}", self.c - 1)
+                };
+                format!("{} ; {} in {} out", self, args, output)
+            }
             LuaOpCode::OP_SELF => {
                 let val = if self.k {
                     scope.get_const(self.c).repr()
@@ -449,7 +473,12 @@ impl iABC {
                 format!("{} ; {}", self, val)
             }
             LuaOpCode::OP_RETURN => {
-                format!("{} ; {} out", self, self.b - 1)
+                let nb = if self.b == 0 {
+                    String::from("all")
+                } else {
+                    format!("{}", self.b - 1)
+                };
+                format!("{} ; {} out", self, nb)
             }
             _ => self.to_string(),
         };
@@ -460,7 +489,10 @@ impl iABC {
 
 impl Display for iABC {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let showk = matches!(self.op, LuaOpCode::OP_SETFIELD | LuaOpCode::OP_SELF);
+        let showk = matches!(
+            self.op,
+            LuaOpCode::OP_SETFIELD | LuaOpCode::OP_SELF | LuaOpCode::OP_SETTABUP
+        );
 
         let b = match self.op {
             LuaOpCode::OP_ADD if self.k => -(self.b as i32 + 1),
@@ -598,7 +630,13 @@ impl iAsBx {
 
 impl Display for iAsBx {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?} {} {}", self.op, self.a, self.b.wrapping_sub(MAX_HALF_sBx))
+        write!(
+            f,
+            "{:?} {} {}",
+            self.op,
+            self.a,
+            (self.b as i32) - MAX_HALF_sBx as i32
+        )
     }
 }
 
