@@ -250,6 +250,50 @@ impl Compiler {
         }
     }
 
+    fn load_exp_or_const(
+        &mut self,
+        ctx: &mut CompilerCtx,
+        exp: &Exp,
+    ) -> Result<(bool, u8), LuzError> {
+        match exp {
+            Exp::Literal(lit) => match lit {
+                LuzObj::Numeral(Numeral::Int(i))
+                    if (-(MAX_HALF_sBx as i64)..(MAX_HALF_sBx as i64)).contains(i) =>
+                {
+                    let reg = ctx.get_or_push_free_register();
+                    ctx.push_inst(Instruction::op_loadi(reg, *i as u32));
+                    Ok((false, reg))
+                }
+                _ => Ok((true, ctx.get_or_add_const(lit.clone()) as u8)),
+            },
+            Exp::Name(name) => {
+                let (in_table, src) = ctx.scope_mut().get_reg_or_upvalue(name)?;
+                match src {
+                    RegOrUpvalue::Register(register) => Ok((false, register.addr)),
+                    RegOrUpvalue::Upvalue(upvalue) => {
+                        let reg = ctx.get_or_push_free_register();
+                        if in_table {
+                            let name_k = ctx.get_or_add_const(LuzObj::String(name.to_owned()));
+                            ctx.push_inst(Instruction::op_gettabup(
+                                reg,
+                                upvalue.addr,
+                                name_k as u8,
+                            ));
+                        } else {
+                            ctx.push_inst(Instruction::op_getupval(reg, upvalue.addr));
+                        }
+                        Ok((false, reg))
+                    }
+                }
+            }
+            _ => {
+                self.visit_exp(exp, ctx)?;
+                let reg = ctx.get_or_push_free_register();
+                Ok((false, reg))
+            }
+        }
+    }
+
     fn assign_to_table(
         &mut self,
         ctx: &mut CompilerCtx,
@@ -461,180 +505,188 @@ impl Compiler {
         Ok(())
     }
 
-    fn visit_assign(&mut self, ctx: &mut CompilerCtx, assign: &AssignStat) -> Result<(), LuzError> {
-        match assign {
-            AssignStat::Normal { varlist, explist } => {
-                let mut varlist_iter = varlist.iter();
-                for exp in explist {
-                    let Some(var_exp) = varlist_iter.next() else {
-                        // If we have no more variables, eval the rest of the args and discard
-                        // their result
-                        let mut discard_ctx =
-                            ctx.new_with(CompilerCtxBuilder::default().nb_expected(1));
-                        self.visit_exp(exp, &mut discard_ctx)?;
-                        continue;
-                    };
+    fn visit_normal_assign(
+        &mut self,
+        ctx: &mut CompilerCtx,
+        assign: &AssignStat,
+    ) -> Result<(), LuzError> {
+        let AssignStat::Normal { varlist, explist } = assign else {
+            unreachable!()
+        };
+        let mut varlist_iter = varlist.iter();
 
-                    let var = if let Exp::Var(var) = var_exp {
-                        var
-                    } else {
-                        var_exp
-                    };
-                    let mut one_exp_ctx =
-                        ctx.new_with(CompilerCtxBuilder::default().nb_expected(2));
-                    match var {
-                        Exp::Name(ref name) => {
-                            let (is_intable, src) = ctx.scope_mut().get_reg_or_upvalue(name)?;
-                            match src {
-                                RegOrUpvalue::Register(src) => {
-                                    let dest = self.load_exp(&mut one_exp_ctx, exp)?;
-                                    // let dest = ctx.get_or_push_free_register();
-                                    ctx.claim_register(src.addr);
-                                    if src.addr != dest {
-                                        ctx.push_inst(Instruction::op_move(src.addr, dest));
-                                    }
-                                }
-                                RegOrUpvalue::Upvalue(src) => {
-                                    if is_intable {
-                                        let name_k =
-                                            ctx.get_or_add_const(LuzObj::String(name.to_owned()));
+        let mut one_exp_ctx = ctx.new_with(CompilerCtxBuilder::default().nb_expected(2));
+        let mut claimed = vec![];
 
-                                        let res = self.handle_exp(
-                                            &mut one_exp_ctx,
-                                            exp,
-                                            false,
-                                            true,
-                                            true,
-                                        )?;
+        let mut var_claimed = vec![];
+        let mut var_exp_accesses = vec![];
 
-                                        let (is_val_const, reg) = match res {
-                                            ExpEval::InRegister(reg) => (false, reg),
-                                            ExpEval::InConstant(kreg) => (true, kreg),
-                                            ExpEval::InUpvalue { in_table, upvalue } => {
-                                                let reg = ctx.get_or_push_free_register();
-                                                if in_table {
-                                                    let name_k = ctx.get_or_add_const(
-                                                        LuzObj::String(name.to_owned()),
-                                                    );
-                                                    ctx.push_inst(Instruction::op_gettabup(
-                                                        reg,
-                                                        upvalue.addr,
-                                                        name_k as u8,
-                                                    ));
-                                                } else {
-                                                    ctx.push_inst(Instruction::op_getupval(
-                                                        reg,
-                                                        upvalue.addr,
-                                                    ));
-                                                }
-                                                (false, reg)
-                                            }
-                                            _ => unreachable!(
-                                                "Not supported by op_settabup {:?}",
-                                                res
-                                            ),
-                                        };
-                                        ctx.push_inst(Instruction::op_settabup(
-                                            src.addr,
-                                            name_k as u8,
-                                            reg,
-                                            is_val_const,
-                                        ));
-                                    } else {
-                                        self.handle_consecutive_exp(&mut one_exp_ctx, exp)?;
-                                        let reg = ctx.get_or_push_free_register();
-                                        ctx.push_inst(Instruction::op_setupval(src.addr, reg));
-                                    }
-                                }
+        for var_exp in varlist.iter() {
+            let var = if let Exp::Var(var) = var_exp {
+                var
+            } else {
+                var_exp
+            };
+            match var {
+                Exp::Name(n) => {}
+                Exp::Access(ref exp_access) => {
+                    let ExpAccess { exp: obj, prop } = exp_access;
+
+                    let res = self.handle_exp(&mut one_exp_ctx, &obj, false, true, false)?;
+                    var_claimed.push(ctx.claim_next_free_register());
+                    var_exp_accesses.push(res);
+                }
+                _ => {}
+            }
+        }
+
+        if !explist.is_empty() {
+            for exp in &explist[..explist.len() - 1] {
+                let dest = self.load_exp_or_const(&mut one_exp_ctx, exp)?;
+                if !dest.0 {
+                    ctx.claim_register(dest.1);
+                }
+                claimed.push(dest);
+            }
+
+            let nb_last_expected = varlist.len().checked_sub(explist.len() - 1).unwrap_or(0);
+            let mut last_exp_ctx =
+                ctx.new_with(CompilerCtxBuilder::default().nb_expected(nb_last_expected as u8 + 1));
+
+            let dest = self.load_exp_or_const(&mut last_exp_ctx, explist.last().unwrap())?;
+            if !dest.0 {
+                ctx.claim_register(dest.1);
+            }
+
+            claimed.push(dest);
+            // for expected in 0..nb_last_expected {
+            //     claimed.push((false, ctx.claim_next_free_register()));
+            // }
+        }
+
+        ctx.unclaim_registers(&var_claimed);
+
+        ctx.unclaim_registers(
+            &claimed
+                .iter()
+                .filter_map(|(is_const, reg)| if *is_const { None } else { Some(*reg) })
+                .collect::<Vec<_>>(),
+        );
+
+        let mut var_exp_accesses_iter = var_exp_accesses.iter();
+
+        for (var_exp, (is_const, mut dest)) in varlist.iter().rev().zip(claimed.into_iter().rev()) {
+            // let is_const = false;
+            // if !is_const {
+            //     dest = ctx.claim_next_free_register();
+            // }
+            let var = if let Exp::Var(var) = var_exp {
+                var
+            } else {
+                var_exp
+            };
+
+            match var {
+                Exp::Name(ref name) => {
+                    let (is_intable, src) = ctx.scope_mut().get_reg_or_upvalue(name)?;
+                    match src {
+                        RegOrUpvalue::Register(src) => {
+                            ctx.claim_register(src.addr);
+                            if src.addr != dest {
+                                ctx.push_inst(Instruction::op_move(src.addr, dest));
                             }
                         }
-                        Exp::Access(ref exp_access) => {
-                            let ExpAccess { exp: obj, prop } = exp_access;
+                        RegOrUpvalue::Upvalue(src) => {
+                            if is_intable {
+                                let name_k = ctx.get_or_add_const(LuzObj::String(name.to_owned()));
 
-                            let tabaddr = ctx.get_or_push_free_register();
-                            let res =
-                                self.handle_exp(&mut one_exp_ctx, &obj, false, true, false)?;
-                            if !matches!(**obj, Exp::Name(..)) {
-                                ctx.claim_register(tabaddr);
-                            }
-
-                            let value =
-                                self.handle_exp(&mut one_exp_ctx, exp, false, true, false)?;
-                            ctx.unclaim_registers(&[tabaddr]);
-                            let (is_val_const, val_reg) = match value {
-                                ExpEval::InRegister(reg) => (false, reg),
-                                ExpEval::InConstant(kreg) => (true, kreg),
-                                ExpEval::InUpvalue { in_table, upvalue } => todo!(),
-                                _ => unreachable!("Not supported by op_settabup {:?}", value),
-                            };
-
-                            let prop_imm = self.handle_immidiate(&mut one_exp_ctx, &prop, true)?;
-                            if let Some(imm) = prop_imm {
-                                ctx.push_inst(Instruction::op_seti(
-                                    tabaddr,
-                                    imm,
-                                    val_reg,
-                                    is_val_const,
+                                ctx.push_inst(Instruction::op_settabup(
+                                    src.addr,
+                                    name_k as u8,
+                                    dest,
+                                    is_const,
                                 ));
                             } else {
-                                match res {
-                                    ExpEval::InUpvalue { in_table, upvalue } => {
-                                        let prop = match **prop {
-                                            Exp::Literal(LuzObj::String(ref n)) => ctx
-                                                .get_or_add_const(LuzObj::String(n.clone()))
-                                                as u8,
-                                            _ => {
-                                                self.visit_exp(&prop, &mut one_exp_ctx)?;
-                                                ctx.get_or_push_free_register()
-                                            }
-                                        };
-
-                                        ctx.push_inst(Instruction::op_settabup(
-                                            upvalue.addr,
-                                            prop,
-                                            val_reg,
-                                            is_val_const,
-                                        ));
-                                        return Ok(());
-                                    }
-
-                                    ExpEval::InRegister(r) => {
-                                        match **prop {
-                                            Exp::Literal(LuzObj::String(ref n)) => {
-                                                let attr =
-                                                    ctx.get_or_add_const(LuzObj::String(n.clone()));
-                                                ctx.push_inst(Instruction::op_setfield(
-                                                    r,
-                                                    attr as u8,
-                                                    val_reg,
-                                                    is_val_const,
-                                                ));
-                                            }
-                                            _ => {
-                                                // let reg = ctx.get_or_push_free_register();
-                                                let reg = self.load_exp(&mut one_exp_ctx, &prop)?;
-                                                ctx.push_inst(Instruction::op_settable(
-                                                    r,
-                                                    reg,
-                                                    val_reg,
-                                                    is_val_const,
-                                                ));
-                                            }
-                                        };
-                                    }
-                                    ExpEval::InConstant(_) => todo!(),
-                                    ExpEval::InImmediate(_) => todo!(),
-                                }
+                                ctx.push_inst(Instruction::op_setupval(src.addr, dest));
                             }
                         }
-                        _ => todo!("Assign normal: {:#?}", var),
                     }
                 }
+                Exp::Access(ref exp_access) => {
+                    let ExpAccess { exp: obj, prop } = exp_access;
+
+                    let tabaddr = ctx.get_or_push_free_register();
+                    let res = var_exp_accesses_iter.next().unwrap(); //self.handle_exp(&mut one_exp_ctx, &obj, false, true, false)?;
+
+                    let prop_imm = self.handle_immidiate(&mut one_exp_ctx, &prop, true)?;
+                    if let Some(imm) = prop_imm {
+                        ctx.push_inst(Instruction::op_seti(tabaddr, imm, dest, is_const));
+                    } else {
+                        match res {
+                            ExpEval::InUpvalue { in_table, upvalue } => {
+                                let prop = match **prop {
+                                    Exp::Literal(LuzObj::String(ref n)) => {
+                                        ctx.get_or_add_const(LuzObj::String(n.clone())) as u8
+                                    }
+                                    _ => {
+                                        self.visit_exp(&prop, &mut one_exp_ctx)?;
+                                        ctx.get_or_push_free_register()
+                                    }
+                                };
+
+                                ctx.push_inst(Instruction::op_settabup(
+                                    upvalue.addr,
+                                    prop,
+                                    dest,
+                                    is_const,
+                                ));
+                                return Ok(());
+                            }
+
+                            ExpEval::InRegister(r) => {
+                                match **prop {
+                                    Exp::Literal(LuzObj::String(ref n)) => {
+                                        let attr = ctx.get_or_add_const(LuzObj::String(n.clone()));
+                                        ctx.push_inst(Instruction::op_setfield(
+                                            *r, attr as u8, dest, is_const,
+                                        ));
+                                    }
+                                    _ => {
+                                        // let reg = ctx.get_or_push_free_register();
+                                        let reg = self.load_exp(&mut one_exp_ctx, &prop)?;
+                                        ctx.push_inst(Instruction::op_settable(
+                                            *r, reg, dest, is_const,
+                                        ));
+                                    }
+                                };
+                            }
+                            ExpEval::InConstant(_) => todo!(),
+                            ExpEval::InImmediate(_) => todo!(),
+                        }
+                    }
+                }
+                _ => todo!("Assign normal: {:#?}", var),
             }
-            AssignStat::Local { varlist, explist } => {
+        }
+
+        Ok(())
+    }
+
+    fn visit_assign(&mut self, ctx: &mut CompilerCtx, assign: &AssignStat) -> Result<(), LuzError> {
+        match assign {
+            AssignStat::Normal { .. } => self.visit_normal_assign(ctx, assign)?,
+            AssignStat::Local {
+                varlist,
+                explist,
+                closure,
+            } => {
                 let mut var_addrs = vec![];
                 for var in varlist {
-                    var_addrs.push(ctx.rename_or_push_free_register(var.0.clone()));
+                    let var_addr = ctx.rename_or_push_free_register(var.0.clone());
+                    if *closure {
+                        ctx.set_register_start(var_addr, var.0.clone());
+                    }
+                    var_addrs.push(var_addr);
                 }
 
                 let mut one_exp_ctx = ctx.new_with(CompilerCtxBuilder::default().nb_expected(2));
@@ -1133,7 +1185,7 @@ impl Compiler {
                 ctx.push_inst(Instruction::op_lt(lhs_addr, rhs_addr, is_immidiate, false));
             }
             CmpOp::Gt => {
-                ctx.push_inst(Instruction::op_gt(rhs_addr, lhs_addr, is_immidiate, false));
+                ctx.push_inst(Instruction::op_gt(lhs_addr, rhs_addr, is_immidiate, false));
             }
             CmpOp::LtEq => {
                 ctx.push_inst(Instruction::op_le(lhs_addr, rhs_addr, is_immidiate, false));

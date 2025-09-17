@@ -176,9 +176,11 @@ impl Runner {
                     let lhs = self.get_reg_val(*a)?;
                     let rhs = self.get_const_val(*b)?;
 
-                    let res = lhs.apply_cmp(CmpOp::Eq, rhs)?;
+                    let LuzObj::Boolean(b) = lhs.apply_cmp(CmpOp::Eq, rhs)? else {
+                        unreachable!()
+                    };
 
-                    if res.is_truthy() == *k {
+                    if b != *k {
                         return Ok(InstructionResult::Skip(1));
                     }
                 }
@@ -187,9 +189,11 @@ impl Runner {
                     let lhs = self.get_reg_val(*a)?;
                     let rhs = self.get_reg_val(*b)?;
 
-                    let res = lhs.apply_cmp(CmpOp::Eq, rhs)?;
+                    let LuzObj::Boolean(b) = lhs.apply_cmp(CmpOp::Eq, rhs)? else {
+                        unreachable!()
+                    };
 
-                    if res.is_truthy() == *k {
+                    if b != *k {
                         return Ok(InstructionResult::Skip(1));
                     }
                 }
@@ -198,9 +202,13 @@ impl Runner {
                     let lhs = self.get_reg_val(*a)?;
                     let rhs = (*b as i64) - 128;
 
-                    let res = lhs.apply_cmp(CmpOp::Eq, LuzObj::Numeral(Numeral::Int(rhs)))?;
+                    let LuzObj::Boolean(b) =
+                        lhs.apply_cmp(CmpOp::Eq, LuzObj::Numeral(Numeral::Int(rhs)))?
+                    else {
+                        unreachable!()
+                    };
 
-                    if res.is_truthy() != *k {
+                    if b != *k {
                         return Ok(InstructionResult::Skip(1));
                     }
                 }
@@ -231,7 +239,7 @@ impl Runner {
                     self.scope_mut().set_reg_val(*a, LuzObj::Boolean(true));
                 }
                 LuaOpCode::OP_LOADFALSE => {
-                    self.scope_mut().set_reg_val(*a, LuzObj::Boolean(true));
+                    self.scope_mut().set_reg_val(*a, LuzObj::Boolean(false));
                 }
                 LuaOpCode::OP_LFALSESKIP => {
                     self.scope_mut().set_reg_val(*a, LuzObj::Boolean(false));
@@ -418,8 +426,8 @@ impl Runner {
                             self.scope_mut().set_reg_val(func_addr + i as u8, result);
                         }
                         if (nb_expected_results - 1) > nb_results {
-                            let diff = nb_expected_results - 1 - nb_results;
-                            for addr in 0..diff {
+                            let diff = nb_expected_results - 2 - nb_results;
+                            for addr in 0..diff + 1 {
                                 self.scope_mut()
                                     .set_reg_val(func_addr + diff + addr, LuzObj::Nil);
                             }

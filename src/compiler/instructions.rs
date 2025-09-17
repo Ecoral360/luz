@@ -234,7 +234,7 @@ impl Instruction {
         } else {
             LuaOpCode::OP_EQ
         };
-        opcode.to_iabc(lhs, apply_not, rhs, apply_not as u8).into()
+        opcode.to_iabc(lhs, !apply_not, rhs, (!apply_not) as u8).into()
     }
 
     pub fn op_eqi(lhs: u8, rhs_i: u8, apply_not: bool) -> Instruction {
@@ -550,7 +550,8 @@ impl Display for iABC {
             LuaOpCode::OP_LOADFALSE
             | LuaOpCode::OP_LOADTRUE
             | LuaOpCode::OP_LFALSESKIP
-            | LuaOpCode::OP_RETURN1 => {
+            | LuaOpCode::OP_RETURN1
+            | LuaOpCode::OP_CLOSE => {
                 format!("{:?} {}", self.op, self.a)
             }
             LuaOpCode::OP_TEST => {

@@ -246,8 +246,9 @@ impl LuzObj {
     #[must_use]
     #[inline]
     pub fn is_truthy(&self) -> bool {
-        matches!(self, Self::Nil | Self::Boolean(false)) == false
+        !matches!(self, Self::Nil | Self::Boolean(false))
     }
+
     #[must_use]
     #[inline]
     pub fn is_true(&self) -> bool {

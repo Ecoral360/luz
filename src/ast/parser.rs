@@ -412,7 +412,7 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
                 parse_nameattriblist(inner.next().expect("Variables in assignment").into_inner())?;
             let explist = invert(inner.next().map(|explist| parse_list(explist.into_inner())))?;
 
-            vec![AssignStat::new_local(varlist, explist.unwrap_or_default()).into()]
+            vec![AssignStat::new_local(varlist, explist.unwrap_or_default(), false).into()]
         }
         Rule::RetStat => {
             let mut inner = pair.into_inner();
@@ -498,6 +498,7 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
                     params: params.build().unwrap(),
                     body: body,
                 })],
+                true,
             ))]
 
             // vec![FunctionDefStat::new_local(name, params.build().unwrap(), body).into()]

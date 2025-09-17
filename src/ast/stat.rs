@@ -128,5 +128,7 @@ pub enum AssignStat {
     Local {
         varlist: Vec<(String, Option<Attrib>)>,
         explist: Vec<Exp>,
+        /// If the value assigned is a closure
+        closure: bool,
     },
 }
