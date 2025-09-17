@@ -104,6 +104,16 @@ impl CompilerCtx {
             .find_map(|reg| if reg.free { Some(reg.addr) } else { None })
     }
 
+    pub(crate) fn unamed_target_register(&self) -> Option<u8> {
+        self.scope().regs.iter().find_map(|reg| {
+            if reg.free && reg.name.is_none() {
+                Some(reg.addr)
+            } else {
+                None
+            }
+        })
+    }
+
     pub(crate) fn target_register_or_err(&self) -> Result<u8, LuzError> {
         Ok(self
             .scope()
@@ -122,11 +132,14 @@ impl CompilerCtx {
     }
 
     pub(crate) fn rename_or_push_free_register(&mut self, name: String) -> u8 {
-        match self.target_register() {
+        match self.unamed_target_register() {
             Some(v) => {
                 let start = self.scope().next_reg_start();
                 self.scope_mut().regs[v as usize].name = Some(name);
                 self.scope_mut().regs[v as usize].range = Some(RegisterRange::new(start, None));
+
+                let reg = self.scope().regs[v as usize].clone();
+                self.scope_mut().locals.push(reg);
                 v
             }
             None => self.push_free_register(Some(name)),
@@ -183,7 +196,7 @@ impl CompilerCtx {
     pub(crate) fn push_claimed_register_with_start(
         &mut self,
         register_name: Option<String>,
-        start: u8,
+        start: usize,
     ) -> u8 {
         let addr = self.scope().regs.len() as u8;
         let range = register_name
@@ -309,8 +322,8 @@ impl Scope {
         matches!(self.name.as_deref(), Some("GLOBAL"))
     }
 
-    pub fn next_reg_start(&self) -> u8 {
-        self.instructions.len() as u8 + 2
+    pub fn next_reg_start(&self) -> usize {
+        self.instructions.len() + 2
     }
 
     pub fn instructions(&self) -> &Vec<Instruction> {
@@ -550,18 +563,17 @@ impl Scope {
 
         result += "---- Locals:\n";
         for (i, inst) in self.locals.iter().enumerate() {
-            if let Some(name) = &inst.name {
-                let Some(RegisterRange { start, end }) = inst.range else {
-                    unreachable!("There must be a range if there is a name")
-                };
-                result += &format!(
-                    "{} {} {} {}\n",
-                    i,
-                    name,
-                    start,
-                    end.unwrap_or(self.instructions().len() as u8 + 1)
-                );
-            }
+            let name = inst.name.clone().unwrap_or(String::from("WHAT"));
+            let Some(RegisterRange { start, end }) = inst.range else {
+                unreachable!("There must be a range if there is a name")
+            };
+            result += &format!(
+                "{} {} {} {}\n",
+                i,
+                name,
+                start,
+                end.unwrap_or(self.instructions().len() + 1)
+            );
         }
 
         result += "---- Upvalues:\n";
@@ -629,13 +641,13 @@ pub struct Register {
 
 #[derive(Debug, new, Clone)]
 pub struct RegisterRange {
-    pub start: u8,
+    pub start: usize,
 
-    pub end: Option<u8>,
+    pub end: Option<usize>,
 }
 
 impl RegisterRange {
-    pub fn contains(&self, addr: u8) -> bool {
+    pub fn contains(&self, addr: usize) -> bool {
         self.start <= addr && self.end.is_none_or(|end| addr <= end)
     }
 }

@@ -2,9 +2,10 @@
 -- See Copyright Notice in file all.lua
 
 
+local function f()
+  return 1, 2, 3
+end
 
-a = "allo"
+local a, b, c = f()
 
-return a
-
-
+print(c)
