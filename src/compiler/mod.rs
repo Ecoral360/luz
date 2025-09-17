@@ -5,7 +5,7 @@ use crate::{
     },
     compiler::{
         ctx::{CompilerCtx, CompilerCtxBuilder, RegOrUpvalue, Upvalue},
-        instructions::{iABC, isJ, Instruction, MAX_HALF_sBx, MAX_HALF_sJ},
+        instructions::{iABC, iABx, isJ, Instruction, MAX_HALF_sBx, MAX_HALF_sJ},
         opcode::LuaOpCode,
         visitor::Visitor,
     },
@@ -767,6 +767,28 @@ impl Compiler {
                         for expected in 0..nb_last_expected - 1 {
                             claimed.push(ctx.claim_next_free_register());
                         }
+                    }
+                } else {
+                    let mut is_compatible = false;
+                    {
+                        let mut scope = ctx.scope_mut();
+                        if let Some(last_inst) = scope.instructions_mut().last_mut() {
+                            if last_inst.op() == LuaOpCode::OP_LOADNIL {
+                                let Instruction::iABx(iABx { b, a, op }) = last_inst else {
+                                    unreachable!()
+                                };
+                                if *a as u32 + *b + 1 == var_addrs[0] as u32 {
+                                    is_compatible = true;
+                                    *b += varlist.len() as u32;
+                                }
+                            }
+                        }
+                    }
+                    if is_compatible {
+                        for reg in var_addrs[0..].iter() {
+                            ctx.claim_register(*reg);
+                        }
+                        return Ok(());
                     }
                 }
 
