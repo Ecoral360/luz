@@ -308,14 +308,21 @@ impl Runner {
                     let val = self.get_reg_val(b)?;
                     self.scope.borrow_mut().set_reg_val(a, val);
                 }
+
                 LuaOpCode::OP_RETURN => {
-                    let iABC { a, b, .. } = *i_abc;
                     let mut rets = vec![];
-                    for i in 0..b - 1 {
-                        rets.push(self.get_reg_val(a + i)?);
+                    for i in 0..*b - 1 {
+                        rets.push(self.get_reg_val(*a + i)?);
                     }
                     return Ok(InstructionResult::Return(rets));
                 }
+                LuaOpCode::OP_RETURN1 => {
+                    return Ok(InstructionResult::Return(vec![self.get_reg_val(*a)?]));
+                }
+                LuaOpCode::OP_RETURN0 => {
+                    return Ok(InstructionResult::Return(vec![]));
+                }
+
                 LuaOpCode::OP_VARARGPREP => {
                     let vararg = self.vararg.take().expect("Var arg");
                     self.scope_mut().set_vararg(vararg);

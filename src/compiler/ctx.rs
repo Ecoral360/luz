@@ -23,6 +23,7 @@ pub struct CompilerCtx {
 impl CompilerCtx {
     pub fn new_main() -> Self {
         let mut scope = Scope::new(Some(String::from("main")), Some(get_builtin_scope()));
+        scope.instructions.push(Instruction::op_varargprep(0));
         scope
             .upvalues
             .push(Upvalue::new("_ENV".to_owned(), 0, 0, true));
@@ -445,7 +446,7 @@ impl Scope {
 
         self.regs
             .iter()
-            .rfind(|reg| matches!(&reg.name, Some(x) if x == register_name && reg.range.as_ref().is_none_or(|r| r.contains(curr - 1))))
+            .rfind(|reg| matches!(&reg.name, Some(x) if x == register_name && reg.range.as_ref().is_none_or(|r| r.contains(curr))))
             .map(|reg| reg.addr)
     }
 
@@ -469,7 +470,7 @@ impl Scope {
     }
 
     pub fn rename_register(&mut self, reg: u8, name: String) {
-        let start = self.next_reg_start() - 2;
+        let start = self.next_reg_start();
         let reg = &mut self.regs[reg as usize];
         reg.name = Some(name);
         reg.range = Some(RegisterRange::new(start, None));
@@ -548,7 +549,7 @@ impl Scope {
         }
 
         result += "---- Locals:\n";
-        for (i, inst) in self.regs.iter().enumerate() {
+        for (i, inst) in self.locals.iter().enumerate() {
             if let Some(name) = &inst.name {
                 let Some(RegisterRange { start, end }) = inst.range else {
                     unreachable!("There must be a range if there is a name")

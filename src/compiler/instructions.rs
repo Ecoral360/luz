@@ -285,6 +285,12 @@ impl Instruction {
             .to_iabc(reg, is_const, nb_exps, 1)
             .into()
     }
+    pub fn op_return0() -> Instruction {
+        LuaOpCode::OP_RETURN0.to_iabc(0, false, 0, 0).into()
+    }
+    pub fn op_return1(reg: u8) -> Instruction {
+        LuaOpCode::OP_RETURN1.to_iabc(reg, false, 0, 0).into()
+    }
 
     pub fn op_loadk(reg: u8, addrk: u32) -> Instruction {
         LuaOpCode::OP_LOADK.to_iabx(reg, addrk).into()
@@ -535,7 +541,13 @@ impl Display for iABC {
             _ => self.c as i32,
         };
         let s = match self.op {
-            LuaOpCode::OP_LOADFALSE | LuaOpCode::OP_LOADTRUE | LuaOpCode::OP_LFALSESKIP => {
+            LuaOpCode::OP_RETURN0 => {
+                format!("{:?}", self.op)
+            }
+            LuaOpCode::OP_LOADFALSE
+            | LuaOpCode::OP_LOADTRUE
+            | LuaOpCode::OP_LFALSESKIP
+            | LuaOpCode::OP_RETURN1 => {
                 format!("{:?} {}", self.op, self.a)
             }
             LuaOpCode::OP_TEST => {
@@ -546,7 +558,7 @@ impl Display for iABC {
                     "{:?} {} {} {} {}",
                     self.op,
                     self.a,
-                    self.b - 128,
+                    (self.b as i32) - 128,
                     self.c,
                     self.k as u8
                 )

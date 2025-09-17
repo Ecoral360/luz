@@ -18,12 +18,16 @@
 -- assert(type(f) == 'function')
 
 -- testing local-function recursion
+local x = 12
+local y = x - 3
 fact = false
 do
   local res = 1
-  local function fact (n)
-    if n==0 then return res
-    else return n*fact(n-1)
+  local function fact(n)
+    if n == 0 then
+      return res
+    else
+      return n * fact(n - 1)
     end
   end
   assert(fact(5) == 120)

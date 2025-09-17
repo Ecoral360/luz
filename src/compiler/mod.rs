@@ -4,7 +4,7 @@ use crate::{
         ExpTableConstructorField, FuncCall, FuncDef, IfStat, ReturnStat, Stat,
     },
     compiler::{
-        ctx::{CompilerCtx, CompilerCtxBuilder, CompilerCtxBuilderError, RegOrUpvalue, Upvalue},
+        ctx::{CompilerCtx, CompilerCtxBuilder, RegOrUpvalue, Upvalue},
         instructions::{iABC, isJ, Instruction, MAX_HALF_sBx, MAX_HALF_sJ},
         opcode::LuaOpCode,
         visitor::Visitor,
@@ -161,7 +161,7 @@ impl Compiler {
         match exp {
             Exp::Literal(lit) => match lit {
                 LuzObj::Numeral(Numeral::Int(i))
-                    if supports_immidiate && (-127..129).contains(i) =>
+                    if supports_immidiate && (-128..128).contains(i) =>
                 {
                     Ok(ExpEval::InImmediate((*i + 128) as u8))
                 }
@@ -614,11 +614,26 @@ impl Compiler {
         } else {
             ctx.new_with(CompilerCtxBuilder::default().nb_expected((size + 1) as u8))
         };
+
         for exp in stat.explist.iter() {
             self.handle_consecutive_exp(ctx, exp)?;
             ctx.claim_next_free_register();
         }
-        ctx.push_inst(Instruction::op_return(start, false, size as u8 + 1));
+
+        match stat.explist.len() {
+            0 => {
+                ctx.push_inst(Instruction::op_return0());
+            }
+            1 => {
+                ctx.push_inst(Instruction::op_return1(start));
+            }
+            // _ if Exp::is_multires(&stat.explist) => {
+            //     ctx.push_inst(Instruction::op_return(start, false, size as u8 + 1));
+            // }
+            _ => {
+                ctx.push_inst(Instruction::op_return(start, false, size as u8 + 1));
+            }
+        }
         Ok(())
     }
 
@@ -642,11 +657,11 @@ impl Compiler {
         let result_reg = ctx.get_or_push_free_register();
 
         let lhs_addr = self.handle_exp(ctx, lhs, matches!(op, Binop::Add), true, true)?;
-        let rhs_addr =
-            self.handle_exp(ctx, rhs, matches!(op, Binop::Add | Binop::Sub), true, true)?;
-
         let is_b_const = matches!(lhs_addr, ExpEval::InConstant(_));
         let is_b_imm = matches!(lhs_addr, ExpEval::InImmediate(_));
+
+        let rhs_addr =
+            self.handle_exp(ctx, rhs, matches!(op, Binop::Add | Binop::Sub), true, true)?;
 
         let is_c_const = matches!(rhs_addr, ExpEval::InConstant(_));
         let is_c_imm = matches!(rhs_addr, ExpEval::InImmediate(_));
@@ -659,7 +674,6 @@ impl Compiler {
         }
 
         let (lhs_dirty, mut lhs_addr) = match lhs_addr {
-            ExpEval::InImmediate(i) if *op == Binop::Sub => (false, ((i as i32) - 256) as u8),
             ExpEval::InImmediate(i) => (false, i),
             ExpEval::InRegister(r) => (false, r),
             ExpEval::InConstant(c) => (false, c),
@@ -668,8 +682,14 @@ impl Compiler {
                 (true, ctx.claim_next_free_register())
             }
         };
+
         let (rhs_dirty, mut rhs_addr) = match rhs_addr {
-            ExpEval::InImmediate(i) if *op == Binop::Sub => (false, ((i as i32) - 256) as u8),
+            ExpEval::InImmediate(i) if *op == Binop::Sub => {
+                // 128 - (i - 128) transforms the value from LHS - RHS to LHS + -RHS
+                // this allows us to use the ADD_I op code instead of a SUB instruction,
+                // which would need us to store the negative number as a constant
+                (false, 128 - (i - 128))
+            }
             ExpEval::InImmediate(i) => (false, i),
             ExpEval::InRegister(r) => (false, r),
             ExpEval::InConstant(c) => (false, c),
