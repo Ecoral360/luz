@@ -1,7 +1,7 @@
 use crate::{
     ast::{
         AssignStat, Binop, CmpOp, DoStat, Exp, ExpAccess, ExpTableConstructor,
-        ExpTableConstructorField, FuncCall, FuncDef, IfStat, ReturnStat, Stat,
+        ExpTableConstructorField, FuncCall, FuncDef, IfStat, RepeaStat, ReturnStat, Stat,
     },
     compiler::{
         ctx::{CompilerCtx, CompilerCtxBuilder, RegOrUpvalue, Upvalue},
@@ -264,6 +264,11 @@ impl Compiler {
                     ctx.push_inst(Instruction::op_loadi(reg, *i as u32));
                     Ok((false, reg))
                 }
+                LuzObj::Nil => {
+                    let reg = ctx.get_or_push_free_register();
+                    ctx.push_inst(Instruction::op_loadnil(reg, 0));
+                    Ok((false, reg))
+                }
                 _ => Ok((true, ctx.get_or_add_const(lit.clone()) as u8)),
             },
             Exp::Name(name) => {
@@ -358,7 +363,7 @@ impl Compiler {
                 } else {
                     0
                 };
-                left.0[jmp_idx] = Instruction::op_jmp((right.len() as isize + offset) as u32)
+                left.0[jmp_idx] = Instruction::op_jmp((right.len() as isize + offset) as i32)
             }
             None => {} // None => {
                        //     left.push(Instruction::op_test(left_test_reg, false));
@@ -483,13 +488,13 @@ impl Compiler {
                     insts.push(inst);
                 }
                 let offset = insts.len();
-                insts.push(Instruction::op_jmp((to_else_jmp - offset) as u32));
+                insts.push(Instruction::op_jmp((to_else_jmp - offset) as i32));
 
                 for inst in branch {
                     insts.push(inst);
                 }
                 let offset = insts.len();
-                insts.push(Instruction::op_jmp((to_end_jmp - offset) as u32));
+                insts.push(Instruction::op_jmp((to_end_jmp - offset) as i32));
 
                 insts
             });
@@ -501,6 +506,55 @@ impl Compiler {
         for inst in insts {
             ctx.push_inst(inst);
         }
+
+        Ok(())
+    }
+
+    fn visit_repeat_until(
+        &mut self,
+        ctx: &mut CompilerCtx,
+        stat: &RepeaStat,
+    ) -> Result<(), LuzError> {
+        let RepeaStat { block, cond } = stat;
+
+        let nb_inst_before = ctx.scope().instructions().len();
+
+        for stmt in block {
+            self.visit_stat(stmt, ctx);
+        }
+
+        self.visit_exp(cond, ctx);
+
+        match **cond {
+            Exp::CmpOp { .. } | Exp::LogicCmpOp { .. } => {
+                if ctx
+                    .scope()
+                    .instructions()
+                    .last()
+                    .is_some_and(|inst| inst.op() == LuaOpCode::OP_LOADTRUE)
+                {
+                    let mut scope = ctx.scope_mut();
+                    let insts = scope.instructions_mut();
+                    insts.pop();
+                    insts.pop();
+                    insts.pop();
+
+                    let Instruction::iABC(iABC { k, .. }) = insts.last_mut().unwrap() else {
+                        unreachable!()
+                    };
+
+                    *k = !*k;
+                }
+            }
+            _ => {
+                let reg = ctx.get_or_push_free_register();
+                ctx.push_inst(Instruction::op_test(reg, false));
+            }
+        }
+
+        let diff = nb_inst_before as i32 - ctx.scope().instructions().len() as i32;
+
+        ctx.push_inst(Instruction::op_jmp(diff));
 
         Ok(())
     }
@@ -700,25 +754,33 @@ impl Compiler {
                     );
 
                     for exp in &explist[..explist.len() - 1] {
-                        self.visit_exp(exp, &mut one_exp_ctx)?;
-                        claimed.push(ctx.claim_next_free_register());
+                        let reg = self.handle_consecutive_exp(&mut one_exp_ctx, exp)?;
+                        ctx.claim_register(reg);
+                        claimed.push(reg);
                     }
 
-                    self.visit_exp(&explist[explist.len() - 1], &mut last_exp_ctx)?;
-                    for expected in 0..nb_last_expected {
-                        claimed.push(ctx.claim_next_free_register());
+                    let reg = self
+                        .handle_consecutive_exp(&mut last_exp_ctx, &explist[explist.len() - 1])?;
+                    ctx.claim_register(reg);
+                    claimed.push(reg);
+                    if nb_last_expected > 0 {
+                        for expected in 0..nb_last_expected - 1 {
+                            claimed.push(ctx.claim_next_free_register());
+                        }
                     }
-                }
-
-                for (var, addr) in varlist.iter().zip(var_addrs) {
-                    ctx.set_register_start(addr, var.0.clone());
                 }
 
                 if varlist.len() > explist.len() && !Exp::is_multires(explist) {
-                    for var in varlist[explist.len()..].iter() {
-                        let reg = ctx.claim_next_free_register();
-                        ctx.push_inst(Instruction::op_loadnil(reg, 0));
+                    let reg = var_addrs[0];
+                    let diff = varlist.len() - explist.len();
+                    ctx.push_inst(Instruction::op_loadnil(reg, diff as u32 - 1));
+
+                    for reg in var_addrs[explist.len()..].iter() {
+                        ctx.claim_register(*reg);
                     }
+                }
+                for (var, addr) in varlist.iter().zip(var_addrs) {
+                    ctx.set_register_start(addr, var.0.clone());
                 }
             }
         }
@@ -734,25 +796,26 @@ impl Compiler {
             ctx.new_with(CompilerCtxBuilder::default().nb_expected((size + 1) as u8))
         };
 
-        for exp in stat.explist.iter() {
-            self.handle_consecutive_exp(ctx, exp)?;
-            ctx.claim_next_free_register();
-        }
-
         match stat.explist.len() {
             0 => {
                 ctx.push_inst(Instruction::op_return0());
             }
             1 => {
-                ctx.push_inst(Instruction::op_return1(start));
+                let reg = self.load_exp(ctx, &stat.explist[0])?;
+                ctx.push_inst(Instruction::op_return1(reg));
             }
             // _ if Exp::is_multires(&stat.explist) => {
             //     ctx.push_inst(Instruction::op_return(start, false, size as u8 + 1));
             // }
             _ => {
+                for exp in stat.explist.iter() {
+                    self.handle_consecutive_exp(ctx, exp)?;
+                    ctx.claim_next_free_register();
+                }
                 ctx.push_inst(Instruction::op_return(start, false, size as u8 + 1));
             }
         }
+
         Ok(())
     }
 
@@ -1469,7 +1532,7 @@ impl Visitor for Compiler {
             // }
             Stat::Do(do_stat) => self.visit_do_stat(ctx, do_stat),
             Stat::While(while_stat) => todo!(),
-            Stat::Repeat(repea_stat) => todo!(),
+            Stat::Repeat(repeat_stat) => self.visit_repeat_until(ctx, repeat_stat),
             Stat::If(if_stat) => self.visit_if(ctx, if_stat),
             Stat::ForRange(for_range_stat) => todo!(),
             Stat::ForIn(for_in_stat) => todo!(),

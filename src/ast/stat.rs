@@ -75,30 +75,30 @@ pub struct IfStat {
 
 #[derive(Debug, Clone, new)]
 pub struct WhileStat {
-    cond: Box<Exp>,
-    block: Vec<Stat>,
+    pub cond: Box<Exp>,
+    pub block: Vec<Stat>,
 }
 
 #[derive(Debug, Clone, new)]
 pub struct RepeaStat {
-    block: Vec<Stat>,
-    cond: Box<Exp>,
+    pub block: Vec<Stat>,
+    pub cond: Box<Exp>,
 }
 
 #[derive(Debug, Clone, new)]
 pub struct ForRangeStat {
-    var: String,
-    start: Box<Exp>,
-    limit: Box<Exp>,
-    step: Option<Box<Exp>>,
-    block: Vec<Stat>,
+    pub var: String,
+    pub start: Box<Exp>,
+    pub limit: Box<Exp>,
+    pub step: Option<Box<Exp>>,
+    pub block: Vec<Stat>,
 }
 
 #[derive(Debug, Clone, new)]
 pub struct ForInStat {
-    vars: Vec<String>,
-    exps: Vec<Exp>,
-    block: Vec<Stat>,
+    pub vars: Vec<String>,
+    pub exps: Vec<Exp>,
+    pub block: Vec<Stat>,
 }
 
 #[derive(Debug, Clone, Copy)]

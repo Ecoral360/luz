@@ -717,4 +717,12 @@ impl Runner {
 
         Ok(())
     }
+
+    pub fn vararg(&self) -> Option<&Vec<LuzObj>> {
+        self.vararg.as_ref()
+    }
+
+    pub fn set_vararg(&mut self, vararg: Option<Vec<LuzObj>>) {
+        self.vararg = vararg;
+    }
 }

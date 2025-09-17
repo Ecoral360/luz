@@ -1,7 +1,5 @@
 use std::{
-    cell::{Ref, RefCell, RefMut},
-    rc::Rc,
-    usize,
+    cell::{Ref, RefCell, RefMut}, fmt::Debug, rc::Rc, usize
 };
 
 use derive_builder::Builder;
@@ -202,7 +200,8 @@ impl CompilerCtx {
             .and(Some(RegisterRange::new(Some(start), None)));
         let mut reg = Register::new(register_name, addr, range);
         reg.free = false;
-        self.scope_mut().regs.push(reg);
+        self.scope_mut().regs.push(reg.clone());
+        self.scope_mut().locals.push(reg);
         addr
     }
 
@@ -222,8 +221,8 @@ impl CompilerCtx {
         }
     }
 
-    pub(crate) fn log_inst<S: ToString>(&mut self, s: S) {
-        self.push_inst(Instruction::log(s));
+    pub(crate) fn log_inst<S: Debug>(&mut self, s: S) {
+        self.push_inst(Instruction::log(format!("{:?}", s)));
     }
 
     pub(crate) fn push_inst(&mut self, inst: Instruction) {

@@ -199,9 +199,9 @@ impl Instruction {
         op.to_iabc(dest, false, val_addr, 0).into()
     }
 
-    pub fn op_jmp(jmp_dist: u32) -> Instruction {
+    pub fn op_jmp(jmp_dist: i32) -> Instruction {
         LuaOpCode::OP_JMP
-            .to_isj(0, jmp_dist + MAX_HALF_sJ) // a is unused
+            .to_isj(0, (jmp_dist + MAX_HALF_sJ as i32) as u32) // a is unused
             .into()
     }
 
@@ -731,7 +731,7 @@ impl isJ {
 
 impl Display for isJ {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?} {}", self.op, self.b - MAX_HALF_sJ)
+        write!(f, "{:?} {}", self.op, self.b as i32 - MAX_HALF_sJ as i32)
     }
 }
 
