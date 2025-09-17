@@ -544,6 +544,9 @@ impl Display for iABC {
             LuaOpCode::OP_RETURN0 => {
                 format!("{:?}", self.op)
             }
+            LuaOpCode::OP_MOVE => {
+                format!("{:?} {} {}", self.op, self.a, self.b)
+            }
             LuaOpCode::OP_LOADFALSE
             | LuaOpCode::OP_LOADTRUE
             | LuaOpCode::OP_LFALSESKIP

@@ -2,10 +2,6 @@
 -- See Copyright Notice in file all.lua
 
 
-local function f()
-  return 1, 2, 3
-end
+a, b = 1, a, print(a)
 
-local a, b, c = f()
-
-print(c)
+print(b)

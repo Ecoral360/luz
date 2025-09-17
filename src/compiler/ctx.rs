@@ -134,9 +134,8 @@ impl CompilerCtx {
     pub(crate) fn rename_or_push_free_register(&mut self, name: String) -> u8 {
         match self.unamed_target_register() {
             Some(v) => {
-                let start = self.scope().next_reg_start();
                 self.scope_mut().regs[v as usize].name = Some(name);
-                self.scope_mut().regs[v as usize].range = Some(RegisterRange::new(start, None));
+                self.scope_mut().regs[v as usize].range = Some(RegisterRange::new(None, None));
 
                 let reg = self.scope().regs[v as usize].clone();
                 self.scope_mut().locals.push(reg);
@@ -146,8 +145,8 @@ impl CompilerCtx {
         }
     }
 
-    pub(crate) fn rename_register(&mut self, reg: u8, name: String) {
-        self.scope_mut().rename_register(reg, name);
+    pub(crate) fn set_register_start(&mut self, reg: u8, name: String) {
+        self.scope_mut().set_register_start(reg, name);
     }
 
     pub(crate) fn claim_next_free_register(&mut self) -> u8 {
@@ -162,10 +161,9 @@ impl CompilerCtx {
 
     pub(crate) fn push_free_register(&mut self, register_name: Option<String>) -> u8 {
         let addr = self.scope().regs.len() as u8;
-        let range = register_name.as_ref().and(Some(RegisterRange::new(
-            self.scope().next_reg_start(),
-            None,
-        )));
+        let range = register_name
+            .as_ref()
+            .and(Some(RegisterRange::new(None, None)));
 
         let reg = Register::new(register_name, addr, range);
 
@@ -184,7 +182,7 @@ impl CompilerCtx {
     pub(crate) fn push_claimed_register(&mut self, register_name: Option<String>) -> u8 {
         let addr = self.scope().regs.len() as u8;
         let range = register_name.as_ref().and(Some(RegisterRange::new(
-            self.scope().next_reg_start(),
+            Some(self.scope().next_reg_start()),
             None,
         )));
         let mut reg = Register::new(register_name, addr, range);
@@ -201,7 +199,7 @@ impl CompilerCtx {
         let addr = self.scope().regs.len() as u8;
         let range = register_name
             .as_ref()
-            .and(Some(RegisterRange::new(start, None)));
+            .and(Some(RegisterRange::new(Some(start), None)));
         let mut reg = Register::new(register_name, addr, range);
         reg.free = false;
         self.scope_mut().regs.push(reg);
@@ -304,6 +302,7 @@ pub struct Scope {
 
 pub type ScopeRef = Rc<RefCell<Scope>>;
 
+#[derive(Debug)]
 pub enum RegOrUpvalue {
     Register(Register),
     Upvalue(Upvalue),
@@ -482,11 +481,22 @@ impl Scope {
         reg.name = None;
     }
 
-    pub fn rename_register(&mut self, reg: u8, name: String) {
-        let start = self.next_reg_start();
+    pub fn set_register_start(&mut self, reg: u8, name: String) {
+        let start = self.next_reg_start() - 1;
         let reg = &mut self.regs[reg as usize];
         reg.name = Some(name);
-        reg.range = Some(RegisterRange::new(start, None));
+
+        let local_r = self.locals.iter_mut().rfind(|local| {
+            reg.name
+                .as_ref()
+                .is_some_and(|reg_name| reg_name == local.name.as_ref().unwrap())
+        });
+
+        if let Some(Some(range)) = local_r.map(|local| &mut local.range) {
+            range.start = Some(start);
+        }
+
+        reg.range = Some(RegisterRange::new(Some(start), None));
     }
 
     pub fn get_const(&self, addr: u8) -> &LuzObj {
@@ -571,7 +581,7 @@ impl Scope {
                 "{} {} {} {}\n",
                 i,
                 name,
-                start,
+                start.unwrap_or(0),
                 end.unwrap_or(self.instructions().len() + 1)
             );
         }
@@ -641,14 +651,14 @@ pub struct Register {
 
 #[derive(Debug, new, Clone)]
 pub struct RegisterRange {
-    pub start: usize,
+    pub start: Option<usize>,
 
     pub end: Option<usize>,
 }
 
 impl RegisterRange {
     pub fn contains(&self, addr: usize) -> bool {
-        self.start <= addr && self.end.is_none_or(|end| addr <= end)
+        self.start.is_some_and(|start| start <= addr) && self.end.is_none_or(|end| addr <= end)
     }
 }
 

@@ -464,21 +464,31 @@ impl Compiler {
     fn visit_assign(&mut self, ctx: &mut CompilerCtx, assign: &AssignStat) -> Result<(), LuzError> {
         match assign {
             AssignStat::Normal { varlist, explist } => {
-                let mut explist_iter = explist.iter().peekable();
-                for (var_idx, var_exp) in varlist.iter().enumerate() {
+                let mut varlist_iter = varlist.iter();
+                for exp in explist {
+                    let Some(var_exp) = varlist_iter.next() else {
+                        // If we have no more variables, eval the rest of the args and discard
+                        // their result
+                        let mut discard_ctx =
+                            ctx.new_with(CompilerCtxBuilder::default().nb_expected(1));
+                        self.visit_exp(exp, &mut discard_ctx)?;
+                        continue;
+                    };
+
                     let var = if let Exp::Var(var) = var_exp {
                         var
                     } else {
                         var_exp
                     };
-                    let mut one_exp_ctx = ctx.new_with(CompilerCtxBuilder::default().nb_expected(2));
+                    let mut one_exp_ctx =
+                        ctx.new_with(CompilerCtxBuilder::default().nb_expected(2));
                     match var {
                         Exp::Name(ref name) => {
                             let (is_intable, src) = ctx.scope_mut().get_reg_or_upvalue(name)?;
                             match src {
                                 RegOrUpvalue::Register(src) => {
-                                    self.visit_exp(explist_iter.next().expect("value"), &mut one_exp_ctx)?;
-                                    let dest = ctx.get_or_push_free_register();
+                                    let dest = self.load_exp(&mut one_exp_ctx, exp)?;
+                                    // let dest = ctx.get_or_push_free_register();
                                     ctx.claim_register(src.addr);
                                     if src.addr != dest {
                                         ctx.push_inst(Instruction::op_move(src.addr, dest));
@@ -491,7 +501,7 @@ impl Compiler {
 
                                         let res = self.handle_exp(
                                             &mut one_exp_ctx,
-                                            explist_iter.next().expect("value"),
+                                            exp,
                                             false,
                                             true,
                                             true,
@@ -500,7 +510,25 @@ impl Compiler {
                                         let (is_val_const, reg) = match res {
                                             ExpEval::InRegister(reg) => (false, reg),
                                             ExpEval::InConstant(kreg) => (true, kreg),
-                                            ExpEval::InUpvalue { in_table, upvalue } => todo!(),
+                                            ExpEval::InUpvalue { in_table, upvalue } => {
+                                                let reg = ctx.get_or_push_free_register();
+                                                if in_table {
+                                                    let name_k = ctx.get_or_add_const(
+                                                        LuzObj::String(name.to_owned()),
+                                                    );
+                                                    ctx.push_inst(Instruction::op_gettabup(
+                                                        reg,
+                                                        upvalue.addr,
+                                                        name_k as u8,
+                                                    ));
+                                                } else {
+                                                    ctx.push_inst(Instruction::op_getupval(
+                                                        reg,
+                                                        upvalue.addr,
+                                                    ));
+                                                }
+                                                (false, reg)
+                                            }
                                             _ => unreachable!(
                                                 "Not supported by op_settabup {:?}",
                                                 res
@@ -513,10 +541,7 @@ impl Compiler {
                                             is_val_const,
                                         ));
                                     } else {
-                                        self.handle_consecutive_exp(
-                                            &mut one_exp_ctx,
-                                            explist_iter.next().expect("value"),
-                                        )?;
+                                        self.handle_consecutive_exp(&mut one_exp_ctx, exp)?;
                                         let reg = ctx.get_or_push_free_register();
                                         ctx.push_inst(Instruction::op_setupval(src.addr, reg));
                                     }
@@ -527,18 +552,14 @@ impl Compiler {
                             let ExpAccess { exp: obj, prop } = exp_access;
 
                             let tabaddr = ctx.get_or_push_free_register();
-                            let res = self.handle_exp(&mut one_exp_ctx, &obj, false, true, false)?;
+                            let res =
+                                self.handle_exp(&mut one_exp_ctx, &obj, false, true, false)?;
                             if !matches!(**obj, Exp::Name(..)) {
                                 ctx.claim_register(tabaddr);
                             }
 
-                            let value = self.handle_exp(
-                                &mut one_exp_ctx,
-                                explist_iter.next().expect("value"),
-                                false,
-                                true,
-                                false,
-                            )?;
+                            let value =
+                                self.handle_exp(&mut one_exp_ctx, exp, false, true, false)?;
                             ctx.unclaim_registers(&[tabaddr]);
                             let (is_val_const, val_reg) = match value {
                                 ExpEval::InRegister(reg) => (false, reg),
@@ -638,7 +659,7 @@ impl Compiler {
                 }
 
                 for (var, addr) in varlist.iter().zip(var_addrs) {
-                    ctx.rename_register(addr, var.0.clone());
+                    ctx.set_register_start(addr, var.0.clone());
                 }
 
                 if varlist.len() > explist.len() && !Exp::is_multires(explist) {
