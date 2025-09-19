@@ -1,4 +1,4 @@
-WHITESPACE = _{ " " | "\t" | "\x0b" | "\x0c" | NEWLINE   }
+WHITESPACE = _{ " " | "\t" | "\x0b" | "\x0c" | NEWLINE }
 COMMENT    = _{ "--" ~ (longString | (!NEWLINE ~ ANY)* ~ NEWLINE?) }
 
 Chunk = { SOI ~ block ~ EOI }
@@ -205,7 +205,7 @@ unop = _{
     Neg
   | Not
   | Pound
-  | Tilde
+  | Bnot
 }
 // operator tokens
 binop = _{
@@ -214,8 +214,8 @@ binop = _{
   | Plus
   | Minus
   | Star
-  | Slash
   | DoubleSlash
+  | Slash
   | Caret
   | Pourcent
   | Ampersand
@@ -242,6 +242,7 @@ Pourcent    = { "%" }
 Caret       = { "^" }
 Ampersand   = { "&" }
 Tilde       = { "~" }
+Bnot        = { "~" }
 Pipe        = { "|" }
 ShiftLeft   = { "<<" }
 ShiftRight  = { ">>" }

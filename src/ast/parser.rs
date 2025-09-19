@@ -47,7 +47,7 @@ lazy_static::lazy_static! {
                 Op::infix(Rule::Slash, Left) |
                 Op::infix(Rule::DoubleSlash, Left) |
                 Op::infix(Rule::Pourcent, Left))
-            .op(Op::prefix(Rule::Not) | Op::prefix(Rule::Pound) | Op::prefix(Rule::Neg) | Op::prefix(Rule::Tilde))
+            .op(Op::prefix(Rule::Not) | Op::prefix(Rule::Pound) | Op::prefix(Rule::Neg) | Op::prefix(Rule::Bnot))
             .op(Op::infix(Rule::Caret, Right))
 
             .op(Op::postfix(Rule::PostfixExp))
@@ -271,7 +271,7 @@ fn parse_expr(pairs: Pairs<Rule>) -> Result<Exp, LuzError> {
     PRATT_EXPR_PARSER
         .map_primary(|primary| parse_top_expr(primary))
         .map_prefix(|op, rhs| match op.as_rule() {
-            Rule::Neg | Rule::Not | Rule::Tilde | Rule::Pound => {
+            Rule::Neg | Rule::Not | Rule::Bnot | Rule::Pound => {
                 let rhs = rhs?;
                 rhs.do_unop(op.try_into()?)
             }

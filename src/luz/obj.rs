@@ -413,7 +413,7 @@ impl LuzObj {
                     unreachable!()
                 };
 
-                (n1 / n2).into()
+                n1.floor_div(n2)?.into()
             }
             Binop::Mod => {
                 let lhs = self.coerse(LuzType::Number)?;
@@ -423,7 +423,7 @@ impl LuzObj {
                     unreachable!()
                 };
 
-                (n1 % n2).into()
+                (n1 % n2)?.into()
             }
             Binop::Exp => {
                 let lhs = self.coerse(LuzType::Number)?;

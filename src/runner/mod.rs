@@ -30,14 +30,22 @@ pub enum InstructionResult {
 pub struct Runner {
     scope: Rc<RefCell<Scope>>,
     vararg: Option<Vec<LuzObj>>,
+    curr_instruction: Option<(usize, Instruction)>,
 }
 
 #[allow(unused)]
 impl Runner {
+    pub fn dump_trace(&self) {
+        if let Some((idx, inst)) = &self.curr_instruction {
+            println!("[{}] {}", idx, inst);
+        }
+    }
+
     pub fn new(scope: Rc<RefCell<Scope>>) -> Self {
         Self {
             scope,
             vararg: Some(vec![]),
+            curr_instruction: None,
         }
     }
 
@@ -74,11 +82,15 @@ impl Runner {
         let instructions = self.scope().instructions().clone();
         let mut rets = vec![];
         let mut instruction_iter = instructions.iter();
+        let mut i = 1;
         while let Some(instruction) = instruction_iter.next() {
+            self.curr_instruction = Some((i, instruction.clone()));
+            i += 1;
             rets = match self.run_instruction(instruction)? {
                 InstructionResult::Continue => continue,
                 InstructionResult::Skip(n) => {
                     for _ in 0..n {
+                        i += 1;
                         instruction_iter.next();
                     }
                     continue;

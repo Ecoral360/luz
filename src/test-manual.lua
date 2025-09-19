@@ -1,61 +1,61 @@
-local function f(x) x = nil; return x end
-assert(f(10) == nil)
-
-local function f() local x; return x end
-assert(f(10) == nil)
-
-local function f(x) x = nil; local y; return x, y end
-assert(f(10) == nil and select(2, f(20)) == nil)
-
-do
-  local i = 10
-  do local i = 100; assert(i==100) end
-  do local i = 1000; assert(i==1000) end
-  assert(i == 10)
-  if i ~= 10 then
-    local i = 20
-  else
-    local i = 30
-    assert(i == 30)
-  end
-end
-
-
-f = nil
-
-local f
-local x = 1
-
-a = nil
-load('local a = {}')()
-assert(a == nil)
-
-function f (a)
-  local _1, _2, _3, _4, _5
-  local _6, _7, _8, _9, _10
-  local x = 3
-  local b = a
-  local c,d = a,b
-  if (d == b) then
-    local x = 'q'
-    x = b
-    assert(x == 2)
-  else
-    assert(nil)
-  end
-  assert(x == 3)
-  local f = 10
-end
-
-local b=10
+-- -- $Id: testes/constructs.lua $
+-- -- See Copyright Notice in file all.lua
+--
+-- ;;print "testing syntax";;
+--
+-- assert(0xF0 | 0xCC ~ 0xAA & 0xFD == 0xF4)
+-- assert(0xFD & 0xAA ~ 0xCC | 0xF0 == 0xF4)
+-- assert(0xF0 & 0x0F + 1 == 0x10)
+--
+-- local function checkload (s, msg)
+--   assert(string.find(select(2, load(s)), msg))
+-- end
+--
+-- -- testing semicollons
+-- local a
+-- do ;;; end
+-- ; do ; a = 3; assert(a == 3) end;
+-- ;
+--
+--
+-- -- invalid operations should not raise errors when not executed
+-- if false then a = 3 // 0; a = 0 % 0 end
+--
+--
+-- -- testing priorities
+--
+-- assert(2^3^2 == 2^(3^2));
+-- assert(2^3*4 == (2^3)*4);
+-- assert(2.0^-2 == 1/4 and -2^- -2 == - - -4);
+-- assert(not nil and 2 and not(2>3 or 3<2));
+-- assert(-3-1-5 == 0+0-9);
+-- assert(-2^2 == -4 and (-2)^2 == 4 and 2*2-3-1 == 0);
+-- assert(-3%5 == 2 and -3+5 == 2)
+-- assert(2*1+3/3 == 3 and 1+2 .. 3*1 == "33");
+-- assert(not(2+1 > 3*1) and "a".."b" > "a");
+--
+--
+-- assert(3^4//2^3//5 == 2)
+--
+-- assert(-3+4*5//2^3^2//9+4%10/3 == (-3)+(((4*5)//(2^(3^2)))//9)+((4%10)/3))
+--
+-- assert(not ((true or false) and nil))
+-- assert(      true or false  and nil)
 
 
-local b=10
-local a; repeat local b; a,b=1,2; assert(a+1==b); until a+b==3
-
-
-assert(x == 1)
-
-f(2)
-assert(type(f) == 'function')
-
+-- old bug
+-- assert((1 or false) and true)
+-- assert((((1 or false) and true) or false) == true)
+-- assert((((nil and true) or false) and true) == false)
+--
+-- local a,b = 1,nil;
+-- assert(-(1 or 2) == -1 and (1 and 2)+(-1.25 or -4) == 0.75);
+-- local x = ((b or a)+1 == 2 and (10 or a)+1 == 11); assert(x);
+-- x = (((2<3) or 1) == true and (2<3 and 4) == 4); assert(x);
+--
+-- local x, y = 1, 2;
+-- assert((x>y) and x or y == 2);
+-- x,y=2,1;
+-- assert((x>y) and x or y == 2);
+--
+-- assert(1234567890 == tonumber('1234567890') and 1234567890+1 == 1234567891)

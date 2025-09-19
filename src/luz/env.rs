@@ -1,8 +1,5 @@
 use std::{
-    cell::RefCell,
-    collections::{HashMap, VecDeque},
-    rc::Rc,
-    result,
+    arch::x86_64::_rdtsc, cell::RefCell, collections::{HashMap, VecDeque}, rc::Rc
 };
 
 use crate::{
@@ -38,6 +35,8 @@ macro_rules! luz_table {
 fn make_env_table() -> LuzObj {
     let mut table = HashMap::new();
 
+    table.insert(LuzObj::str("_VERSION"), LuzObj::str("Lua 5.4"));
+
     table.insert(
         LuzObj::str("print"),
         luz_fn!([0, _runner, _args, vararg]() {
@@ -63,7 +62,7 @@ fn make_env_table() -> LuzObj {
 
     table.insert(
         LuzObj::str("assert"),
-        luz_fn!([0, _runner, _args, vararg]() {
+        luz_fn!([0, runner, _args, vararg]() {
             let mut vararg = vararg;
             let Some(condition) = vararg.get(0).cloned() else {
                 return Err(LuzRuntimeError::message(
@@ -74,6 +73,7 @@ fn make_env_table() -> LuzObj {
                 Ok(vararg)
             } else {
                 if vararg.len() < 2 {
+                    runner.dump_trace();
                     Err(LuzRuntimeError::message("assertion failed!"))
                 } else {
                     // Here we use swap_remove instead of just 'remove'
@@ -167,6 +167,17 @@ fn make_env_table() -> LuzObj {
                     ]
                 }
             })
+        }),
+    );
+
+    table.insert(
+        LuzObj::str("rawget"), 
+        luz_fn!([2, _runner, args, _vararg]() {
+            let LuzObj::Table(t) = &args[0] else {
+                return Err(LuzRuntimeError::message("bad argument #1 to 'rawget' (a table expected)"))
+            };
+            let t = t.borrow();
+            Ok(vec![t.get(&args[1]).clone()])
         }),
     );
 

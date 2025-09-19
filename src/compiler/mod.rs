@@ -1,7 +1,8 @@
 use crate::{
     ast::{
         AssignStat, Binop, CmpOp, DoStat, Exp, ExpAccess, ExpTableConstructor,
-        ExpTableConstructorField, FuncCall, FuncDef, IfStat, RepeaStat, ReturnStat, Stat,
+        ExpTableConstructorField, FuncCall, FuncDef, IfStat, LogicCmpOp, RepeaStat, ReturnStat,
+        Stat,
     },
     compiler::{
         ctx::{CompilerCtx, CompilerCtxBuilder, RegOrUpvalue, Upvalue},
@@ -348,30 +349,43 @@ impl Compiler {
     fn concat_branches(
         &self,
         has_cmp: bool,
-        mut left: (Vec<Instruction>, bool),
+        is_left_cmp: bool,
+        mut left: Vec<Instruction>,
+        op: LogicCmpOp,
         right: Vec<Instruction>,
     ) -> Vec<Instruction> {
-        let last_jmp = Instruction::rfind_inst(LuaOpCode::OP_JMP, &left.0);
+        let last_jmp = &left.last().and_then(|inst| {
+            if inst.op() == LuaOpCode::OP_JMP {
+                Some(left.len() - 1)
+            } else {
+                None
+            }
+        });
+        let offset = if has_cmp {
+            if is_left_cmp {
+                0
+            } else {
+                2
+            }
+        } else {
+            if op == LogicCmpOp::Or {
+                -1
+            } else {
+                0
+            }
+        };
         match last_jmp {
             Some(jmp_idx) => {
-                let offset = if has_cmp {
-                    if left.1 {
-                        0
-                    } else {
-                        2
-                    }
-                } else {
-                    0
-                };
-                left.0[jmp_idx] = Instruction::op_jmp((right.len() as isize + offset) as i32)
+                left[*jmp_idx] = Instruction::op_jmp((right.len() as isize + offset) as i32)
             }
-            None => {} // None => {
-                       //     left.push(Instruction::op_test(left_test_reg, false));
-                       //     left.push(Instruction::op_jmp(right.len() as u32));
-                       // }
+            None => {
+                if right.len() > 0 {
+                    left.push(Instruction::op_jmp((right.len() as isize + offset) as i32));
+                }
+            }
         }
         let mut final_insts = vec![];
-        for inst in left.0 {
+        for inst in left {
             final_insts.push(inst);
         }
         for inst in right {
@@ -969,12 +983,25 @@ impl Compiler {
         let Exp::LogicCmpOp { op, lhs, rhs } = exp else {
             unreachable!()
         };
+        let is_and = matches!(op, LogicCmpOp::And);
+
         let mut has_cmp = None;
         let mut branches = self.visit_inner_logicop(ctx, exp, 0, &mut has_cmp)?;
 
-        let mut insts = branches.into_iter().rfold(vec![], |insts, branch| {
-            self.concat_branches(has_cmp.is_some(), branch, insts)
-        });
+        if let Some(last_branch) = branches.last_mut() {
+            if last_branch.0.last().is_some_and(|last_inst| {
+                matches!(last_inst.op(), LuaOpCode::OP_TEST | LuaOpCode::OP_TESTSET)
+            }) {
+                // Remove the useless "test" OP
+                last_branch.0.pop();
+            }
+        }
+
+        let mut insts = branches
+            .into_iter()
+            .rfold(vec![], |insts, (branch, is_left_cmp, op)| {
+                self.concat_branches(has_cmp.is_some(), is_left_cmp, branch, op, insts)
+            });
 
         let len = insts.len() - 2;
         if let [Instruction::iABC(iABC { k, .. }), Instruction::isJ(isJ { b, .. })] =
@@ -982,7 +1009,9 @@ impl Compiler {
         {
             if *b == MAX_HALF_sJ {
                 *b += 1;
-                *k = !*k;
+                if is_and {
+                    *k = !*k;
+                }
             }
         }
 
@@ -1003,10 +1032,13 @@ impl Compiler {
         exp: &Exp,
         depth: usize,
         has_cmp: &mut Option<u8>,
-    ) -> Result<Vec<(Vec<Instruction>, bool)>, LuzError> {
+    ) -> Result<Vec<(Vec<Instruction>, bool, LogicCmpOp)>, LuzError> {
         let Exp::LogicCmpOp { op, lhs, rhs } = exp else {
             unreachable!()
         };
+
+        let is_and = matches!(op, LogicCmpOp::And);
+
         let nb_inst_before = ctx.scope().instructions().len();
 
         let mut branches = vec![];
@@ -1038,7 +1070,7 @@ impl Compiler {
                     }
                 };
                 if dest != val {
-                    ctx.push_inst(Instruction::op_testset(dest, val, true));
+                    ctx.push_inst(Instruction::op_testset(dest, val, !is_and));
                 }
                 ctx.push_inst(Instruction::op_jmp(1));
                 let mut lhs_instructions = {
@@ -1048,7 +1080,7 @@ impl Compiler {
                         .drain(nb_inst_before..)
                         .collect::<Vec<_>>()
                 };
-                branches.push((lhs_instructions, false));
+                branches.push((lhs_instructions, false, *op));
             }
             Exp::CmpOp { .. } => {
                 self.visit_exp(lhs, ctx)?;
@@ -1073,8 +1105,11 @@ impl Compiler {
                 else {
                     unreachable!();
                 };
-                *k = !*k;
-                branches.push((lhs_instructions, true));
+
+                if is_and {
+                    *k = !*k;
+                }
+                branches.push((lhs_instructions, true, *op));
             }
             _ => {
                 self.visit_exp(lhs, ctx)?;
@@ -1088,9 +1123,9 @@ impl Compiler {
                 let lhs_test_addr = ctx.get_or_push_free_register();
                 let last_jmp = Instruction::rfind_inst(LuaOpCode::OP_JMP, &lhs_instructions);
                 if last_jmp.is_none() {
-                    lhs_instructions.push(Instruction::op_test(lhs_test_addr, false));
+                    lhs_instructions.push(Instruction::op_test(lhs_test_addr, !is_and));
                 }
-                branches.push((lhs_instructions, false));
+                branches.push((lhs_instructions, false, *op));
             }
         }
 
@@ -1112,8 +1147,10 @@ impl Compiler {
                 else {
                     unreachable!();
                 };
-                *k = !*k;
-                branches.push((rhs_instructions, true));
+                if is_and {
+                    *k = !*k;
+                }
+                branches.push((rhs_instructions, true, *op));
             }
             Exp::Name(ref name) => {
                 let dest = ctx.get_or_push_free_register();
@@ -1136,7 +1173,7 @@ impl Compiler {
                     }
                 };
                 if dest != val {
-                    ctx.push_inst(Instruction::op_testset(dest, val, true));
+                    ctx.push_inst(Instruction::op_testset(dest, val, !is_and));
                 }
                 ctx.push_inst(Instruction::op_jmp(1));
                 let mut rhs_instructions = {
@@ -1146,7 +1183,7 @@ impl Compiler {
                         .drain(nb_inst_before..)
                         .collect::<Vec<_>>()
                 };
-                branches.push((rhs_instructions, false));
+                branches.push((rhs_instructions, false, *op));
             }
             _ => {
                 self.visit_exp(rhs, ctx)?;
@@ -1175,12 +1212,12 @@ impl Compiler {
                     };
                     let val = b;
                     let dest = a;
-                    rhs_instructions.push(Instruction::op_testset(dest, val, true));
+                    rhs_instructions.push(Instruction::op_testset(dest, val, !is_and));
                 } else {
                     let reg = ctx.get_or_push_free_register();
-                    rhs_instructions.push(Instruction::op_test(reg, true));
+                    rhs_instructions.push(Instruction::op_test(reg, !is_and));
                 }
-                branches.push((rhs_instructions, false));
+                branches.push((rhs_instructions, false, *op));
             }
         }
 

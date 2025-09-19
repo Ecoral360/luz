@@ -1,8 +1,11 @@
+use core::f64;
 use std::{
     fmt::Display,
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub},
     str::FromStr,
 };
+
+use crate::runner::err::LuzRuntimeError;
 
 use super::{
     err::LuzError,
@@ -21,6 +24,28 @@ impl Numeral {
     }
     pub fn is_float(&self) -> bool {
         matches!(self, Self::Float(_))
+    }
+
+    pub fn floor_div(self, rhs: Self) -> Result<Self, LuzError> {
+        let (lhs, rhs) = match (self, rhs) {
+            (Numeral::Int(i1), Numeral::Int(i2)) => (i1, i2),
+            (Numeral::Int(i), Numeral::Float(f)) => (i, f as i64),
+            (Numeral::Float(f), Numeral::Int(i)) => (f as i64, i),
+            (Numeral::Float(f1), Numeral::Float(f2)) => (f1 as i64, f2 as i64),
+        };
+
+        if rhs == 0 {
+            return Err(LuzRuntimeError::message("attempt to divide by 0"))?;
+        }
+
+        Ok(Numeral::Int(lhs / rhs))
+    }
+
+    pub fn floor(self) -> Self {
+        match self {
+            Numeral::Int(_) => self,
+            Numeral::Float(f) => Self::Int(f.floor() as i64),
+        }
     }
 }
 
@@ -90,8 +115,53 @@ impl_op! {
     [Add, add, +]
     [Mul, mul, *]
     [Sub, sub, -]
-    [Div, div, /]
-    [Rem, rem, %]
+}
+
+impl Rem for Numeral {
+    type Output = Result<Self, LuzError>;
+
+    fn rem(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Numeral::Int(i1), Numeral::Int(i2)) => {
+                if i2 == 0 {
+                    return Err(LuzRuntimeError::message("attempt to perform 'n%0'").into());
+                }
+                let r = i1 % i2; // Rust remainder
+                return Ok(Numeral::Int(if (r != 0) && ((r < 0) != (i2 < 0)) {
+                    r + i2
+                } else {
+                    r
+                }));
+            }
+            _ => {}
+        };
+
+        Ok(self - (self / rhs).floor() * rhs)
+    }
+}
+
+impl Div for Numeral {
+    type Output = Self;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        let (lhs, rhs) = match (self, rhs) {
+            (Numeral::Int(i1), Numeral::Int(i2)) => (i1 as f64, i2 as f64),
+            (Numeral::Int(i), Numeral::Float(f)) => (i as f64, f),
+            (Numeral::Float(f), Numeral::Int(i)) => (f, i as f64),
+            (Numeral::Float(f1), Numeral::Float(f2)) => (f1, f2),
+        };
+
+        if rhs == 0.0 {
+            match lhs.signum() {
+                0.0 => Numeral::Float(f64::NAN),
+                1.0 => Numeral::Float(f64::INFINITY),
+                -1.0 => Numeral::Float(f64::NEG_INFINITY),
+                _ => unreachable!(),
+            }
+        } else {
+            Numeral::Float(lhs / rhs)
+        }
+    }
 }
 
 impl_op_int! {

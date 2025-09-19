@@ -120,7 +120,17 @@ impl Exp {
 
     pub fn do_binop(self, binop: Binop, rhs: Exp) -> Result<Self, LuzError> {
         Ok(match (self, rhs) {
-            (Self::Literal(obj), Self::Literal(obj2)) => obj.apply_binop(binop, obj2)?.into(),
+            (ref s @ Self::Literal(ref obj), ref rhs @ Self::Literal(ref obj2)) => {
+                let result = obj.clone().apply_binop(binop, obj2.clone());
+                match result {
+                    Ok(result) => result.into(),
+                    Err(_) => Self::Binop {
+                        lhs: Box::new(s.clone()),
+                        op: binop,
+                        rhs: Box::new(rhs.clone()),
+                    },
+                }
+            }
             (s, rhs) => Self::Binop {
                 lhs: Box::new(s),
                 op: binop,
@@ -142,6 +152,19 @@ impl Exp {
 
     pub fn do_logic_cmp(self, logic_cmp_op: LogicCmpOp, rhs: Exp) -> Result<Self, LuzError> {
         Ok(match (self, rhs) {
+            (Self::Literal(LuzObj::Boolean(b)), rhs) => {
+                if b {
+                    match logic_cmp_op {
+                        LogicCmpOp::And => rhs,
+                        LogicCmpOp::Or => LuzObj::Boolean(b).into(),
+                    }
+                } else {
+                    match logic_cmp_op {
+                        LogicCmpOp::And => LuzObj::Boolean(b).into(),
+                        LogicCmpOp::Or => rhs,
+                    }
+                }
+            }
             (s, rhs) => Self::LogicCmpOp {
                 lhs: Box::new(s),
                 op: logic_cmp_op,
@@ -214,7 +237,7 @@ impl TryFrom<Pair<'_, Rule>> for Binop {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogicCmpOp {
     And,
     Or,
@@ -307,7 +330,7 @@ impl TryFrom<Pair<'_, Rule>> for Unop {
             Rule::Neg => Self::Neg,
             Rule::Pound => Self::Len,
             Rule::Not => Self::Not,
-            Rule::Tilde => Self::Inv,
+            Rule::Bnot => Self::Inv,
 
             rule => Err(PestError::new_from_span(
                 pest::error::ErrorVariant::ParsingError {
