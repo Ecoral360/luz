@@ -2,7 +2,7 @@ use crate::{
     ast::{
         AssignStat, Binop, CmpOp, DoStat, Exp, ExpAccess, ExpTableConstructor,
         ExpTableConstructorField, FuncCall, FuncDef, IfStat, LogicCmpOp, RepeaStat, ReturnStat,
-        Stat,
+        Stat, Unop,
     },
     compiler::{
         ctx::{CompilerCtx, CompilerCtxBuilder, RegOrUpvalue, Upvalue},
@@ -166,6 +166,13 @@ impl Compiler {
                 {
                     Ok(ExpEval::InImmediate((*i + 128) as u8))
                 }
+                LuzObj::Numeral(Numeral::Float(f))
+                    if supports_immidiate
+                        && f.floor() == *f
+                        && (-128..128).contains(&(*f as i32)) =>
+                {
+                    Ok(ExpEval::InImmediate((*f + 128.0) as u8))
+                }
                 LuzObj::Numeral(Numeral::Int(i))
                     if loadi && (-(MAX_HALF_sBx as i64)..(MAX_HALF_sBx as i64)).contains(i) =>
                 {
@@ -173,12 +180,21 @@ impl Compiler {
                     ctx.push_inst(Instruction::op_loadi(reg, *i as u32));
                     Ok(ExpEval::InRegister(reg))
                 }
+                LuzObj::Numeral(Numeral::Float(f))
+                    if loadi
+                        && f.floor() == *f
+                        && (-(MAX_HALF_sBx as f64)..(MAX_HALF_sBx as f64)).contains(f) =>
+                {
+                    let reg = ctx.get_or_push_free_register();
+                    ctx.push_inst(Instruction::op_loadf(reg, *f));
+                    Ok(ExpEval::InRegister(reg))
+                }
                 LuzObj::Nil => {
                     let reg = ctx.get_or_push_free_register();
                     ctx.push_inst(Instruction::op_loadnil(reg, 0));
                     Ok(ExpEval::InRegister(reg))
                 }
-                LuzObj::Boolean(b) => {
+                LuzObj::Boolean(b) if !supports_constants => {
                     let reg = ctx.get_or_push_free_register();
                     if *b {
                         ctx.push_inst(Instruction::op_loadtrue(reg));
@@ -985,54 +1001,65 @@ impl Compiler {
         };
         let is_and = matches!(op, LogicCmpOp::And);
 
-        let mut has_cmp = None;
-        let mut branches = self.visit_inner_logicop(ctx, exp, 0, &mut has_cmp)?;
+        let jmps = self.visit_inner_logicop2(ctx, exp, 0)?;
+        let len = ctx.instructions_len() - 2;
+        // if let [Instruction::iABC(iABC { k, .. }), Instruction::isJ(isJ { b, .. })] =
+        //     &mut insts[len..]
+        // {
+        //     if *b == MAX_HALF_sJ {
+        //         *b += 1;
+        //         if is_and {
+        //             *k = !*k;
+        //         }
+        //     }
+        // }
+        // let mut has_cmp = None;
+        // let mut branches = self.visit_inner_logicop(ctx, exp, 0, &mut has_cmp)?;
+        //
+        // if let Some(last_branch) = branches.last_mut() {
+        //     if last_branch.0.last().is_some_and(|last_inst| {
+        //         matches!(last_inst.op(), LuaOpCode::OP_TEST | LuaOpCode::OP_TESTSET)
+        //     }) {
+        //         // Remove the useless "test" OP
+        //         last_branch.0.pop();
+        //     }
+        // }
+        //
+        // let mut insts = branches
+        //     .into_iter()
+        //     .rfold(vec![], |insts, (branch, is_left_cmp, op)| {
+        //         self.concat_branches(has_cmp.is_some(), is_left_cmp, branch, op, insts)
+        //     });
 
-        if let Some(last_branch) = branches.last_mut() {
-            if last_branch.0.last().is_some_and(|last_inst| {
-                matches!(last_inst.op(), LuaOpCode::OP_TEST | LuaOpCode::OP_TESTSET)
-            }) {
-                // Remove the useless "test" OP
-                last_branch.0.pop();
-            }
-        }
+        // let len = insts.len() - 2;
+        // if let [Instruction::iABC(iABC { k, .. }), Instruction::isJ(isJ { b, .. })] =
+        //     &mut insts[len..]
+        // {
+        //     if *b == MAX_HALF_sJ {
+        //         *b += 1;
+        //         if is_and {
+        //             *k = !*k;
+        //         }
+        //     }
+        // }
 
-        let mut insts = branches
-            .into_iter()
-            .rfold(vec![], |insts, (branch, is_left_cmp, op)| {
-                self.concat_branches(has_cmp.is_some(), is_left_cmp, branch, op, insts)
-            });
-
-        let len = insts.len() - 2;
-        if let [Instruction::iABC(iABC { k, .. }), Instruction::isJ(isJ { b, .. })] =
-            &mut insts[len..]
-        {
-            if *b == MAX_HALF_sJ {
-                *b += 1;
-                if is_and {
-                    *k = !*k;
-                }
-            }
-        }
-
-        for inst in insts {
-            ctx.push_inst(inst);
-        }
-        if let Some(has_cmp) = has_cmp {
-            ctx.push_inst(Instruction::op_lfalseskip(has_cmp));
-            ctx.push_inst(Instruction::op_loadtrue(has_cmp));
-        }
+        // for inst in insts {
+        //     ctx.push_inst(inst);
+        // }
+        // if let Some(has_cmp) = has_cmp {
+        //     ctx.push_inst(Instruction::op_lfalseskip(has_cmp));
+        //     ctx.push_inst(Instruction::op_loadtrue(has_cmp));
+        // }
 
         Ok(())
     }
 
-    fn visit_inner_logicop(
+    fn visit_inner_logicop2(
         &mut self,
         ctx: &mut CompilerCtx,
         exp: &Exp,
         depth: usize,
-        has_cmp: &mut Option<u8>,
-    ) -> Result<Vec<(Vec<Instruction>, bool, LogicCmpOp)>, LuzError> {
+    ) -> Result<Vec<(u32, Option<bool>, LogicCmpOp)>, LuzError> {
         let Exp::LogicCmpOp { op, lhs, rhs } = exp else {
             unreachable!()
         };
@@ -1041,12 +1068,22 @@ impl Compiler {
 
         let nb_inst_before = ctx.scope().instructions().len();
 
-        let mut branches = vec![];
+        let mut jumps = vec![];
+        let mut post_cmp = vec![];
 
-        match **lhs {
-            Exp::LogicCmpOp { .. } => {
-                for branch in self.visit_inner_logicop(ctx, lhs, depth + 1, has_cmp)? {
-                    branches.push(branch);
+        match lhs.normalize() {
+            Exp::LogicCmpOp { op: inner_op, .. } => {
+                let lhs_jumps = self.visit_inner_logicop2(ctx, lhs, depth + 1)?;
+                // We pop the LFALSEKIP and LOADTRUE
+                if lhs_jumps.iter().any(|(_, is_cmp, _)| is_cmp.is_some()) {
+                    post_cmp = vec![
+                        ctx.pop_instruction().unwrap(),
+                        ctx.pop_instruction().unwrap(),
+                    ];
+                    post_cmp.reverse();
+                }
+                for jmp in lhs_jumps {
+                    jumps.push(jmp);
                 }
             }
             Exp::Name(ref name) => {
@@ -1072,85 +1109,69 @@ impl Compiler {
                 if dest != val {
                     ctx.push_inst(Instruction::op_testset(dest, val, !is_and));
                 }
+                jumps.push((ctx.instructions_len() as u32, None, *op));
                 ctx.push_inst(Instruction::op_jmp(1));
-                let mut lhs_instructions = {
-                    let mut scope = ctx.scope_mut();
-                    scope
-                        .instructions_mut()
-                        .drain(nb_inst_before..)
-                        .collect::<Vec<_>>()
-                };
-                branches.push((lhs_instructions, false, *op));
             }
             Exp::CmpOp { .. } => {
                 self.visit_exp(lhs, ctx)?;
-                let mut lhs_instructions = {
-                    let mut scope = ctx.scope_mut();
-                    scope
-                        .instructions_mut()
-                        .drain(nb_inst_before..)
-                        .collect::<Vec<_>>()
-                };
-                let (load_t, load_f) = (
-                    lhs_instructions.pop().unwrap(),
-                    lhs_instructions.pop().unwrap(),
-                );
-                let Instruction::iABC(iABC { a, .. }) = load_t else {
-                    unreachable!()
-                };
-                has_cmp.replace(a);
+                post_cmp = vec![
+                    ctx.pop_instruction().unwrap(),
+                    ctx.pop_instruction().unwrap(),
+                ];
+                post_cmp.reverse();
 
-                let len = lhs_instructions.len();
-                let Instruction::iABC(iABC { k, .. }) = lhs_instructions.get_mut(len - 2).unwrap()
-                else {
-                    unreachable!();
-                };
-
-                if is_and {
-                    *k = !*k;
-                }
-                branches.push((lhs_instructions, true, *op));
-            }
-            _ => {
-                self.visit_exp(lhs, ctx)?;
-                let mut lhs_instructions = {
-                    let mut scope = ctx.scope_mut();
-                    scope
-                        .instructions_mut()
-                        .drain(nb_inst_before..)
-                        .collect::<Vec<_>>()
-                };
-                let lhs_test_addr = ctx.get_or_push_free_register();
-                let last_jmp = Instruction::rfind_inst(LuaOpCode::OP_JMP, &lhs_instructions);
-                if last_jmp.is_none() {
-                    lhs_instructions.push(Instruction::op_test(lhs_test_addr, !is_and));
-                }
-                branches.push((lhs_instructions, false, *op));
-            }
-        }
-
-        match **rhs {
-            Exp::CmpOp { .. } => {
-                self.visit_exp(rhs, ctx)?;
-                let mut rhs_instructions = {
-                    let mut scope = ctx.scope_mut();
-                    scope
-                        .instructions_mut()
-                        .drain(nb_inst_before..)
-                        .collect::<Vec<_>>()
-                };
-
-                let nb_drop = rhs_instructions.len() - 2;
-                rhs_instructions.truncate(nb_drop);
+                let len = ctx.instructions_len();
+                let mut scope_mut = ctx.scope_mut();
                 let Instruction::iABC(iABC { k, .. }) =
-                    rhs_instructions.get_mut(nb_drop - 2).unwrap()
+                    scope_mut.instructions_mut().get_mut(len - 2).unwrap()
                 else {
                     unreachable!();
                 };
-                if is_and {
+
+                if !is_and {
                     *k = !*k;
                 }
-                branches.push((rhs_instructions, true, *op));
+                jumps.push((len as u32 - 1, Some(*k), *op));
+            }
+            _ => {
+                self.visit_exp(lhs, ctx)?;
+                let lhs_test_addr = ctx.get_or_push_free_register();
+                let inv_test =
+                    if matches!(**lhs, Exp::Literal(LuzObj::Boolean(false) | LuzObj::Nil)) {
+                        is_and
+                    } else {
+                        !is_and
+                    };
+                ctx.push_inst(Instruction::op_test(lhs_test_addr, inv_test));
+                jumps.push((ctx.instructions_len() as u32, None, *op));
+                ctx.push_inst(Instruction::op_jmp(1));
+            }
+        }
+
+        match rhs.normalize() {
+            Exp::CmpOp { .. } => {
+                self.visit_exp(rhs, ctx)?;
+
+                post_cmp = vec![
+                    ctx.pop_instruction().unwrap(),
+                    ctx.pop_instruction().unwrap(),
+                ];
+                post_cmp.reverse();
+
+                let len = ctx.instructions_len();
+                let mut scope_mut = ctx.scope_mut();
+                let Instruction::iABC(iABC { k, .. }) =
+                    scope_mut.instructions_mut().get_mut(len - 2).unwrap()
+                else {
+                    unreachable!();
+                };
+
+                if depth != 0 {
+                    if is_and {
+                        *k = !*k;
+                    }
+                    jumps.push((len as u32 - 1, Some(*k), *op));
+                }
             }
             Exp::Name(ref name) => {
                 let dest = ctx.get_or_push_free_register();
@@ -1173,55 +1194,109 @@ impl Compiler {
                     }
                 };
                 if dest != val {
-                    ctx.push_inst(Instruction::op_testset(dest, val, !is_and));
+                    if depth != 0 {
+                        ctx.push_inst(Instruction::op_testset(dest, val, is_and));
+                        jumps.push((ctx.instructions_len() as u32, None, *op));
+                        ctx.push_inst(Instruction::op_jmp(1));
+                    } else {
+                        ctx.push_inst(Instruction::op_move(dest, val));
+                    }
                 }
-                ctx.push_inst(Instruction::op_jmp(1));
-                let mut rhs_instructions = {
-                    let mut scope = ctx.scope_mut();
-                    scope
-                        .instructions_mut()
-                        .drain(nb_inst_before..)
-                        .collect::<Vec<_>>()
-                };
-                branches.push((rhs_instructions, false, *op));
             }
             _ => {
                 self.visit_exp(rhs, ctx)?;
 
-                let mut rhs_instructions = {
-                    let mut scope = ctx.scope_mut();
-                    scope
-                        .instructions_mut()
-                        .drain(nb_inst_before..)
-                        .collect::<Vec<_>>()
-                };
-
-                let rhs_last_inst = {
-                    if rhs_instructions
-                        .last()
-                        .is_some_and(|inst| inst.op() == LuaOpCode::OP_MOVE)
-                    {
-                        rhs_instructions.pop()
-                    } else {
-                        None
-                    }
-                };
-                if let Some(last_move) = rhs_last_inst {
-                    let Instruction::iABC(iABC { c, b, k, a, op }) = last_move else {
-                        unreachable!()
+                if depth != 0 {
+                    let rhs_last_inst = {
+                        if ctx
+                            .instructions()
+                            .last()
+                            .is_some_and(|inst| inst.op() == LuaOpCode::OP_MOVE)
+                        {
+                            ctx.pop_instruction()
+                        } else {
+                            None
+                        }
                     };
-                    let val = b;
-                    let dest = a;
-                    rhs_instructions.push(Instruction::op_testset(dest, val, !is_and));
-                } else {
-                    let reg = ctx.get_or_push_free_register();
-                    rhs_instructions.push(Instruction::op_test(reg, !is_and));
+                    let inv_test =
+                        if matches!(**lhs, Exp::Literal(LuzObj::Boolean(false) | LuzObj::Nil)) {
+                            !is_and
+                        } else {
+                            is_and
+                        };
+                    if let Some(last_move) = rhs_last_inst {
+                        let Instruction::iABC(iABC { c, b, k, a, op }) = last_move else {
+                            unreachable!()
+                        };
+                        let val = b;
+                        let dest = a;
+                        ctx.push_inst(Instruction::op_testset(dest, val, inv_test));
+                    } else {
+                        let reg = ctx.get_or_push_free_register();
+                        ctx.push_inst(Instruction::op_test(reg, inv_test));
+                    }
+                    jumps.push((ctx.instructions_len() as u32, None, *op));
+                    ctx.push_inst(Instruction::op_jmp(1));
                 }
-                branches.push((rhs_instructions, false, *op));
             }
         }
 
-        Ok(branches)
+        let has_cmp = !post_cmp.is_empty();
+        if depth == 0
+            && has_cmp
+            && ctx
+                .instructions()
+                .last()
+                .is_some_and(|inst| inst.op() != LuaOpCode::OP_JMP)
+        {
+            ctx.push_inst(Instruction::op_jmp(2));
+        }
+
+        let len = ctx.instructions_len() - 1;
+        for (idx, (jmp_addr, is_cmp, jmp_op)) in jumps.iter().enumerate() {
+            let mut scope_mut = ctx.scope_mut();
+            let instr_mut = scope_mut.instructions_mut();
+            let Instruction::isJ(isJ { b, .. }) = &mut instr_mut[*jmp_addr as usize] else {
+                unreachable!()
+            };
+            *b = if *jmp_op == LogicCmpOp::And || idx == jumps.len() - 1 {
+                let next = jumps[idx + 1..]
+                    .iter()
+                    .find_map(|(idx, _, op)| {
+                        if *op == LogicCmpOp::And {
+                            Some(*idx as usize)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(len);
+                next as u32 - *jmp_addr + MAX_HALF_sJ
+            } else {
+                jumps[idx + 1].0 - *jmp_addr + MAX_HALF_sJ
+            };
+            if let Some(cmp) = is_cmp {
+                if *cmp {
+                    *b += 1;
+                }
+            } else if has_cmp {
+                *b += 2;
+            }
+        }
+
+        for inst in post_cmp {
+            ctx.push_inst(inst);
+        }
+        // if let [Instruction::iABC(iABC { k, .. }), Instruction::isJ(isJ { b, .. })] =
+        //     &mut ctx.instructions()[len..]
+        // {
+        //     if *b == MAX_HALF_sJ {
+        //         *b += 1;
+        //         if is_and {
+        //             *k = !*k;
+        //         }
+        //     }
+        // }
+        Ok(jumps)
     }
 
     fn visit_cmpop(&mut self, ctx: &mut CompilerCtx, exp: &Exp) -> Result<(), LuzError> {
@@ -1230,18 +1305,18 @@ impl Compiler {
         };
 
         let lhs_result = ctx.get_or_push_free_register();
-        let lhs_addr =
-            self.handle_exp(ctx, lhs, true, matches!(op, CmpOp::Eq | CmpOp::Neq), true)?;
+        let lhs_addr = self.handle_exp(ctx, lhs, true, false, false)?;
 
         let is_lhs_immidiate = matches!(lhs_addr, ExpEval::InImmediate(_));
         let is_lhs_constant = matches!(lhs_addr, ExpEval::InConstant(_));
 
         let (lhs_dirty, mut lhs_addr) = match lhs_addr {
-            ExpEval::InImmediate(i) | ExpEval::InRegister(i) => {
+            ExpEval::InImmediate(i) => (None, i),
+            ExpEval::InRegister(i) => {
                 ctx.claim_register(lhs_result);
                 (Some(lhs_result), i)
             }
-            ExpEval::InConstant(c) => (None, c),
+            // ExpEval::InConstant(c) => (None, c),
             ExpEval::InUpvalue { in_table, upvalue } => {
                 self.visit_exp(lhs, ctx)?;
                 let reg = ctx.claim_next_free_register();
@@ -1255,8 +1330,13 @@ impl Compiler {
             }
         };
 
-        let rhs_addr =
-            self.handle_exp(ctx, rhs, true, matches!(op, CmpOp::Eq | CmpOp::Neq), true)?;
+        let rhs_addr = self.handle_exp(
+            ctx,
+            rhs,
+            !is_lhs_immidiate,
+            matches!(op, CmpOp::Eq | CmpOp::Neq),
+            true,
+        )?;
 
         let is_rhs_immidiate = matches!(rhs_addr, ExpEval::InImmediate(_));
         let is_rhs_constant = matches!(rhs_addr, ExpEval::InConstant(_));
@@ -1288,32 +1368,57 @@ impl Compiler {
         let is_immidiate = is_lhs_immidiate || is_rhs_immidiate;
         if is_lhs_immidiate || is_lhs_constant {
             op = op.flip_op();
+            (lhs_addr, rhs_addr) = (rhs_addr, lhs_addr);
         }
 
         match op {
             CmpOp::Eq | CmpOp::Neq => {
-                if is_rhs_immidiate {
-                    ctx.push_inst(Instruction::op_eqi(lhs_addr, rhs_addr, op == CmpOp::Neq));
+                if is_immidiate {
+                    ctx.push_inst(Instruction::op_eqi(
+                        lhs_addr,
+                        rhs_addr,
+                        op != CmpOp::Neq && !ctx.in_not(),
+                    ));
                 } else {
                     ctx.push_inst(Instruction::op_eq(
                         lhs_addr,
                         rhs_addr,
                         is_rhs_constant,
-                        op == CmpOp::Neq,
+                        op != CmpOp::Neq && !ctx.in_not(),
                     ));
                 }
             }
             CmpOp::Lt => {
-                ctx.push_inst(Instruction::op_lt(lhs_addr, rhs_addr, is_immidiate, false));
+                ctx.push_inst(Instruction::op_lt(
+                    lhs_addr,
+                    rhs_addr,
+                    is_immidiate,
+                    ctx.in_not(),
+                ));
             }
             CmpOp::Gt => {
-                ctx.push_inst(Instruction::op_gt(lhs_addr, rhs_addr, is_immidiate, false));
+                ctx.push_inst(Instruction::op_gt(
+                    lhs_addr,
+                    rhs_addr,
+                    is_immidiate,
+                    ctx.in_not(),
+                ));
             }
             CmpOp::LtEq => {
-                ctx.push_inst(Instruction::op_le(lhs_addr, rhs_addr, is_immidiate, false));
+                ctx.push_inst(Instruction::op_le(
+                    lhs_addr,
+                    rhs_addr,
+                    is_immidiate,
+                    ctx.in_not(),
+                ));
             }
             CmpOp::GtEq => {
-                ctx.push_inst(Instruction::op_ge(rhs_addr, lhs_addr, is_immidiate, false));
+                ctx.push_inst(Instruction::op_ge(
+                    rhs_addr,
+                    lhs_addr,
+                    is_immidiate,
+                    ctx.in_not(),
+                ));
             }
         }
 
@@ -1456,6 +1561,7 @@ impl Compiler {
             obj_fields.len() as u8,
             arr_fields.len() as u8,
         ));
+        ctx.push_inst(Instruction::op_extraarg(0));
 
         let mut claimed = vec![];
         for arr_field in arr_fields {
@@ -1544,10 +1650,18 @@ impl Compiler {
 
         let dest = ctx.get_or_push_free_register();
 
-        self.visit_exp(exp, ctx);
         let val_addr = ctx.get_or_push_free_register();
-
-        ctx.push_inst(Instruction::op_unop(*unop, dest, val_addr));
+        if *unop == Unop::Not
+            && matches!(exp.normalize(), Exp::CmpOp { .. } | Exp::LogicCmpOp { .. })
+        {
+            self.visit_exp(
+                exp,
+                &mut ctx.new_with(CompilerCtxBuilder::default().in_not(!ctx.in_not())),
+            );
+        } else {
+            self.visit_exp(exp, ctx);
+            ctx.push_inst(Instruction::op_unop(*unop, dest, val_addr));
+        }
 
         Ok(())
     }

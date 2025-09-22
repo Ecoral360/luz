@@ -163,7 +163,7 @@ impl Runner {
                         rhs,
                     )?;
 
-                    if res.is_truthy() == *k {
+                    if res.is_truthy() != *k {
                         return Ok(InstructionResult::Skip(1));
                     }
                 }
@@ -180,7 +180,7 @@ impl Runner {
                     };
                     let res = lhs.apply_cmp(cmp_op, LuzObj::Numeral(Numeral::Int(rhs)))?;
 
-                    if res.is_truthy() == *k {
+                    if res.is_truthy() != *k {
                         return Ok(InstructionResult::Skip(1));
                     }
                 }
@@ -646,6 +646,13 @@ impl Runner {
                         .borrow_mut()
                         .set_reg_val(a, LuzObj::Numeral(Numeral::Int(imm)));
                 }
+                LuaOpCode::OP_LOADF => {
+                    let iAsBx { b, a, .. } = *i_asbx;
+                    let imm = (b as f64) - MAX_HALF_sBx as f64;
+                    self.scope
+                        .borrow_mut()
+                        .set_reg_val(a, LuzObj::Numeral(Numeral::Float(imm)));
+                }
                 op => todo!("iAsBx {:?}", op),
             },
             Instruction::isJ(is_j) => match is_j.op {
@@ -655,6 +662,10 @@ impl Runner {
                     return Ok(InstructionResult::Skip(offset));
                 }
                 op => todo!("isJ {:?}", op),
+            },
+            Instruction::iAx(i_ax) => match i_ax.op {
+                LuaOpCode::OP_EXTRAARG => {}
+                op => todo!("iAx {:?}", op),
             },
             Instruction::NOP => unimplemented!(),
             // IGNORE those

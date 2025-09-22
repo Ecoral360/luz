@@ -53,7 +53,7 @@ impl Display for LuzObj {
             LuzObj::Boolean(b) => write!(f, "{b}"),
             LuzObj::String(s) => write!(f, "{s}"),
             LuzObj::Function(ref_cell) => write!(f, "{:?}", ref_cell.borrow()),
-            LuzObj::Table(ref_cell) => write!(f, "{:?}", ref_cell.borrow()),
+            LuzObj::Table(ref_cell) => write!(f, "{:#?}", ref_cell.borrow()),
             LuzObj::Thread(mutex) => todo!(),
             LuzObj::Userdata(mutex) => todo!(),
             LuzObj::Nil => write!(f, "nil"),

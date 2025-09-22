@@ -1,5 +1,8 @@
 use std::{
-    cell::{Ref, RefCell, RefMut}, fmt::Debug, rc::Rc, usize
+    cell::{Ref, RefCell, RefMut},
+    fmt::Debug,
+    rc::Rc,
+    usize,
 };
 
 use derive_builder::Builder;
@@ -16,6 +19,8 @@ pub struct CompilerCtx {
     /// else real nb of expected = nb_expected - 1
     nb_expected: u8,
     scope: ScopeRef,
+    /// The expression is a child of a "not" expression
+    in_not: bool,
 }
 
 impl CompilerCtx {
@@ -28,6 +33,7 @@ impl CompilerCtx {
         Self {
             scope: Rc::new(RefCell::new(scope)),
             nb_expected: 2,
+            in_not: false,
         }
     }
     pub fn new_chunk(name: String, parent_scope: Option<ScopeRef>, upvalues: Vec<Upvalue>) -> Self {
@@ -41,6 +47,8 @@ impl CompilerCtx {
         Self {
             scope: Rc::new(RefCell::new(scope)),
             nb_expected: 2,
+
+            in_not: false,
         }
     }
 
@@ -48,11 +56,16 @@ impl CompilerCtx {
         CompilerCtx {
             nb_expected: builder.nb_expected.unwrap_or(self.nb_expected),
             scope: Rc::clone(builder.scope.as_ref().unwrap_or(&self.scope)),
+            in_not: builder.in_not.unwrap_or(self.in_not),
         }
     }
 
     pub fn nb_expected(&self) -> u8 {
         self.nb_expected
+    }
+
+    pub fn in_not(&self) -> bool {
+        self.in_not
     }
 }
 
@@ -260,6 +273,14 @@ impl CompilerCtx {
 
         scope.constants.push(obj);
         (scope.constants.len() - 1) as u32
+    }
+
+    pub fn instructions_len(&self) -> usize {
+        self.instructions().len()
+    }
+
+    pub fn pop_instruction(&mut self) -> Option<Instruction> {
+        self.scope_mut().instructions.pop()
     }
 
     pub fn instructions(&self) -> Vec<Instruction> {

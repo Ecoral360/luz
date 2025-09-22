@@ -18,7 +18,7 @@ isJ                           sJ (signed)(25)            |   Op(7)     |
 ===========================================================================*/
 use num_enum::TryFromPrimitive;
 
-use crate::compiler::instructions::{iABC, iABx, iAsBx, isJ};
+use crate::compiler::instructions::{iABC, iABx, iAsBx, iAx, isJ};
 
 #[allow(non_camel_case_types)]
 #[derive(TryFromPrimitive, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -146,6 +146,9 @@ impl LuaOpCode {
     }
     pub fn to_iabx(self, a: u8, b: u32) -> iABx {
         iABx::new(b, a, self)
+    }
+    pub fn to_iax(self, a: u32) -> iAx {
+        iAx::new(a, self)
     }
     pub fn to_iasbx(self, a: u8, b: u32) -> iAsBx {
         iAsBx::new(b, a, self)

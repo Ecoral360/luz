@@ -17,6 +17,7 @@ pub enum Instruction {
     iABx(iABx),
     iAsBx(iAsBx),
     isJ(isJ),
+    iAx(iAx),
 }
 
 impl Instruction {
@@ -43,6 +44,7 @@ impl Instruction {
             Instruction::iABx(i_abx) => i_abx.op,
             Instruction::iAsBx(i_as_bx) => i_as_bx.op,
             Instruction::isJ(is_j) => is_j.op,
+            Instruction::iAx(i_ax) => i_ax.op,
             _ => LuaOpCode::OP_debug,
         }
     }
@@ -61,6 +63,7 @@ impl Instruction {
             Instruction::iABx(i_abx) => i_abx.debug(scope),
             Instruction::iAsBx(i_asbx) => i_asbx.debug(scope),
             Instruction::isJ(i_sj) => i_sj.debug(scope),
+            Instruction::iAx(i_ax) => i_ax.debug(scope),
             Instruction::LOG(s) => format!("LOG: {}", s),
             _ => String::from("NOP"),
         }
@@ -74,6 +77,7 @@ impl Display for Instruction {
             Instruction::iABx(i_abx) => write!(f, "{}", i_abx),
             Instruction::iAsBx(i_asbx) => write!(f, "{}", i_asbx),
             Instruction::isJ(i_sj) => write!(f, "{}", i_sj),
+            Instruction::iAx(i_ax) => write!(f, "{}", i_ax),
             Instruction::LOG(s) => write!(f, "LOG: {}", s.clone()),
             _ => write!(f, "NOP"),
         }
@@ -234,12 +238,12 @@ impl Instruction {
         } else {
             LuaOpCode::OP_EQ
         };
-        opcode.to_iabc(lhs, !apply_not, rhs, (!apply_not) as u8).into()
+        opcode.to_iabc(lhs, apply_not, rhs, apply_not as u8).into()
     }
 
     pub fn op_eqi(lhs: u8, rhs_i: u8, apply_not: bool) -> Instruction {
         LuaOpCode::OP_EQI
-            .to_iabc(lhs, !apply_not, rhs_i, (!apply_not) as u8)
+            .to_iabc(lhs, apply_not, rhs_i, apply_not as u8)
             .into()
     }
     pub fn op_lt(lhs: u8, rhs: u8, is_rhs_immidiate: bool, apply_not: bool) -> Instruction {
@@ -266,7 +270,7 @@ impl Instruction {
                 .to_iabc(lhs, apply_not, rhs, apply_not as u8)
                 .into()
         } else {
-            Instruction::op_lt(lhs, rhs, is_rhs_immidiate, !apply_not)
+            Instruction::op_lt(rhs, lhs, is_rhs_immidiate, apply_not)
         }
     }
 
@@ -276,7 +280,7 @@ impl Instruction {
                 .to_iabc(lhs, apply_not, rhs, apply_not as u8)
                 .into()
         } else {
-            Instruction::op_lt(lhs, rhs, is_rhs_immidiate, !apply_not)
+            Instruction::op_lt(rhs, lhs, is_rhs_immidiate, apply_not)
         }
     }
 
@@ -299,6 +303,11 @@ impl Instruction {
     pub fn op_loadi(reg: u8, imm: u32) -> Instruction {
         LuaOpCode::OP_LOADI
             .to_iasbx(reg, imm.wrapping_add(MAX_HALF_sBx))
+            .into()
+    }
+    pub fn op_loadf(reg: u8, imm: f64) -> Instruction {
+        LuaOpCode::OP_LOADF
+            .to_iasbx(reg, (imm + MAX_HALF_sBx as f64) as u32)
             .into()
     }
 
@@ -396,6 +405,9 @@ impl Instruction {
         LuaOpCode::OP_NEWTABLE
             .to_iabc(dest, false, obj_fields_len, arr_fields_len)
             .into()
+    }
+    pub fn op_extraarg(arg: u32) -> Instruction {
+        LuaOpCode::OP_EXTRAARG.to_iax(arg).into()
     }
     pub fn op_setlist(dest: u8, nb_fields: u8, start_addr: u8) -> Instruction {
         LuaOpCode::OP_SETLIST
@@ -537,7 +549,12 @@ impl Display for iABC {
         };
         let c = match self.op {
             LuaOpCode::OP_ADDI | LuaOpCode::OP_GETI => self.c as i32 - 128,
-            LuaOpCode::OP_EQK | LuaOpCode::OP_EQI => self.k as i32,
+            LuaOpCode::OP_EQK
+            | LuaOpCode::OP_GTI
+            | LuaOpCode::OP_LTI
+            | LuaOpCode::OP_GEI
+            | LuaOpCode::OP_LEI
+            | LuaOpCode::OP_EQI => self.k as i32,
             _ => self.c as i32,
         };
         let s = match self.op {
@@ -732,6 +749,52 @@ impl isJ {
 impl Display for isJ {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?} {}", self.op, self.b as i32 - MAX_HALF_sJ as i32)
+    }
+}
+
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, new)]
+pub struct iAx {
+    pub a: u32,
+    pub op: LuaOpCode, // actually 7 bits
+}
+
+impl Into<Instruction> for iAx {
+    fn into(self) -> Instruction {
+        Instruction::iAx(self)
+    }
+}
+
+impl Into<u32> for iAx {
+    fn into(self) -> u32 {
+        self.op as u32 | (self.a as u32) << 7
+    }
+}
+
+impl From<u32> for iAx {
+    fn from(val: u32) -> Self {
+        let op = get_arg(val, 7, 0);
+        let a = get_arg(val, 8, 7);
+        Self {
+            a: a as u32,
+            op: (op as u8).try_into().unwrap(),
+        }
+    }
+}
+
+impl iAx {
+    pub fn debug(&self, scope: &Scope) -> String {
+        let s = match self.op {
+            _ => self.to_string(),
+        };
+
+        s
+    }
+}
+
+impl Display for iAx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?} {}", self.op, self.a)
     }
 }
 

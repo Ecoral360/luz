@@ -1,3 +1,5 @@
+use std::ops::Not;
+
 use derive_more::derive::From;
 use derive_new::new;
 use pest::{error::Error as PestError, iterators::Pair};
@@ -40,7 +42,14 @@ pub enum Exp {
     TableConstructor(ExpTableConstructor),
 }
 
-impl Exp {}
+impl Exp {
+    pub fn normalize(&self) -> &Exp {
+        match self {
+            Exp::Unop(unop, exp) if *unop == Unop::Not => exp.normalize(),
+            _ => self,
+        }
+    }
+}
 
 #[derive(Debug, Clone, new)]
 pub struct ExpAccess {
@@ -141,7 +150,7 @@ impl Exp {
 
     pub fn do_cmp(self, cmpop: CmpOp, rhs: Exp) -> Result<Self, LuzError> {
         Ok(match (self, rhs) {
-            (Self::Literal(obj), Self::Literal(obj2)) => obj.apply_cmp(cmpop, obj2)?.into(),
+            // (Self::Literal(obj), Self::Literal(obj2)) => obj.apply_cmp(cmpop, obj2)?.into(),
             (s, rhs) => Self::CmpOp {
                 lhs: Box::new(s),
                 op: cmpop,
@@ -152,19 +161,26 @@ impl Exp {
 
     pub fn do_logic_cmp(self, logic_cmp_op: LogicCmpOp, rhs: Exp) -> Result<Self, LuzError> {
         Ok(match (self, rhs) {
-            (Self::Literal(LuzObj::Boolean(b)), rhs) => {
-                if b {
-                    match logic_cmp_op {
-                        LogicCmpOp::And => rhs,
-                        LogicCmpOp::Or => LuzObj::Boolean(b).into(),
-                    }
-                } else {
-                    match logic_cmp_op {
-                        LogicCmpOp::And => LuzObj::Boolean(b).into(),
-                        LogicCmpOp::Or => rhs,
-                    }
-                }
-            }
+            (Self::Literal(obj), rhs) if logic_cmp_op == LogicCmpOp::And && obj.is_truthy() => rhs,
+            // (Self::Literal(LuzObj::Boolean(b)), rhs) => {
+            //     if b {
+            //         match logic_cmp_op {
+            //             LogicCmpOp::And => rhs,
+            //             LogicCmpOp::Or => LuzObj::Boolean(b).into(),
+            //         }
+            //     } else {
+            //         match logic_cmp_op {
+            //             LogicCmpOp::And => LuzObj::Boolean(b).into(),
+            //             LogicCmpOp::Or => rhs,
+            //         }
+            //     }
+            // }
+            //
+            // (Self::Literal(LuzObj::Nil), rhs) => match logic_cmp_op {
+            //     LogicCmpOp::And => LuzObj::Nil.into(),
+            //     LogicCmpOp::Or => rhs,
+            // },
+            //
             (s, rhs) => Self::LogicCmpOp {
                 lhs: Box::new(s),
                 op: logic_cmp_op,
@@ -314,7 +330,7 @@ impl TryFrom<Pair<'_, Rule>> for CmpOp {
         })
     }
 }
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unop {
     Neg,
     Not,
