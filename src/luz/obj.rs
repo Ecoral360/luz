@@ -18,6 +18,9 @@ use super::err::LuzError;
 use crate::ast::{Binop, CmpOp, Unop};
 use crate::luz::thread::LuzThread;
 use crate::luz::userdata::Userdata;
+use crate::runner::err::LuzRuntimeError;
+
+pub type TableRef = Rc<RefCell<Table>>;
 
 #[derive(Debug, From)]
 pub enum LuzObj {
@@ -25,7 +28,7 @@ pub enum LuzObj {
     Boolean(bool),
     String(String),
     Function(Rc<RefCell<LuzFunction>>),
-    Table(Rc<RefCell<Table>>),
+    Table(TableRef),
     Thread(Arc<Mutex<LuzThread>>),
     Userdata(Arc<Mutex<Userdata>>),
     Nil,
@@ -204,6 +207,16 @@ impl LuzObj {
         Ok(Self::String(string))
     }
 
+    pub fn as_table_or_err(&self) -> Result<Rc<RefCell<Table>>, LuzRuntimeError> {
+        match self {
+            LuzObj::Table(ref_cell) => Ok(Rc::clone(ref_cell)),
+            _ => Err(LuzRuntimeError::message(format!(
+                "expected 'table', found {}",
+                self.get_type()
+            ))),
+        }
+    }
+
     pub fn not(&self) -> Self {
         Self::Boolean(!self.is_truthy())
     }
@@ -239,19 +252,25 @@ impl LuzObj {
     /// [`Nil`]: LuzObj::Nil
     #[must_use]
     #[inline]
-    pub fn is_nil(&self) -> bool {
+    pub const fn is_nil(&self) -> bool {
         matches!(self, Self::Nil)
     }
 
     #[must_use]
     #[inline]
-    pub fn is_truthy(&self) -> bool {
+    pub fn type_is(&self, luz_type: LuzType) -> bool {
+        self.get_type() == luz_type
+    }
+
+    #[must_use]
+    #[inline]
+    pub const fn is_truthy(&self) -> bool {
         !matches!(self, Self::Nil | Self::Boolean(false))
     }
 
     #[must_use]
     #[inline]
-    pub fn is_true(&self) -> bool {
+    pub const fn is_true(&self) -> bool {
         matches!(self, Self::Boolean(true))
     }
 
@@ -548,7 +567,7 @@ impl Hash for LuzObj {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LuzType {
     Nil,
     Boolean,

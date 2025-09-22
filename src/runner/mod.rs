@@ -7,12 +7,13 @@ use std::{
 use crate::{
     ast::{Binop, CmpOp},
     compiler::{
-        ctx::{Scope, ScopeRef},
+        ctx::{RegOrUpvalue, Scope, ScopeRef},
         instructions::{iABC, iABx, iAsBx, isJ, Instruction, MAX_HALF_sBx, MAX_HALF_sJ},
         opcode::LuaOpCode,
     },
     luz::{
         err::LuzError,
+        lib::env::make_env_table,
         obj::{LuzFunction, LuzObj, LuzType, Numeral, Table},
     },
     runner::err::LuzRuntimeError,
@@ -31,6 +32,7 @@ pub struct Runner {
     scope: Rc<RefCell<Scope>>,
     vararg: Option<Vec<LuzObj>>,
     curr_instruction: Option<(usize, Instruction)>,
+    registry: Rc<RefCell<Table>>,
 }
 
 #[allow(unused)]
@@ -42,10 +44,15 @@ impl Runner {
     }
 
     pub fn new(scope: Rc<RefCell<Scope>>) -> Self {
+        let env = Scope::get_top(Rc::clone(&scope)).unwrap();
+        let (global, registry) = make_env_table();
+        env.borrow_mut().set_reg_with_name("_ENV", global);
+
         Self {
             scope,
             vararg: Some(vec![]),
             curr_instruction: None,
+            registry,
         }
     }
 
@@ -54,20 +61,11 @@ impl Runner {
     }
 
     pub fn env_scope(&self) -> Option<ScopeRef> {
-        let mut scope = Rc::clone(&self.scope);
-        loop {
-            let s = Rc::clone(&scope);
-            let s = s.borrow();
-            let Some(ref p) = s.parent() else {
-                return None;
-            };
-            let p = Rc::clone(p);
-            if p.borrow().is_global() {
-                return Some(p);
-            } else {
-                scope = p;
-            }
-        }
+        Scope::get_top(Rc::clone(&self.scope))
+    }
+
+    pub fn get_val(&mut self, name: &str) -> Option<LuzObj> {
+        self.scope_mut().get_reg_or_upvalue_value(name)
     }
 
     pub fn scope(&self) -> Ref<Scope> {
@@ -407,22 +405,7 @@ impl Runner {
                             args.push(LuzObj::Nil);
                         }
                     }
-                    let results = match *f {
-                        LuzFunction::User { ref scope, .. } => {
-                            let mut fc_scope = scope.borrow().clone();
-                            for (i, arg) in args.into_iter().enumerate() {
-                                fc_scope.set_reg_val(i as u8, arg);
-                            }
-                            let mut fc_runner = Runner::new(Rc::new(RefCell::new(fc_scope)));
-                            fc_runner.vararg = Some(vararg);
-
-                            fc_runner.run()?
-                        }
-                        LuzFunction::Native { ref fn_ptr, .. } => {
-                            let mut fn_ptr = fn_ptr.borrow_mut();
-                            (fn_ptr)(self, args, vararg)?
-                        }
-                    };
+                    let results = f.call(self, args, vararg)?;
 
                     let nb_results = results.len() as u8;
                     if nb_expected_results == 0 {
@@ -747,5 +730,9 @@ impl Runner {
 
     pub fn set_vararg(&mut self, vararg: Option<Vec<LuzObj>>) {
         self.vararg = vararg;
+    }
+
+    pub fn registry(&self) -> &RefCell<Table> {
+        &self.registry
     }
 }

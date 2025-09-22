@@ -1,6 +1,6 @@
 use std::{cell::RefCell, fs, rc::Rc};
 
-use log::{debug, error, info, trace, warn};
+use log::{debug, info, trace};
 use luz::err::LuzError;
 use pest::Parser;
 use pest_derive::Parser;
@@ -87,7 +87,7 @@ pub fn load(
     Ok(LuzFunction::new_native(
         0,
         Rc::new(RefCell::new(
-            move |_: &mut Runner, _args: Vec<LuzObj>, _vararg: Vec<LuzObj>| {
+            move |_: &mut Runner, _args: Vec<LuzObj>| {
                 runner
                     .run()
                     .map_err(|e| LuzRuntimeError::message(e.to_string()))

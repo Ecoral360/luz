@@ -1,48 +1,32 @@
 use std::{
-    arch::x86_64::_rdtsc, cell::RefCell, collections::{HashMap, VecDeque}, rc::Rc
+    cell::RefCell,
+    collections::{HashMap, VecDeque},
+    rc::Rc,
 };
 
 use crate::{
     compiler::ctx::{RegisterBuilder, Scope, Upvalue},
     load,
-    luz::obj::{LuzFunction, LuzObj, Numeral, Table},
+    luz::{
+        lib::{require::package_lib, string::string_lib, LuzNativeLib},
+        obj::{LuzFunction, LuzObj, Numeral, Table, TableRef},
+    },
+    luz_fn, luz_table,
     runner::{err::LuzRuntimeError, Runner},
 };
 
-macro_rules! luz_fn {
-    ([$nb_fixed:literal, $runner:ident, $args:ident, $vararg:ident]() $body:block ) => {
-        LuzObj::Function(Rc::new(RefCell::new(LuzFunction::new_native(
-            $nb_fixed,
-            Rc::new(RefCell::new(
-                |$runner: &mut Runner, $args: Vec<LuzObj>, $vararg: Vec<LuzObj>| $body,
-            )),
-        ))))
-    };
-}
-
-macro_rules! luz_table {
-    ($($key:ident : $val:expr),* $(,)?) => {{
-        #[allow(unused_mut)]
-        let mut table = HashMap::new();
-        {
-            $(table.insert(LuzObj::str(stringify!($key)), $val);)*
-        }
-
-        LuzObj::Table(Rc::new(RefCell::new(Table::new(table, None))))
-    }};
-}
-
-fn make_env_table() -> LuzObj {
+pub fn make_env_table() -> (LuzObj, TableRef) {
     let mut table = HashMap::new();
+    let registry = luz_table!().as_table_or_err().unwrap();
 
     table.insert(LuzObj::str("_VERSION"), LuzObj::str("Lua 5.4"));
 
     table.insert(
         LuzObj::str("print"),
-        luz_fn!([0, _runner, _args, vararg]() {
+        luz_fn!([0, _runner, args]() {
             println!(
                 "{}",
-                vararg
+                args
                     .iter()
                     .map(|a| a.to_string())
                     .collect::<Vec<String>>()
@@ -54,7 +38,7 @@ fn make_env_table() -> LuzObj {
 
     table.insert(
         LuzObj::str("type"),
-        luz_fn!([1, _runner, args, _vararg]() {
+        luz_fn!([1, _runner, args]() {
             let arg = args.get(0).unwrap_or(&LuzObj::Nil);
             Ok(vec![LuzObj::String(arg.get_type().to_string())])
         }),
@@ -62,24 +46,24 @@ fn make_env_table() -> LuzObj {
 
     table.insert(
         LuzObj::str("assert"),
-        luz_fn!([0, runner, _args, vararg]() {
-            let mut vararg = vararg;
-            let Some(condition) = vararg.get(0).cloned() else {
+        luz_fn!([0, runner, args]() {
+            let mut args = args;
+            let Some(condition) = args.get(0).cloned() else {
                 return Err(LuzRuntimeError::message(
                     "bad argument #1 to 'assert' (value expected)",
                 ));
             };
             if condition.is_truthy() {
-                Ok(vararg)
+                Ok(args)
             } else {
-                if vararg.len() < 2 {
+                if args.len() < 2 {
                     runner.dump_trace();
                     Err(LuzRuntimeError::message("assertion failed!"))
                 } else {
                     // Here we use swap_remove instead of just 'remove'
                     // because it's O(1) and we don't care about the vararg
                     // vector afterward
-                    Err(LuzRuntimeError::ErrorObj(vararg.swap_remove(1)))
+                    Err(LuzRuntimeError::ErrorObj(args.swap_remove(1)))
                 }
             }
         }),
@@ -87,7 +71,7 @@ fn make_env_table() -> LuzObj {
 
     table.insert(
         LuzObj::str("load"),
-        luz_fn!([1, runner, args, _vararg]() {
+        luz_fn!([1, runner, args]() {
             let mut args = VecDeque::from(args);
             let Some(chunk) = args.pop_front() else {
                 return Err(LuzRuntimeError::message(
@@ -112,7 +96,8 @@ fn make_env_table() -> LuzObj {
     );
     table.insert(
         LuzObj::str("select"),
-        luz_fn!([1, _runner, args, vararg]() {
+        luz_fn!([1, _runner, args]() {
+            let vararg = &args[1..].iter().cloned();
             match &args[0] {
                 LuzObj::Numeral(Numeral::Int(i)) => {
                     let vararg_iter = vararg.clone().into_iter();
@@ -132,26 +117,12 @@ fn make_env_table() -> LuzObj {
 
     table.insert(
         LuzObj::str("pcall"),
-        luz_fn!([1, runner, args, vararg]() {
+        luz_fn!([1, runner, args]() {
             let LuzObj::Function(f) = &args[0] else { unreachable!() };
             let f = f.borrow();
 
-            let results = match *f {
-                LuzFunction::User { ref scope, .. } => {
-                    let mut fc_scope = scope.borrow().clone();
-                    for (i, arg) in args.iter().enumerate() {
-                        fc_scope.set_reg_val(i as u8, arg.clone());
-                    }
-                    let mut fc_runner = Runner::new(Rc::new(RefCell::new(fc_scope)));
-                    fc_runner.set_vararg(Some(vararg));
+            let results = f.call(runner, vec![], args[1..].iter().cloned().collect());
 
-                    fc_runner.run().map_err(|err| LuzRuntimeError::ErrorObj(LuzObj::str(&err.to_string())))
-                }
-                LuzFunction::Native { ref fn_ptr, .. } => {
-                    let mut fn_ptr = fn_ptr.borrow_mut();
-                    (fn_ptr)(runner, args.clone(), vararg)
-                }
-            };
             Ok(match results {
                 Ok(mut results) => {
                     results.insert(0, LuzObj::Boolean(true));
@@ -172,7 +143,7 @@ fn make_env_table() -> LuzObj {
 
     table.insert(
         LuzObj::str("rawget"), 
-        luz_fn!([2, _runner, args, _vararg]() {
+        luz_fn!([2, _runner, args]() {
             let LuzObj::Table(t) = &args[0] else {
                 return Err(LuzRuntimeError::message("bad argument #1 to 'rawget' (a table expected)"))
             };
@@ -181,38 +152,8 @@ fn make_env_table() -> LuzObj {
         }),
     );
 
-    table.insert(
-        LuzObj::str("string"),
-        luz_table! {
-            len: luz_fn!([1, _runner, args, _vararg]() {
-                let mut args = VecDeque::from(args);
-                let Some(LuzObj::String(s)) = args.pop_front() else {
-                    return Err(LuzRuntimeError::message(
-                        "bad argument #1 to 'string.len' (string value expected)",
-                    ));
-                };
-                Ok(vec![LuzObj::Numeral(Numeral::Int(s.chars().count() as i64))])
-            }),
-            lower: luz_fn!([1, _runner, args, _vararg]() {
-                let mut args = VecDeque::from(args);
-                let Some(LuzObj::String(s)) = args.pop_front() else {
-                    return Err(LuzRuntimeError::message(
-                        "bad argument #1 to 'string.lower' (string value expected)",
-                    ));
-                };
-                Ok(vec![LuzObj::String(s.to_lowercase())])
-            }),
-            upper: luz_fn!([1, _runner, args, _vararg]() {
-                let mut args = VecDeque::from(args);
-                let Some(LuzObj::String(s)) = args.pop_front() else {
-                    return Err(LuzRuntimeError::message(
-                        "bad argument #1 to 'string.upper' (string value expected)",
-                    ));
-                };
-                Ok(vec![LuzObj::String(s.to_uppercase())])
-            }),
-        },
-    );
+    add_lib(&mut table, string_lib(Rc::clone(&registry)));
+    add_lib(&mut table, package_lib(Rc::clone(&registry)));
 
     let global_env = LuzObj::Table(Rc::new(RefCell::new(Table::new(table, None))));
     {
@@ -224,7 +165,13 @@ fn make_env_table() -> LuzObj {
             .borrow_mut()
             .insert(LuzObj::str("_G"), LuzObj::Table(global_table_ref));
     }
-    global_env
+    (global_env, registry)
+}
+
+fn add_lib(glob_table: &mut HashMap<LuzObj, LuzObj>, lib: LuzNativeLib) {
+    for (name, val) in lib.exports {
+        glob_table.insert(LuzObj::str(&name), val);
+    }
 }
 
 pub fn get_builtin_scope() -> Rc<RefCell<Scope>> {
@@ -234,7 +181,7 @@ pub fn get_builtin_scope() -> Rc<RefCell<Scope>> {
     env.push_reg(
         RegisterBuilder::default()
             .name(Some(String::from("_ENV")))
-            .val(Some(make_env_table()))
+            .val(None)
             .free(false),
     );
 

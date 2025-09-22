@@ -10,7 +10,7 @@ use derive_new::new;
 
 use crate::{
     compiler::instructions::Instruction,
-    luz::{env::get_builtin_scope, err::LuzError, obj::LuzObj},
+    luz::{err::LuzError, lib::env::get_builtin_scope, obj::LuzObj},
 };
 
 #[derive(Debug, new, Builder, Clone)]
@@ -329,6 +329,21 @@ pub enum RegOrUpvalue {
 }
 
 impl Scope {
+    pub fn get_top(mut scope: Rc<RefCell<Self>>) -> Option<ScopeRef> {
+        loop {
+            let s = Rc::clone(&scope);
+            let s = s.borrow();
+            let Some(ref p) = s.parent() else {
+                return None;
+            };
+            let p = Rc::clone(p);
+            if p.borrow().is_global() {
+                return Some(p);
+            } else {
+                scope = p;
+            }
+        }
+    }
     pub fn new_ref(name: String, parent: Option<ScopeRef>) -> ScopeRef {
         Rc::new(RefCell::new(Scope::new(Some(name), parent)))
     }
@@ -401,6 +416,22 @@ impl Scope {
         self.regs.push(reg.build().expect("Non valid register"));
     }
 
+    pub fn get_reg_with_name(&self, name: &str) -> Option<&Register> {
+        self.regs
+            .iter()
+            .find(|con| con.name.as_deref() == Some(name))
+    }
+
+    pub fn set_reg_with_name(&mut self, name: &str, val: LuzObj) -> Option<()> {
+        let reg = self
+            .regs
+            .iter_mut()
+            .find(|con| con.name.as_deref() == Some(name))?;
+        reg.val = Some(val);
+
+        Some(())
+    }
+
     /// Returns (is_intable, reg_or_upvalue)
     pub fn get_reg_or_upvalue(
         &mut self,
@@ -470,6 +501,22 @@ impl Scope {
                 "name {:?} is not declared",
                 register_name
             )))
+        }
+    }
+
+    pub fn get_reg_or_upvalue_value(&mut self, register_name: &str) -> Option<LuzObj> {
+        let (in_table, reg_or_upvalue) = self.get_reg_or_upvalue(register_name).ok()?;
+        let obj = match reg_or_upvalue {
+            RegOrUpvalue::Register(register) => register.val,
+            RegOrUpvalue::Upvalue(upvalue) => self.get_upvalue_value(upvalue.addr),
+        }?;
+
+        if in_table {
+            let table = obj.as_table_or_err().unwrap();
+            let table = table.borrow();
+            Some(table.get(&LuzObj::str(register_name)).clone())
+        } else {
+            None
         }
     }
 

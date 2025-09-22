@@ -82,6 +82,16 @@ impl Table {
         }
     }
 
+    pub fn get_or_insert(&mut self, key: &LuzObj, item: LuzObj) -> LuzObj {
+        let val = self.get(key).clone();
+        if val.is_nil() {
+            self.insert(key.clone(), item.clone());
+            item
+        } else {
+            val
+        }
+    }
+
     pub fn raw_metatable(&self) -> Option<Rc<RefCell<Table>>> {
         self.metatable.as_ref().map(|m| Rc::clone(m))
     }
@@ -110,15 +120,15 @@ impl Table {
             }
         }
 
-        left
+        left + 1
     }
 
     pub fn len(&self) -> usize {
-        if self.arr.last().is_some_and(|el| el.is_nil()) {
-            self.find_boundary_in_array()
-        } else {
-            0
-        }
+        self.find_boundary_in_array()
+        // if self.arr.last().is_some_and(|el| el.is_nil()) {
+        // } else {
+        //     0
+        // }
     }
 
     pub fn tag_method_flags(&self) -> u8 {

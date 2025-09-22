@@ -6,4 +6,3 @@ mod table;
 mod userdata;
 mod thread;
 pub mod lib;
-pub mod env;

@@ -27,13 +27,7 @@ pub enum LuzFunction {
     Native {
         nb_fixed_params: u32,
         fn_ptr: Rc<
-            RefCell<
-                dyn FnMut(
-                    &mut Runner,
-                    Vec<LuzObj>,
-                    Vec<LuzObj>,
-                ) -> Result<Vec<LuzObj>, LuzRuntimeError>,
-            >,
+            RefCell<dyn FnMut(&mut Runner, Vec<LuzObj>) -> Result<Vec<LuzObj>, LuzRuntimeError>>,
         >,
     },
 }
@@ -47,6 +41,33 @@ impl LuzFunction {
             LuzFunction::Native {
                 nb_fixed_params, ..
             } => *nb_fixed_params,
+        }
+    }
+
+    pub fn call(
+        &self,
+        runner: &mut Runner,
+        mut args: Vec<LuzObj>,
+        mut vararg: Vec<LuzObj>,
+    ) -> Result<Vec<LuzObj>, LuzRuntimeError> {
+        match self {
+            LuzFunction::User { ref scope, .. } => {
+                let mut fc_scope = scope.borrow().clone();
+                for (i, arg) in args.into_iter().enumerate() {
+                    fc_scope.set_reg_val(i as u8, arg);
+                }
+                let mut fc_runner = Runner::new(Rc::new(RefCell::new(fc_scope)));
+                fc_runner.set_vararg(Some(vararg));
+
+                fc_runner
+                    .run()
+                    .map_err(|err| LuzRuntimeError::ErrorObj(LuzObj::str(&err.to_string())))
+            }
+            LuzFunction::Native { ref fn_ptr, .. } => {
+                let mut fn_ptr = fn_ptr.borrow_mut();
+                args.append(&mut vararg);
+                (fn_ptr)(runner, args)
+            }
         }
     }
 }
