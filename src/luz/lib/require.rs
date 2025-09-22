@@ -120,7 +120,7 @@ pub fn package_lib(registry: TableRef) -> LuzNativeLib {
 
                 // let mod_result = r.call(runner, vec![], vec![])?;
 
-                Ok(vec![LuzObj::Function(Rc::new(RefCell::new(r)))])
+                Ok(vec![LuzObj::Function(Rc::new(RefCell::new(r))), LuzObj::str(fs_path)])
             } else {
                 Ok(result)
             }
@@ -146,4 +146,3 @@ pub fn package_lib(registry: TableRef) -> LuzNativeLib {
         ],
     }
 }
-
