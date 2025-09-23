@@ -3,8 +3,8 @@ use derive_new::new;
 use crate::{
     ast::{
         AssignStat, Binop, CmpOp, DoStat, ExpAccess, ExpNode, ExpTableConstructor,
-        ExpTableConstructorField, FuncCall, FuncDef, IfStat, LogicCmpOp, RepeaStat, ReturnStat,
-        Stat, StatNode, Unop,
+        ExpTableConstructorField, ForRangeStat, FuncCall, FuncDef, IfStat, LogicCmpOp, RepeaStat,
+        ReturnStat, Stat, StatNode, Unop,
     },
     compiler::{
         ctx::{CompilerCtx, CompilerCtxBuilder, RegOrUpvalue, Upvalue},
@@ -559,6 +559,87 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    fn visit_for_range(
+        &mut self,
+        ctx: &mut CompilerCtx,
+        for_range_stat: &ForRangeStat,
+    ) -> Result<(), LuzError> {
+        let ForRangeStat {
+            var,
+            start,
+            limit,
+            step,
+            block,
+        } = for_range_stat;
+
+        let to_be_closed = ctx.get_or_push_free_register();
+
+        self.visit_exp(start, ctx);
+        let forloop_test = ctx.claim_next_free_register();
+
+        self.visit_exp(limit, ctx);
+        let forloop_stop = ctx.claim_next_free_register();
+
+        self.visit_exp(step, ctx);
+        let forloop_step = ctx.claim_next_free_register();
+
+        ctx.push_inst(Instruction::op_forprep(forloop_test, 0));
+
+        ctx.unclaim_registers(&[forloop_test, forloop_stop, forloop_step]);
+
+        let nb_inst_before = ctx.instructions_len();
+        let forprep_idx = nb_inst_before - 1;
+
+        let forloop_test = ctx
+            .rename_or_push_free_register_with_start(String::from("(for state)"), nb_inst_before);
+        let forloop_stop = ctx
+            .rename_or_push_free_register_with_start(String::from("(for state)"), nb_inst_before);
+        let forloop_step = ctx
+            .rename_or_push_free_register_with_start(String::from("(for state)"), nb_inst_before);
+
+        ctx.claim_register(forloop_test);
+        ctx.claim_register(forloop_stop);
+        ctx.claim_register(forloop_step);
+
+        let ctrl = ctx.rename_or_push_free_register_with_start(var.to_string(), nb_inst_before + 1);
+        ctx.claim_register(ctrl);
+
+        // Exec the block
+
+        for stmt in block {
+            self.visit_stat(stmt, ctx);
+        }
+
+        {
+            let mut scope = ctx.scope_mut();
+            let regs = scope.regs()[to_be_closed as usize..]
+                .iter()
+                .map(|reg| reg.addr)
+                .collect::<Vec<u8>>();
+
+            for reg in regs {
+                scope.set_end_of_register(reg);
+            }
+        }
+
+        let nb_inst_loop = ctx.instructions_len() - nb_inst_before;
+
+        {
+            let mut scope = ctx.scope_mut();
+            let Instruction::iABx(iABx { b, a, op }) = &mut scope.instructions_mut()[forprep_idx]
+            else {
+                unreachable!()
+            };
+
+            *b = nb_inst_loop as u32;
+        }
+
+        // Add the FORLOOP instruction
+        ctx.push_inst(Instruction::op_forloop(forloop_test, nb_inst_loop as u32 + 1));
+
+        Ok(())
+    }
+
     fn visit_repeat_until(
         &mut self,
         ctx: &mut CompilerCtx,
@@ -928,25 +1009,25 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
 
-        let result_reg = ctx.get_or_push_free_register();
+        let result_reg = ctx.claim_next_free_register();
 
         let lhs_addr = self.handle_exp(
             ctx,
             lhs,
-            matches!(op, Binop::Add | Binop::ShiftRight | Binop::ShiftLeft),
+            matches!(op, Binop::Add | Binop::ShiftLeft),
             true,
             !matches!(op, Binop::BitAnd | Binop::BitXor | Binop::BitOr),
         )?;
+
+        ctx.unclaim_registers(&[result_reg]);
+
         let is_b_const = matches!(lhs_addr, ExpEval::InConstant(_));
         let is_b_imm = matches!(lhs_addr, ExpEval::InImmediate(_));
 
         let rhs_addr = self.handle_exp(
             ctx,
             rhs,
-            matches!(
-                op,
-                Binop::Add | Binop::Sub | Binop::ShiftRight | Binop::ShiftLeft
-            ),
+            matches!(op, Binop::Add | Binop::Sub | Binop::ShiftLeft),
             true,
             !matches!(op, Binop::BitAnd | Binop::BitXor | Binop::BitOr),
         )?;
@@ -1001,7 +1082,16 @@ impl<'a> Compiler<'a> {
         if is_c_imm || is_b_imm {
             match op {
                 Binop::ShiftLeft => {
-                    ctx.push_inst(Instruction::op_shli(result_reg, lhs_addr, false, rhs_addr));
+                    if is_c_imm {
+                        ctx.push_inst(Instruction::op_shri(
+                            result_reg,
+                            lhs_addr,
+                            false,
+                            128 - (rhs_addr - 128),
+                        ));
+                    } else {
+                        ctx.push_inst(Instruction::op_shli(result_reg, lhs_addr, false, rhs_addr));
+                    }
                 }
                 Binop::ShiftRight => {
                     ctx.push_inst(Instruction::op_shri(result_reg, lhs_addr, false, rhs_addr));
@@ -1639,6 +1729,13 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    fn visit_vararg(&mut self, ctx: &mut CompilerCtx) -> Result<(), LuzError> {
+        let reg = ctx.get_or_push_free_register();
+        let nb = ctx.nb_expected();
+        ctx.push_inst(Instruction::op_vararg(reg, nb));
+        Ok(())
+    }
+
     fn visit_name(&mut self, ctx: &mut CompilerCtx, name: &str) -> Result<(), LuzError> {
         let (is_intable, src) = ctx.scope_mut().get_reg_or_upvalue(name)?;
         let reg = ctx.get_or_push_free_register();
@@ -1697,7 +1794,7 @@ impl<'a> Visitor for Compiler<'a> {
         match exp {
             ExpNode::Literal(luz_obj) => self.visit_literal(ctx, luz_obj),
             ExpNode::Binop { .. } => self.visit_binop(ctx, exp),
-            ExpNode::Vararg => todo!(),
+            ExpNode::Vararg => self.visit_vararg(ctx),
             ExpNode::Name(name) => self.visit_name(ctx, name),
             ExpNode::Var(exp) => todo!(),
             ExpNode::Unop(..) => self.visit_unop(ctx, exp),
@@ -1727,7 +1824,7 @@ impl<'a> Visitor for Compiler<'a> {
             StatNode::While(while_stat) => todo!(),
             StatNode::Repeat(repeat_stat) => self.visit_repeat_until(ctx, repeat_stat),
             StatNode::If(if_stat) => self.visit_if(ctx, if_stat),
-            StatNode::ForRange(for_range_stat) => todo!(),
+            StatNode::ForRange(for_range_stat) => self.visit_for_range(ctx, for_range_stat),
             StatNode::ForIn(for_in_stat) => todo!(),
             StatNode::Break => todo!(),
             StatNode::Goto(goto_stat) => todo!(),

@@ -8,7 +8,7 @@ use crate::{
     compiler::ctx::{RegisterBuilder, Scope, Upvalue},
     load,
     luz::{
-        lib::{require::package_lib, string::string_lib, LuzNativeLib},
+        lib::{math::math_lib, require::package_lib, string::string_lib, LuzNativeLib},
         obj::{LuzObj, Numeral, Table, TableRef},
     },
     luz_fn, luz_table,
@@ -48,13 +48,13 @@ pub fn make_env_table() -> (LuzObj, TableRef) {
         LuzObj::str("assert"),
         luz_fn!([0, runner, args]() {
             let mut args = args;
-            let Some(condition) = args.get(0).cloned() else {
+            let Some(condition) = args.pop_front() else {
                 return Err(LuzRuntimeError::message(
                     "bad argument #1 to 'assert' (value expected)",
                 ));
             };
             if condition.is_truthy() {
-                Ok(args)
+                Ok(args.into())
             } else {
                 if args.len() < 2 {
                     runner.dump_trace();
@@ -63,7 +63,7 @@ pub fn make_env_table() -> (LuzObj, TableRef) {
                     // Here we use swap_remove instead of just 'remove'
                     // because it's O(1) and we don't care about the vararg
                     // vector afterward
-                    Err(LuzRuntimeError::ErrorObj(args.swap_remove(1)))
+                    Err(LuzRuntimeError::ErrorObj(args.pop_front().unwrap()))
                 }
             }
         }),
@@ -97,8 +97,9 @@ pub fn make_env_table() -> (LuzObj, TableRef) {
     table.insert(
         LuzObj::str("select"),
         luz_fn!([1, _runner, args]() {
-            let vararg = &args[1..].iter().cloned();
-            match &args[0] {
+            let arg = args.pop_front().unwrap();
+            let vararg = args;
+            match &arg {
                 LuzObj::Numeral(Numeral::Int(i)) => {
                     let vararg_iter = vararg.clone().into_iter();
                     let idx = if *i < 0 {
@@ -118,10 +119,10 @@ pub fn make_env_table() -> (LuzObj, TableRef) {
     table.insert(
         LuzObj::str("pcall"),
         luz_fn!([1, runner, args]() {
-            let LuzObj::Function(f) = &args[0] else { unreachable!() };
+            let LuzObj::Function(f) = args.pop_front().unwrap() else { unreachable!() };
             let f = f.borrow();
 
-            let results = f.call(runner, vec![], args[1..].iter().cloned().collect());
+            let results = f.call(runner, vec![], args.into());
 
             Ok(match results {
                 Ok(mut results) => {
@@ -154,6 +155,7 @@ pub fn make_env_table() -> (LuzObj, TableRef) {
 
     add_lib(&mut table, string_lib(Rc::clone(&registry)));
     add_lib(&mut table, package_lib(Rc::clone(&registry)));
+    add_lib(&mut table, math_lib(Rc::clone(&registry)));
 
     let global_env = LuzObj::Table(Rc::new(RefCell::new(Table::new(table, None))));
     {

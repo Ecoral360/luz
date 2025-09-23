@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::luz::obj::LuzObj;
+use crate::luz::{err::LuzError, obj::LuzObj};
 
 #[derive(Debug, Error)]
 pub enum LuzRuntimeError {
@@ -14,5 +14,11 @@ pub enum LuzRuntimeError {
 impl LuzRuntimeError {
     pub fn message<S: ToString>(s: S) -> Self {
         Self::ErrorObj(LuzObj::String(s.to_string()))
+    }
+}
+
+impl From<LuzError> for LuzRuntimeError {
+    fn from(value: LuzError) -> Self {
+        LuzRuntimeError::message(value.to_string())
     }
 }

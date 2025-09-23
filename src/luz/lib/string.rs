@@ -38,9 +38,211 @@ pub fn string_lib(_registry: TableRef) -> LuzNativeLib {
             };
             Ok(vec![LuzObj::String(s.to_uppercase())])
         }),
+        find: luz_fn!([2](LuzObj::String(s),
+                LuzObj::String(pattern),
+                init @ (LuzObj::Numeral(..) | LuzObj::Nil),
+                plain @ (LuzObj::Boolean(..) | LuzObj::Nil))
+        {
+            let LuzObj::Numeral(init) = init.or(LuzObj::int(1)) else { unreachable!() };
+
+            let mut init = init.as_int();
+
+            if init == 0 {
+                init = 1;
+            }
+            if init - 1 < 0 {
+                init = (s.len() - init as usize) as i64;
+            }
+            let Some((start, end)) = pattern_match(&pattern, &s[init as usize - 1..]) else {
+                return Ok(vec![LuzObj::Nil]);
+            };
+            Ok(vec![LuzObj::int(start as i64), LuzObj::int(end as i64)])
+        }),
+        format: luz_fn!([1](LuzObj::String(formatstring), *args) {
+            Ok(vec![LuzObj::String(format(&formatstring, args))])
+        }),
+        pack: luz_fn!([1](LuzObj::String(formatstring), *args) {
+            Ok(vec![LuzObj::String(format(&formatstring, args))])
+        }),
+        packsize: luz_fn!([1](LuzObj::String(formatstring)) {
+            Ok(vec![LuzObj::int(packsize_string(&formatstring).unwrap() as i64)])
+        }),
+
     };
 
     LuzNativeLib {
         exports: vec![(String::from("string"), table)],
     }
+}
+
+fn pattern_match(pattern: &str, s: &str) -> Option<(usize, usize)> {
+    let start = s.find(pattern);
+    start.map(|start| (start, pattern.len()))
+}
+
+/// Implements the format function from lua's string library
+fn format(formatstring: &str, mut args: VecDeque<LuzObj>) -> String {
+    let mut final_string = String::new();
+    let mut chars = formatstring.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            if let Some(&next_c) = chars.peek() {
+                match next_c {
+                    's' => {
+                        chars.next();
+                        if let Some(arg) = args.pop_front() {
+                            final_string.push_str(&arg.to_string());
+                        } else {
+                            final_string.push_str("%s");
+                        }
+                    }
+                    'd' => {
+                        chars.next();
+                        if let Some(arg) = args.pop_front() {
+                            match arg {
+                                LuzObj::Numeral(Numeral::Int(i)) => {
+                                    final_string.push_str(&i.to_string());
+                                }
+                                LuzObj::Numeral(Numeral::Float(f)) => {
+                                    final_string.push_str(&f.to_string());
+                                }
+                                _ => {
+                                    final_string.push_str("%d");
+                                }
+                            }
+                        } else {
+                            final_string.push_str("%d");
+                        }
+                    }
+                    '%' => {
+                        chars.next();
+                        final_string.push('%');
+                    }
+                    _ => {
+                        final_string.push(c);
+                    }
+                }
+            } else {
+                final_string.push(c);
+            }
+        } else {
+            final_string.push(c);
+        }
+    }
+
+    final_string
+}
+
+/// Implements the pack function from lua's string library
+fn pack_string(fmt: &str, values: VecDeque<LuzObj>) -> Vec<u8> {
+    let mut result = vec![];
+    let mut chars = fmt.chars().peekable();
+    let mut vals = values.into_iter();
+
+    let mut little_endian = true;
+
+    while let Some(c) = chars.next() {
+        match c {
+            '<' => {
+                // Little-endian
+                little_endian = true;
+                continue;
+            }
+            '>' => {
+                // Big-endian
+                little_endian = false;
+                continue;
+            }
+            'b' => {
+                // 1-byte signed int
+                if let Some(LuzObj::Numeral(Numeral::Int(i))) = vals.next() {
+                    if little_endian {
+                        for i in i.to_le_bytes().iter() {
+                            result.push(*i);
+                        }
+                    } else {
+                        for i in i.to_be_bytes().iter() {
+                            result.push(*i);
+                        }
+                    }
+                }
+            }
+            'B' => {
+                // 1-byte unsigned int
+                if let Some(LuzObj::Numeral(Numeral::Int(i))) = vals.next() {
+                    let i = i as u8;
+                    if little_endian {
+                        for i in i.to_le_bytes().iter() {
+                            result.push(*i);
+                        }
+                    } else {
+                        for i in i.to_be_bytes().iter() {
+                            result.push(*i);
+                        }
+                    }
+                }
+            }
+            'j' => {
+                // Lua integer
+                if let Some(LuzObj::Numeral(Numeral::Int(i))) = vals.next() {
+                    if little_endian {
+                        for i in i.to_le_bytes().iter() {
+                            result.push(*i);
+                        }
+                    } else {
+                        for i in i.to_be_bytes().iter() {
+                            result.push(*i);
+                        }
+                    }
+                }
+            }
+            'J' => {
+                // Lua unsigne integer (8 bytes)
+                if let Some(LuzObj::Numeral(Numeral::Int(i))) = vals.next() {
+                    let i = i as u64;
+                    if little_endian {
+                        for i in i.to_le_bytes().iter() {
+                            result.push(*i);
+                        }
+                    } else {
+                        for i in i.to_be_bytes().iter() {
+                            result.push(*i);
+                        }
+                    }
+                }
+            }
+            'i' => {
+                // 4-byte integer
+                if let Some(LuzObj::Numeral(Numeral::Int(i))) = vals.next() {}
+            }
+            _ => {
+                // Ignore unknown format characters
+                continue;
+            }
+        }
+    }
+
+    result
+}
+
+fn packsize_string(fmt: &str) -> Option<usize> {
+    let mut size = 0;
+    let mut chars = fmt.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            'b' | 'B' => {
+                size += 1;
+            }
+            'j' | 'J' => {
+                size += 8;
+            }
+            _ => {
+                // Ignore unknown format characters
+                continue;
+            }
+        }
+    }
+
+    Some(size)
 }

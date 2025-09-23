@@ -84,14 +84,14 @@ pub fn package_lib(registry: TableRef) -> LuzNativeLib {
             }
         }
 
-        Ok(vec![LuzObj::str("fail"), LuzObj::str(&tried.join(";"))])
+        Ok(vec![LuzObj::Nil, LuzObj::str(&tried.join(";"))])
     });
 
     let searchers = luz_table![
         luz_fn!([1, runner, args](modname) {
             let preload = runner.registry().borrow().get(&LuzObj::str("package.preload")).as_table_or_err()?;
 
-            let result = preload.borrow().get(modname).clone();
+            let result = preload.borrow().get(&modname).clone();
             Ok(vec![result, LuzObj::str(":preload:")])
         }),
         luz_fn!([1, runner, args](modname) {
@@ -108,7 +108,7 @@ pub fn package_lib(registry: TableRef) -> LuzNativeLib {
 
             let result = f.borrow().call(runner, vec![modname.clone(), path.clone()], vec![])?;
 
-            if !result.is_empty() && result[0] != LuzObj::str("fail") {
+            if !result.is_empty() && result[0] != LuzObj::Nil {
                 // Load the file as a module
                 luz_let!(LuzObj::String(ref fs_path) = result[0]);
 

@@ -418,6 +418,17 @@ impl Instruction {
             .to_iabc(dest, false, nb_fields, start_addr)
             .into()
     }
+
+    pub fn op_vararg(start: u8, nb: u8) -> Instruction {
+        LuaOpCode::OP_VARARG.to_iabc(start, false, 0, nb).into()
+    }
+
+    pub fn op_forloop(forloop_test: u8, loop_len: u32) -> Instruction {
+        LuaOpCode::OP_FORLOOP.to_iabx(forloop_test, loop_len).into()
+    }
+    pub fn op_forprep(forloop_test: u8, loop_len: u32) -> Instruction {
+        LuaOpCode::OP_FORPREP.to_iabx(forloop_test, loop_len).into()
+    }
 }
 
 #[allow(non_camel_case_types)]

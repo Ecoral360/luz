@@ -5,9 +5,9 @@ use std::{
 };
 
 use crate::{
-    ast::{Binop, CmpOp, LineInfo},
+    ast::{Binop, CmpOp, LineInfo, Unop},
     compiler::{
-        ctx::{RegOrUpvalue, Scope, ScopeRef},
+        ctx::{Scope, ScopeRef},
         instructions::{iABC, iABx, iAsBx, isJ, Instruction, MAX_HALF_sBx, MAX_HALF_sJ},
         opcode::LuaOpCode,
     },
@@ -23,7 +23,7 @@ pub mod err;
 
 pub enum InstructionResult {
     Continue,
-    Skip(u32),
+    Jmp(i32),
     Return(Vec<LuzObj>),
 }
 
@@ -104,9 +104,8 @@ impl<'a> Runner<'a> {
     pub fn run(&mut self) -> Result<Vec<LuzObj>, LuzError> {
         let instructions = self.scope().instructions().clone();
         let mut rets = vec![];
-        let mut instruction_iter = instructions.iter();
         let mut pc = 1;
-        while let Some(instruction) = instruction_iter.next() {
+        while let Some(instruction) = instructions.get(pc) {
             self.curr_instruction = Some((pc, instruction.clone()));
             pc += 1;
             rets = match self
@@ -114,10 +113,11 @@ impl<'a> Runner<'a> {
                 .map_err(|err| self.format_err(pc - 1, err))?
             {
                 InstructionResult::Continue => continue,
-                InstructionResult::Skip(n) => {
-                    for _ in 0..n {
-                        pc += 1;
-                        instruction_iter.next();
+                InstructionResult::Jmp(n) => {
+                    if n < 0 {
+                        pc -= n.abs() as usize;
+                    } else {
+                        pc += n as usize;
                     }
                     continue;
                 }
@@ -186,11 +186,11 @@ impl<'a> Runner<'a> {
                         } else {
                             CmpOp::LtEq
                         },
-                        rhs,
+                        &rhs,
                     )?;
 
                     if res.is_truthy() != *k {
-                        return Ok(InstructionResult::Skip(1));
+                        return Ok(InstructionResult::Jmp(1));
                     }
                 }
                 LuaOpCode::OP_LTI | LuaOpCode::OP_LEI | LuaOpCode::OP_GEI | LuaOpCode::OP_GTI => {
@@ -204,22 +204,22 @@ impl<'a> Runner<'a> {
                         LuaOpCode::OP_GTI => CmpOp::Gt,
                         _ => unreachable!(),
                     };
-                    let res = lhs.apply_cmp(cmp_op, LuzObj::Numeral(Numeral::Int(rhs)))?;
+                    let res = lhs.apply_cmp(cmp_op, &LuzObj::Numeral(Numeral::Int(rhs)))?;
 
                     if res.is_truthy() != *k {
-                        return Ok(InstructionResult::Skip(1));
+                        return Ok(InstructionResult::Jmp(1));
                     }
                 }
                 LuaOpCode::OP_EQK => {
                     let lhs = self.get_reg_val(*a)?;
                     let rhs = self.get_const_val(*b)?;
 
-                    let LuzObj::Boolean(b) = lhs.apply_cmp(CmpOp::Eq, rhs)? else {
+                    let LuzObj::Boolean(b) = lhs.apply_cmp(CmpOp::Eq, &rhs)? else {
                         unreachable!()
                     };
 
                     if b != *k {
-                        return Ok(InstructionResult::Skip(1));
+                        return Ok(InstructionResult::Jmp(1));
                     }
                 }
 
@@ -227,12 +227,12 @@ impl<'a> Runner<'a> {
                     let lhs = self.get_reg_val(*a)?;
                     let rhs = self.get_reg_val(*b)?;
 
-                    let LuzObj::Boolean(b) = lhs.apply_cmp(CmpOp::Eq, rhs)? else {
+                    let LuzObj::Boolean(b) = lhs.apply_cmp(CmpOp::Eq, &rhs)? else {
                         unreachable!()
                     };
 
                     if b != *k {
-                        return Ok(InstructionResult::Skip(1));
+                        return Ok(InstructionResult::Jmp(1));
                     }
                 }
 
@@ -241,13 +241,13 @@ impl<'a> Runner<'a> {
                     let rhs = (*b as i64) - 128;
 
                     let LuzObj::Boolean(b) =
-                        lhs.apply_cmp(CmpOp::Eq, LuzObj::Numeral(Numeral::Int(rhs)))?
+                        lhs.apply_cmp(CmpOp::Eq, &LuzObj::Numeral(Numeral::Int(rhs)))?
                     else {
                         unreachable!()
                     };
 
                     if b != *k {
-                        return Ok(InstructionResult::Skip(1));
+                        return Ok(InstructionResult::Jmp(1));
                     }
                 }
 
@@ -255,14 +255,14 @@ impl<'a> Runner<'a> {
                     let val = self.get_reg_val(*a)?;
 
                     if !(val.is_truthy() == *k) {
-                        return Ok(InstructionResult::Skip(1));
+                        return Ok(InstructionResult::Jmp(1));
                     }
                 }
                 LuaOpCode::OP_TESTSET => {
                     let val = self.get_reg_val(*b)?;
 
                     if !(val.is_truthy() == *k) {
-                        return Ok(InstructionResult::Skip(1));
+                        return Ok(InstructionResult::Jmp(1));
                     } else {
                         self.scope_mut().set_reg_val(*a, val);
                     }
@@ -281,29 +281,23 @@ impl<'a> Runner<'a> {
                 }
                 LuaOpCode::OP_LFALSESKIP => {
                     self.scope_mut().set_reg_val(*a, LuzObj::Boolean(false));
-                    return Ok(InstructionResult::Skip(1));
+                    return Ok(InstructionResult::Jmp(1));
                 }
                 LuaOpCode::OP_NOT => {
                     let val = self.get_reg_val(*b)?;
-                    self.scope_mut().set_reg_val(*a, val.not());
+                    self.scope_mut().set_reg_val(*a, val.apply_unop(Unop::Not)?);
                 }
                 LuaOpCode::OP_LEN => {
                     let val = self.get_reg_val(*b)?;
-                    self.scope_mut().set_reg_val(*a, val.len());
+                    self.scope_mut().set_reg_val(*a, val.apply_unop(Unop::Len)?);
                 }
                 LuaOpCode::OP_BNOT => {
                     let val = self.get_reg_val(*b)?;
-                    self.scope_mut().set_reg_val(*a, val.bnot());
+                    self.scope_mut().set_reg_val(*a, val.apply_unop(Unop::Inv)?);
                 }
                 LuaOpCode::OP_UNM => {
                     let val = self.get_reg_val(*b)?;
-                    let LuzObj::Numeral(num) = val else {
-                        return Err(LuzError::LuzRuntimeError(LuzRuntimeError::message(
-                            "Arithmetic operation not supported for the value",
-                        )));
-                    };
-                    self.scope_mut()
-                        .set_reg_val(*a, LuzObj::Numeral(num * Numeral::Int(-1)));
+                    self.scope_mut().set_reg_val(*a, val.apply_unop(Unop::Neg)?);
                 }
                 LuaOpCode::OP_ADD
                 | LuaOpCode::OP_ADDK
@@ -327,15 +321,18 @@ impl<'a> Runner<'a> {
                 LuaOpCode::OP_ADDI | LuaOpCode::OP_SHLI | LuaOpCode::OP_SHRI => {
                     let iABC { c, b, k, a, .. } = *i_abc;
 
-                    let lhs = self.get_reg_val_or_const(b, k)?;
+                    let mut lhs = self.get_reg_val_or_const(b, k)?;
 
                     let c = (c as i64) - 128; // from excess-128
 
-                    let rhs = LuzObj::Numeral(Numeral::Int(c));
+                    let mut rhs = LuzObj::Numeral(Numeral::Int(c));
 
                     let binop = match op {
                         LuaOpCode::OP_ADDI => Binop::Add,
-                        LuaOpCode::OP_SHLI => Binop::ShiftLeft,
+                        LuaOpCode::OP_SHLI => {
+                            (lhs, rhs) = (rhs, lhs);
+                            Binop::ShiftLeft
+                        }
                         LuaOpCode::OP_SHRI => Binop::ShiftRight,
                         _ => unreachable!(),
                     };
@@ -382,6 +379,20 @@ impl<'a> Runner<'a> {
                 }
                 LuaOpCode::OP_RETURN0 => {
                     return Ok(InstructionResult::Return(vec![]));
+                }
+
+                LuaOpCode::OP_VARARG => {
+                    for addr in 1..*c - 2 {
+                        let mut scope = self.scope_mut();
+
+                        let next_val = scope
+                            .vararg()
+                            .get(addr as usize - 1)
+                            .cloned()
+                            .unwrap_or(LuzObj::Nil);
+
+                        scope.set_reg_val(*a + addr, next_val);
+                    }
                 }
 
                 LuaOpCode::OP_VARARGPREP => {
@@ -661,6 +672,79 @@ impl<'a> Runner<'a> {
                         )))),
                     );
                 }
+                LuaOpCode::OP_FORPREP => {
+                    let iABx { a, b, .. } = *i_abx;
+                    let LuzObj::Numeral(init) = self.get_reg_val(a)?.coerse(LuzType::Number)?
+                    else {
+                        unreachable!()
+                    };
+                    let LuzObj::Numeral(limit) =
+                        self.get_reg_val(a + 1)?.coerse(LuzType::Number)?
+                    else {
+                        unreachable!()
+                    };
+                    let LuzObj::Numeral(step) = self.get_reg_val(a + 2)?.coerse(LuzType::Number)?
+                    else {
+                        unreachable!()
+                    };
+
+                    // set the control variable to init
+                    self.scope_mut()
+                        .set_reg_val(a + 3, LuzObj::Numeral(init.clone()));
+
+                    if step == Numeral::Int(0) {
+                        Err(LuzRuntimeError::message("step cannot be 0."))?
+                    }
+
+                    if step > Numeral::Int(0) {
+                        // we don't do the loop
+                        if init > limit {
+                            return Ok(InstructionResult::Jmp(b as i32 + 1));
+                        }
+                    } else {
+                        // we don't do the loop
+                        if init < limit {
+                            return Ok(InstructionResult::Jmp(b as i32 + 1));
+                        }
+                    }
+                }
+
+                LuaOpCode::OP_FORLOOP => {
+                    let iABx { a, b, .. } = *i_abx;
+                    let LuzObj::Numeral(test) = self.get_reg_val(a)?.coerse(LuzType::Number)?
+                    else {
+                        unreachable!()
+                    };
+                    let LuzObj::Numeral(limit) =
+                        self.get_reg_val(a + 1)?.coerse(LuzType::Number)?
+                    else {
+                        unreachable!()
+                    };
+                    let LuzObj::Numeral(step) = self.get_reg_val(a + 2)?.coerse(LuzType::Number)?
+                    else {
+                        unreachable!()
+                    };
+
+                    // augment the test
+                    // TODO: prevent wrap around
+                    let test = test + step;
+
+                    self.scope_mut().set_reg_val(a, LuzObj::Numeral(test));
+                    self.scope_mut().set_reg_val(a + 3, LuzObj::Numeral(test));
+
+                    if step > Numeral::Int(0) {
+                        // we continue the loop
+                        if test <= limit {
+                            return Ok(InstructionResult::Jmp(-(b as i32)));
+                        }
+                    } else {
+                        // we continue the loop
+                        if test >= limit {
+                            return Ok(InstructionResult::Jmp(-(b as i32)));
+                        }
+                    }
+                }
+
                 op => todo!("iABx {:?}", op),
             },
             Instruction::iAsBx(i_asbx) => match i_asbx.op {
@@ -684,7 +768,7 @@ impl<'a> Runner<'a> {
                 LuaOpCode::OP_JMP => {
                     let isJ { b, .. } = *is_j;
                     let offset = b - MAX_HALF_sJ;
-                    return Ok(InstructionResult::Skip(offset));
+                    return Ok(InstructionResult::Jmp(offset as i32));
                 }
                 op => todo!("isJ {:?}", op),
             },

@@ -122,7 +122,7 @@ pub struct ForRangeStat {
     pub var: String,
     pub start: Box<ExpNode>,
     pub limit: Box<ExpNode>,
-    pub step: Option<Box<ExpNode>>,
+    pub step: Box<ExpNode>,
     pub block: Vec<Stat>,
 }
 

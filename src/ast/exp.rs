@@ -3,10 +3,12 @@ use derive_new::new;
 use pest::{error::Error as PestError, iterators::Pair};
 
 use crate::{
-    ast::Stat, luz::{
+    ast::Stat,
+    luz::{
         err::LuzError,
         obj::{FuncParams, LuzObj},
-    }, Rule
+    },
+    Rule,
 };
 
 use super::StatNode;
@@ -119,7 +121,13 @@ impl ExpNode {
 
     pub fn do_unop(self, unop: Unop) -> Result<Self, LuzError> {
         Ok(match self {
-            Self::Literal(obj) => obj.apply_unop(unop)?.into(),
+            Self::Literal(ref obj) => {
+                let result = obj.clone().apply_unop(unop);
+                match result {
+                    Ok(result) => result.into(),
+                    Err(_) => Self::Unop(unop, Box::new(self)),
+                }
+            }
             _ => Self::Unop(unop, Box::new(self)),
         })
     }
@@ -347,7 +355,7 @@ impl TryFrom<Pair<'_, Rule>> for Unop {
 
             rule => Err(PestError::new_from_span(
                 pest::error::ErrorVariant::ParsingError {
-                    positives: vec![Rule::Neg, Rule::Tilde, Rule::Pound, Rule::Not],
+                    positives: vec![Rule::Neg, Rule::Tilde, Rule::Pound, Rule::Not, Rule::Bnot],
                     negatives: vec![rule],
                 },
                 value.as_span(),

@@ -537,19 +537,15 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
                 .unwrap_or(vec![]);
 
             if let Rule::parlist = next.as_rule() {
-                let mut parlist = signature
-                    .next()
-                    .unwrap()
-                    .into_inner()
-                    .next()
-                    .unwrap()
-                    .into_inner();
+                let mut parlist = signature.next().unwrap().into_inner();
                 let last = parlist.next_back().unwrap();
-                fixed.append(&mut parse_namelist(parlist));
                 if last.as_rule() == Rule::Ellipse {
                     params.is_vararg(true);
+                    if let Some(args) = parlist.next() {
+                        fixed.append(&mut parse_namelist(args.into_inner()));
+                    }
                 } else {
-                    fixed.push(last.as_str().to_string());
+                    fixed.append(&mut parse_namelist(last.into_inner()));
                 }
             }
 
@@ -596,9 +592,9 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
             let limit = parse_top_expr(inner.next().expect("FoRange end exp"))?;
             let next = inner.peek().expect("ForRange third element");
             let step = if matches!(next.as_node_tag(), Some("step")) {
-                Some(parse_top_expr(inner.next().unwrap())?)
+                parse_top_expr(inner.next().unwrap())?
             } else {
-                None
+                ExpNode::Literal(LuzObj::int(1))
             };
             let body = parse_stmts(&mut inner.next().expect("FoRange body").into_inner())?;
 
@@ -606,7 +602,7 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
                 var,
                 Box::new(start),
                 Box::new(limit),
-                step.map(Box::new),
+                Box::new(step),
                 body,
             ))
             .to_stat(pair_span)]

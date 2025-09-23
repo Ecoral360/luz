@@ -66,6 +66,14 @@ impl Display for LuzObj {
 }
 
 impl LuzObj {
+    pub fn or(self, default: LuzObj) -> Self {
+        if self.is_nil() {
+            default
+        } else {
+            self
+        }
+    }
+
     pub fn str(string: &str) -> Self {
         Self::String(string.to_owned())
     }
@@ -218,36 +226,6 @@ impl LuzObj {
         }
     }
 
-    pub fn not(&self) -> Self {
-        Self::Boolean(!self.is_truthy())
-    }
-
-    pub fn len(&self) -> LuzObj {
-        match self {
-            LuzObj::Numeral(numeral) => todo!(),
-            LuzObj::Boolean(_) => todo!(),
-            LuzObj::String(s) => LuzObj::int(s.len() as i64),
-            LuzObj::Function(ref_cell) => todo!(),
-            LuzObj::Table(ref_cell) => todo!(),
-            LuzObj::Thread(mutex) => todo!(),
-            LuzObj::Userdata(mutex) => todo!(),
-            LuzObj::Nil => todo!(),
-        }
-    }
-
-    pub fn bnot(&self) -> LuzObj {
-        match self {
-            LuzObj::Numeral(numeral) => (!*numeral).into(),
-            LuzObj::Boolean(_) => todo!(),
-            LuzObj::String(s) => LuzObj::int(s.len() as i64),
-            LuzObj::Function(ref_cell) => todo!(),
-            LuzObj::Table(ref_cell) => todo!(),
-            LuzObj::Thread(mutex) => todo!(),
-            LuzObj::Userdata(mutex) => todo!(),
-            LuzObj::Nil => todo!(),
-        }
-    }
-
     /// Returns `true` if the luz obj is [`Nil`].
     ///
     /// [`Nil`]: LuzObj::Nil
@@ -273,6 +251,12 @@ impl LuzObj {
     #[inline]
     pub const fn is_true(&self) -> bool {
         matches!(self, Self::Boolean(true))
+    }
+
+    #[must_use]
+    #[inline]
+    pub const fn is_false(&self) -> bool {
+        matches!(self, Self::Boolean(false))
     }
 
     #[inline]
@@ -332,13 +316,19 @@ impl LuzObj {
     pub fn apply_unop(self, unop: Unop) -> Result<Self, LuzError> {
         Ok(match unop {
             Unop::Neg => {
-                let LuzObj::Numeral(n) = self.coerse(LuzType::Number)? else {
+                let LuzObj::Numeral(n) = self
+                    .coerse(LuzType::Number)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'neg': {}", err)))?
+                else {
                     unreachable!()
                 };
                 (-n).into()
             }
             Unop::Not => {
-                let LuzObj::Boolean(b) = self.coerse(LuzType::Boolean)? else {
+                let LuzObj::Boolean(b) = self
+                    .coerse(LuzType::Boolean)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'not': {}", err)))?
+                else {
                     unreachable!()
                 };
                 (!b).into()
@@ -364,8 +354,15 @@ impl LuzObj {
                 })?,
             },
             Unop::Inv => {
-                let LuzObj::Numeral(Numeral::Int(i)) = self.coerse(LuzType::Integer)? else {
-                    unreachable!()
+                let self_type = self.get_type();
+                let LuzObj::Numeral(Numeral::Int(i)) = self
+                    .coerse(LuzType::Integer)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'bnot': {}", err)))?
+                else {
+                    Err(LuzError::Type {
+                        wrong: self_type,
+                        expected: vec![],
+                    })?
                 };
 
                 Numeral::Int(!i).into()
@@ -376,8 +373,13 @@ impl LuzObj {
     pub fn apply_binop(self, binop: Binop, rhs: LuzObj) -> Result<Self, LuzError> {
         Ok(match binop {
             Binop::Concat => {
-                let lhs = self.coerse(LuzType::String)?;
-                let rhs = rhs.coerse(LuzType::String)?;
+                let lhs = self
+                    .coerse(LuzType::String)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'concat': {}", err)))?;
+
+                let rhs = rhs
+                    .coerse(LuzType::String)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'concat': {}", err)))?;
 
                 let (LuzObj::String(s1), LuzObj::String(s2)) = (lhs, rhs) else {
                     unreachable!()
@@ -386,8 +388,13 @@ impl LuzObj {
                 (s1 + &s2).into()
             }
             Binop::Add => {
-                let lhs = self.coerse(LuzType::Number)?;
-                let rhs = rhs.coerse(LuzType::Number)?;
+                let lhs = self
+                    .coerse(LuzType::Number)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'add': {}", err)))?;
+
+                let rhs = rhs
+                    .coerse(LuzType::Number)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'add': {}", err)))?;
 
                 let (LuzObj::Numeral(n1), LuzObj::Numeral(n2)) = (lhs, rhs) else {
                     unreachable!()
@@ -396,8 +403,13 @@ impl LuzObj {
                 (n1 + n2).into()
             }
             Binop::Sub => {
-                let lhs = self.coerse(LuzType::Number)?;
-                let rhs = rhs.coerse(LuzType::Number)?;
+                let lhs = self
+                    .coerse(LuzType::Number)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'sub': {}", err)))?;
+
+                let rhs = rhs
+                    .coerse(LuzType::Number)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'sub': {}", err)))?;
 
                 let (LuzObj::Numeral(n1), LuzObj::Numeral(n2)) = (lhs, rhs) else {
                     unreachable!()
@@ -406,8 +418,13 @@ impl LuzObj {
                 (n1 - n2).into()
             }
             Binop::Mul => {
-                let lhs = self.coerse(LuzType::Number)?;
-                let rhs = rhs.coerse(LuzType::Number)?;
+                let lhs = self
+                    .coerse(LuzType::Number)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'mul': {}", err)))?;
+
+                let rhs = rhs
+                    .coerse(LuzType::Number)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'mul': {}", err)))?;
 
                 let (LuzObj::Numeral(n1), LuzObj::Numeral(n2)) = (lhs, rhs) else {
                     unreachable!()
@@ -416,8 +433,13 @@ impl LuzObj {
                 (n1 * n2).into()
             }
             Binop::FloatDiv => {
-                let lhs = self.coerse(LuzType::Float)?;
-                let rhs = rhs.coerse(LuzType::Float)?;
+                let lhs = self
+                    .coerse(LuzType::Float)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'div': {}", err)))?;
+
+                let rhs = rhs
+                    .coerse(LuzType::Float)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'div': {}", err)))?;
 
                 let (LuzObj::Numeral(n1), LuzObj::Numeral(n2)) = (lhs, rhs) else {
                     unreachable!()
@@ -426,8 +448,13 @@ impl LuzObj {
                 (n1 / n2).into()
             }
             Binop::FloorDiv => {
-                let lhs = self.coerse(LuzType::Integer)?;
-                let rhs = rhs.coerse(LuzType::Integer)?;
+                let lhs = self
+                    .coerse(LuzType::Integer)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'idiv': {}", err)))?;
+
+                let rhs = rhs
+                    .coerse(LuzType::Integer)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'idiv': {}", err)))?;
 
                 let (LuzObj::Numeral(n1), LuzObj::Numeral(n2)) = (lhs, rhs) else {
                     unreachable!()
@@ -436,8 +463,13 @@ impl LuzObj {
                 n1.floor_div(n2)?.into()
             }
             Binop::Mod => {
-                let lhs = self.coerse(LuzType::Number)?;
-                let rhs = rhs.coerse(LuzType::Number)?;
+                let lhs = self
+                    .coerse(LuzType::Number)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'mod': {}", err)))?;
+
+                let rhs = rhs
+                    .coerse(LuzType::Number)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'mod': {}", err)))?;
 
                 let (LuzObj::Numeral(n1), LuzObj::Numeral(n2)) = (lhs, rhs) else {
                     unreachable!()
@@ -446,8 +478,13 @@ impl LuzObj {
                 (n1 % n2)?.into()
             }
             Binop::Exp => {
-                let lhs = self.coerse(LuzType::Number)?;
-                let rhs = rhs.coerse(LuzType::Number)?;
+                let lhs = self
+                    .coerse(LuzType::Number)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'exp': {}", err)))?;
+
+                let rhs = rhs
+                    .coerse(LuzType::Number)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'exp': {}", err)))?;
 
                 let (LuzObj::Numeral(n1), LuzObj::Numeral(n2)) = (lhs, rhs) else {
                     unreachable!()
@@ -456,8 +493,12 @@ impl LuzObj {
                 n1.pow(n2).into()
             }
             Binop::BitAnd => {
-                let lhs = self.coerse(LuzType::Integer)?;
-                let rhs = rhs.coerse(LuzType::Integer)?;
+                let lhs = self
+                    .coerse(LuzType::Integer)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'band': {}", err)))?;
+                let rhs = rhs
+                    .coerse(LuzType::Integer)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'band': {}", err)))?;
 
                 let (LuzObj::Numeral(n1), LuzObj::Numeral(n2)) = (lhs, rhs) else {
                     unreachable!()
@@ -466,8 +507,12 @@ impl LuzObj {
                 (n1 & n2).into()
             }
             Binop::BitOr => {
-                let lhs = self.coerse(LuzType::Integer)?;
-                let rhs = rhs.coerse(LuzType::Integer)?;
+                let lhs = self
+                    .coerse(LuzType::Integer)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'bor': {}", err)))?;
+                let rhs = rhs
+                    .coerse(LuzType::Integer)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'bor': {}", err)))?;
 
                 let (LuzObj::Numeral(n1), LuzObj::Numeral(n2)) = (lhs, rhs) else {
                     unreachable!()
@@ -476,8 +521,13 @@ impl LuzObj {
                 (n1 | n2).into()
             }
             Binop::BitXor => {
-                let lhs = self.coerse(LuzType::Integer)?;
-                let rhs = rhs.coerse(LuzType::Integer)?;
+                let lhs = self
+                    .coerse(LuzType::Integer)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'bxor': {}", err)))?;
+
+                let rhs = rhs
+                    .coerse(LuzType::Integer)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'bxor': {}", err)))?;
 
                 let (LuzObj::Numeral(n1), LuzObj::Numeral(n2)) = (lhs, rhs) else {
                     unreachable!()
@@ -486,8 +536,13 @@ impl LuzObj {
                 (n1 ^ n2).into()
             }
             Binop::ShiftRight => {
-                let lhs = self.coerse(LuzType::Integer)?;
-                let rhs = rhs.coerse(LuzType::Integer)?;
+                let lhs = self
+                    .coerse(LuzType::Integer)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'shr': {}", err)))?;
+
+                let rhs = rhs
+                    .coerse(LuzType::Integer)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'shr': {}", err)))?;
 
                 let (LuzObj::Numeral(n1), LuzObj::Numeral(n2)) = (lhs, rhs) else {
                     unreachable!()
@@ -496,8 +551,13 @@ impl LuzObj {
                 (n1 >> n2).into()
             }
             Binop::ShiftLeft => {
-                let lhs = self.coerse(LuzType::Integer)?;
-                let rhs = rhs.coerse(LuzType::Integer)?;
+                let lhs = self
+                    .coerse(LuzType::Integer)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'shl': {}", err)))?;
+
+                let rhs = rhs
+                    .coerse(LuzType::Integer)
+                    .map_err(|err| LuzRuntimeError::message(format!("In 'shl': {}", err)))?;
 
                 let (LuzObj::Numeral(n1), LuzObj::Numeral(n2)) = (lhs, rhs) else {
                     unreachable!()
@@ -508,11 +568,7 @@ impl LuzObj {
         })
     }
 
-    // pub fn apply_logic_cmp(self, logic_cmp_op: LogicCmpOp, rhs: LuzObj) -> Result<Self, LuzError> {
-    //     Ok(match logic_cmp_op)
-    // }
-
-    pub fn apply_cmp(self, cmpop: CmpOp, rhs: LuzObj) -> Result<Self, LuzError> {
+    pub fn apply_cmp(&self, cmpop: CmpOp, rhs: &LuzObj) -> Result<LuzObj, LuzError> {
         Ok(match cmpop {
             CmpOp::Eq => self == rhs,
             CmpOp::Neq => self != rhs,

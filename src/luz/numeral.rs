@@ -27,6 +27,19 @@ impl Numeral {
         matches!(self, Self::Float(_))
     }
 
+    pub fn as_float(self) -> f64 {
+        match self {
+            Numeral::Int(i) => i as f64,
+            Numeral::Float(f) => f,
+        }
+    }
+    pub fn as_int(self) -> i64 {
+        match self {
+            Numeral::Int(i) => i,
+            Numeral::Float(f) => f as i64,
+        }
+    }
+
     pub fn floor_div(self, rhs: Self) -> Result<Self, LuzError> {
         let (lhs, rhs) = match (self, rhs) {
             (Numeral::Int(i1), Numeral::Int(i2)) => (i1, i2),
@@ -102,20 +115,53 @@ macro_rules! impl_op_int {
 
             fn $func(self, rhs: Self) -> Self::Output {
                 match (self, rhs) {
-                    (Numeral::Int(num1), Numeral::Int(num2)) => Numeral::Int(num1 $op num2),
-                    (Numeral::Float(num2), Numeral::Int(num1))
-                    | (Numeral::Int(num1), Numeral::Float(num2)) => Numeral::Int(num1 $op num2 as i64),
-                    (Numeral::Float(num1), Numeral::Float(num2)) => Numeral::Int((num1 as i64) $op (num2 as i64)),
+                    (Numeral::Int(num1), Numeral::Int(num2)) => Numeral::Int((num1 as u64 $op num2 as u64) as i64),
+                    (Numeral::Float(num1), Numeral::Int(num2)) => Numeral::Int((num1 as u64 $op num2 as u64) as i64),
+                    (Numeral::Int(num1), Numeral::Float(num2)) => Numeral::Int((num1 as u64 $op num2 as u64) as i64),
+                    (Numeral::Float(num1), Numeral::Float(num2)) => Numeral::Int(((num1 as u64) $op (num2 as u64)) as i64),
                 }
             }
         }
     )*};
 }
 
-impl_op! {
-    [Add, add, +]
-    [Mul, mul, *]
-    [Sub, sub, -]
+impl Add for Numeral {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Numeral::Int(num1), Numeral::Int(num2)) => Numeral::Int(num1.wrapping_add(num2)),
+            (Numeral::Float(num2), Numeral::Int(num1))
+            | (Numeral::Int(num1), Numeral::Float(num2)) => Numeral::Float(num1 as f64 + num2),
+            (Numeral::Float(num1), Numeral::Float(num2)) => Numeral::Float(num1 + num2),
+        }
+    }
+}
+
+impl Sub for Numeral {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Numeral::Int(num1), Numeral::Int(num2)) => Numeral::Int(num1.wrapping_sub(num2)),
+            (Numeral::Float(num1), Numeral::Int(num2)) => Numeral::Float(num1 - num2 as f64),
+            (Numeral::Int(num1), Numeral::Float(num2)) => Numeral::Float(num1 as f64 - num2),
+            (Numeral::Float(num1), Numeral::Float(num2)) => Numeral::Float(num1 - num2),
+        }
+    }
+}
+
+impl Mul for Numeral {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Numeral::Int(num1), Numeral::Int(num2)) => Numeral::Int(num1.wrapping_mul(num2)),
+            (Numeral::Float(num1), Numeral::Int(num2)) => Numeral::Float(num1 * num2 as f64),
+            (Numeral::Int(num1), Numeral::Float(num2)) => Numeral::Float(num1 as f64 * num2),
+            (Numeral::Float(num1), Numeral::Float(num2)) => Numeral::Float(num1 * num2),
+        }
+    }
 }
 
 impl Rem for Numeral {
@@ -169,19 +215,27 @@ impl Shl for Numeral {
     type Output = Self;
 
     fn shl(self, rhs: Self) -> Self::Output {
-        let (lhs, rhs) = match (self, rhs) {
+        let (lhs_val, rhs_val) = match (self, rhs) {
             (Numeral::Int(i1), Numeral::Int(i2)) => (i1, i2),
             (Numeral::Int(i), Numeral::Float(f)) => (i, f as i64),
             (Numeral::Float(f), Numeral::Int(i)) => (f as i64, i),
             (Numeral::Float(f1), Numeral::Float(f2)) => (f1 as i64, f2 as i64),
         };
 
-        let lhs = lhs as u64;
-        let rhs = rhs as u64;
+        let lhs_val = lhs_val as i64;
+        let rhs_val = rhs_val as i64;
 
-        let result = (lhs << rhs) as i64;
+        if rhs_val != i64::MIN && rhs_val < 0 {
+            return self >> -rhs;
+        }
 
-        Numeral::Int(result)
+        if rhs_val == i64::MIN || rhs_val.abs() >= 64 {
+            Numeral::Int(0)
+        } else {
+            let result = lhs_val << rhs_val;
+
+            Numeral::Int(result)
+        }
     }
 }
 
@@ -189,19 +243,27 @@ impl Shr for Numeral {
     type Output = Self;
 
     fn shr(self, rhs: Self) -> Self::Output {
-        let (lhs, rhs) = match (self, rhs) {
+        let (lhs_val, rhs_val) = match (self, rhs) {
             (Numeral::Int(i1), Numeral::Int(i2)) => (i1, i2),
             (Numeral::Int(i), Numeral::Float(f)) => (i, f as i64),
             (Numeral::Float(f), Numeral::Int(i)) => (f as i64, i),
             (Numeral::Float(f1), Numeral::Float(f2)) => (f1 as i64, f2 as i64),
         };
 
-        let lhs = lhs as u64;
-        let rhs = rhs as u64;
+        let lhs_val = lhs_val as u64;
+        let rhs_val = rhs_val as i64;
 
-        let result = (lhs >> rhs) as i64;
+        if rhs_val != i64::MIN && rhs_val < 0 {
+            return self << -rhs;
+        }
 
-        Numeral::Int(result)
+        if rhs_val == i64::MIN || rhs_val.abs() >= 64 {
+            Numeral::Int(0)
+        } else {
+            let result = (lhs_val >> rhs_val) as i64;
+
+            Numeral::Int(result)
+        }
     }
 }
 
@@ -301,11 +363,11 @@ impl FromStr for Numeral {
                 };
                 let mut num = sign as f64 * (int as f64 + frac);
                 if let Some(power_part) = power_part {
-                    num = num.powi(
-                        2 >> power_part[1..]
+                    num *= (1
+                        >> power_part[1..]
                             .parse::<i64>()
-                            .map_err(|_| LuzError::NumberParsing(string.to_string()))?,
-                    );
+                            .map_err(|_| LuzError::NumberParsing(string.to_string()))?)
+                        as f64;
                 }
 
                 Ok(Numeral::Float(num).into())
@@ -317,7 +379,7 @@ impl FromStr for Numeral {
                 }
             }
         } else {
-            todo!("Number conversion of {:?}", s)
+            Err(LuzError::NumberParsing(string.to_string()))?
         }
     }
 }
@@ -327,7 +389,7 @@ impl Neg for Numeral {
 
     fn neg(self) -> Self::Output {
         match self {
-            Numeral::Int(i) => Numeral::Int(-i),
+            Numeral::Int(i) => Numeral::Int(if i == i64::MIN { i } else { -i }),
             Numeral::Float(f) => Numeral::Float(-f),
         }
     }

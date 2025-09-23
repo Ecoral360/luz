@@ -157,6 +157,25 @@ impl CompilerCtx {
         }
     }
 
+    pub(crate) fn rename_or_push_free_register_with_start(
+        &mut self,
+        name: String,
+        start: usize,
+    ) -> u8 {
+        match self.unamed_target_register() {
+            Some(v) => {
+                self.scope_mut().regs[v as usize].name = Some(name);
+                self.scope_mut().regs[v as usize].range =
+                    Some(RegisterRange::new(Some(start), None));
+
+                let reg = self.scope().regs[v as usize].clone();
+                self.scope_mut().locals.push(reg);
+                v
+            }
+            None => self.push_free_register_with_start(Some(name), start),
+        }
+    }
+
     pub(crate) fn set_register_start(&mut self, reg: u8, name: String) {
         self.scope_mut().set_register_start(reg, name);
     }
@@ -176,6 +195,26 @@ impl CompilerCtx {
         let range = register_name
             .as_ref()
             .and(Some(RegisterRange::new(None, None)));
+
+        let reg = Register::new(register_name, addr, range);
+
+        if let Some(ref name) = reg.name {
+            self.scope_mut().locals.push(reg.clone());
+        }
+
+        self.scope_mut().regs.push(reg);
+        addr
+    }
+
+    pub(crate) fn push_free_register_with_start(
+        &mut self,
+        register_name: Option<String>,
+        start: usize,
+    ) -> u8 {
+        let addr = self.scope().regs.len() as u8;
+        let range = register_name
+            .as_ref()
+            .and(Some(RegisterRange::new(Some(start), None)));
 
         let reg = Register::new(register_name, addr, range);
 
@@ -710,7 +749,7 @@ impl Scope {
     }
 
     pub fn get_line_info(&self, pc: usize) -> Option<&(usize, LineInfo)> {
-        self.line_infos.iter().rfind(|(i, _)| *i <= pc)
+        self.line_infos.iter().rfind(|(i, _)| *i < pc)
     }
 
     pub fn line_infos(&self) -> &[(usize, LineInfo)] {
