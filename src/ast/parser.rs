@@ -5,8 +5,8 @@ use pest::iterators::Pair;
 use pest::{iterators::Pairs, pratt_parser::PrattParser};
 
 use crate::ast::{
-    AssignStat, Attrib, DoStat, Exp, ExpTableConstructor, ExpTableConstructorField, ForInStat,
-    ForRangeStat, FuncCall, FuncDef, IfStat, RepeaStat, ReturnStat, Stat, WhileStat,
+    AssignStat, Attrib, DoStat, ExpNode, ExpTableConstructor, ExpTableConstructorField, ForInStat,
+    ForRangeStat, FuncCall, FuncDef, IfStat, RepeaStat, ReturnStat, StatNode, WhileStat,
 };
 use crate::luz::err::LuzError;
 use crate::luz::obj::{FuncParamsBuilder, LuzObj, Numeral};
@@ -54,24 +54,24 @@ lazy_static::lazy_static! {
     };
 }
 
-fn parse_list(pairs: Pairs<Rule>) -> Result<Vec<Exp>, LuzError> {
+fn parse_list(pairs: Pairs<Rule>) -> Result<Vec<ExpNode>, LuzError> {
     pairs
         .map(|pair| parse_top_expr(pair))
         .collect::<Result<_, _>>()
 }
 
-fn parse_prefix_exp(prefix_exp: Exp, pair: Pair<Rule>) -> Result<Exp, LuzError> {
+fn parse_prefix_exp(prefix_exp: ExpNode, pair: Pair<Rule>) -> Result<ExpNode, LuzError> {
     match pair.as_rule() {
         Rule::Access => {
             let mut inner = pair.into_inner();
             let element = inner.next().expect("Accessor");
             if matches!(element.as_rule(), Rule::Name) {
-                Ok(Exp::Access(ExpAccess::new(
+                Ok(ExpNode::Access(ExpAccess::new(
                     Box::new(prefix_exp),
-                    Box::new(Exp::Literal(LuzObj::String(element.as_str().to_owned()))),
+                    Box::new(ExpNode::Literal(LuzObj::String(element.as_str().to_owned()))),
                 )))
             } else {
-                Ok(Exp::Access(ExpAccess::new(
+                Ok(ExpNode::Access(ExpAccess::new(
                     Box::new(prefix_exp),
                     Box::new(parse_top_expr(element)?),
                 )))
@@ -99,7 +99,7 @@ fn parse_prefix_exp(prefix_exp: Exp, pair: Pair<Rule>) -> Result<Exp, LuzError> 
             } else {
                 parse_args(inner.next().expect("args"))?
             };
-            Ok(Exp::FuncCall(FuncCall::new(
+            Ok(ExpNode::FuncCall(FuncCall::new(
                 Box::new(prefix_exp),
                 method_name,
                 args,
@@ -109,7 +109,7 @@ fn parse_prefix_exp(prefix_exp: Exp, pair: Pair<Rule>) -> Result<Exp, LuzError> 
     }
 }
 
-fn parse_args(args: Pair<Rule>) -> Result<Vec<Exp>, LuzError> {
+fn parse_args(args: Pair<Rule>) -> Result<Vec<ExpNode>, LuzError> {
     let Some(args) = args.into_inner().next() else {
         return Ok(vec![]);
     };
@@ -123,12 +123,12 @@ fn parse_args(args: Pair<Rule>) -> Result<Vec<Exp>, LuzError> {
     }
 }
 
-fn parse_prefix_exps(first_expr: Result<Exp, LuzError>, exp: Pairs<Rule>) -> Result<Exp, LuzError> {
+fn parse_prefix_exps(first_expr: Result<ExpNode, LuzError>, exp: Pairs<Rule>) -> Result<ExpNode, LuzError> {
     let inner = exp;
     inner.fold(first_expr, |expr, el| parse_prefix_exp(expr?, el))
 }
 
-fn parse_top_expr(pair: Pair<Rule>) -> Result<Exp, LuzError> {
+fn parse_top_expr(pair: Pair<Rule>) -> Result<ExpNode, LuzError> {
     Ok(match pair.as_rule() {
         Rule::exp => parse_expr(pair.into_inner())?,
         Rule::PrefixExp => {
@@ -140,24 +140,24 @@ fn parse_top_expr(pair: Pair<Rule>) -> Result<Exp, LuzError> {
 
             parse_expr(pair.into_inner())?
         }
-        Rule::Nil => Exp::Literal(LuzObj::Nil),
-        Rule::Boolean => Exp::Literal(LuzObj::Boolean(pair.as_str() == "true")),
-        Rule::LiteralString => Exp::Literal(LuzObj::from_literal_str(pair.as_str())?),
-        Rule::Ellipse => Exp::Vararg,
+        Rule::Nil => ExpNode::Literal(LuzObj::Nil),
+        Rule::Boolean => ExpNode::Literal(LuzObj::Boolean(pair.as_str() == "true")),
+        Rule::LiteralString => ExpNode::Literal(LuzObj::from_literal_str(pair.as_str())?),
+        Rule::Ellipse => ExpNode::Vararg,
         Rule::Var => {
             let mut inner = pair.into_inner();
             let var = parse_top_expr(inner.next().expect("Var"));
             if inner.len() > 0 {
                 parse_prefix_exps(var, inner)?
             } else {
-                Exp::Var(Box::new(var?))
+                ExpNode::Var(Box::new(var?))
             }
         }
         Rule::Numeral => {
             let string = pair.as_str();
-            Exp::Literal(LuzObj::Numeral(Numeral::from_str(string)?))
+            ExpNode::Literal(LuzObj::Numeral(Numeral::from_str(string)?))
         }
-        Rule::Name => Exp::Name(pair.as_str().to_string()),
+        Rule::Name => ExpNode::Name(pair.as_str().to_string()),
 
         Rule::Access => {
             dbg!(&pair);
@@ -188,22 +188,22 @@ fn parse_top_expr(pair: Pair<Rule>) -> Result<Exp, LuzError> {
                                 arr_fields.push(exp);
                                 None
                             };
-                            Exp::TableConstructor(ExpTableConstructor::new(
+                            ExpNode::TableConstructor(ExpTableConstructor::new(
                                 arr_fields, obj_fields, last_exp,
                             ))
                         } else {
                             parse_table_field(&mut arr_fields, &mut obj_fields, last_field_val)?;
-                            Exp::TableConstructor(ExpTableConstructor::new(
+                            ExpNode::TableConstructor(ExpTableConstructor::new(
                                 arr_fields, obj_fields, None,
                             ))
                         }
                     }
-                    None => Exp::TableConstructor(ExpTableConstructor::new(
+                    None => ExpNode::TableConstructor(ExpTableConstructor::new(
                         arr_fields, obj_fields, None,
                     )),
                 }
             } else {
-                Exp::TableConstructor(ExpTableConstructor::new(vec![], vec![], None))
+                ExpNode::TableConstructor(ExpTableConstructor::new(vec![], vec![], None))
             }
         }
 
@@ -236,14 +236,14 @@ fn parse_top_expr(pair: Pair<Rule>) -> Result<Exp, LuzError> {
 
             let body = parse_stmts(&mut signature.next().expect("Function body").into_inner())?;
 
-            Exp::FuncDef(FuncDef::new(params.build().unwrap(), body))
+            ExpNode::FuncDef(FuncDef::new(params.build().unwrap(), body))
         }
         _ => todo!("Top Expr Rule::{:?}", pair.as_rule()),
     })
 }
 
 fn parse_table_field(
-    arr_fields: &mut Vec<Exp>,
+    arr_fields: &mut Vec<ExpNode>,
     obj_fields: &mut Vec<ExpTableConstructorField>,
     field: Pair<Rule>,
 ) -> Result<(), LuzError> {
@@ -253,7 +253,7 @@ fn parse_table_field(
 
     let field_inner_next = field_inner.next().expect("Field key/value");
     let exp = if matches!(field_inner_next.as_rule(), Rule::Name) {
-        Exp::Literal(LuzObj::String(field_inner_next.as_str().to_owned()))
+        ExpNode::Literal(LuzObj::String(field_inner_next.as_str().to_owned()))
     } else {
         parse_top_expr(field_inner_next)?
     };
@@ -267,7 +267,7 @@ fn parse_table_field(
     Ok(())
 }
 
-fn parse_expr(pairs: Pairs<Rule>) -> Result<Exp, LuzError> {
+fn parse_expr(pairs: Pairs<Rule>) -> Result<ExpNode, LuzError> {
     PRATT_EXPR_PARSER
         .map_primary(|primary| parse_top_expr(primary))
         .map_prefix(|op, rhs| match op.as_rule() {
@@ -336,13 +336,13 @@ pub fn parse_nameattriblist(pairs: Pairs<Rule>) -> Result<Vec<(String, Option<At
     Ok(names)
 }
 
-pub fn parse_script(pairs: &mut Pairs<Rule>) -> Result<Vec<Stat>, LuzError> {
+pub fn parse_script(pairs: &mut Pairs<Rule>) -> Result<Vec<StatNode>, LuzError> {
     let mut stats = parse_stmts(pairs)?;
-    stats.push(Stat::Return(ReturnStat::new(vec![])));
+    stats.push(StatNode::Return(ReturnStat::new(vec![])));
     Ok(stats)
 }
 
-fn parse_stmts(pairs: &mut Pairs<Rule>) -> Result<Vec<Stat>, LuzError> {
+fn parse_stmts(pairs: &mut Pairs<Rule>) -> Result<Vec<StatNode>, LuzError> {
     pairs.try_fold(vec![], |mut acc, pair| {
         acc.extend(parse_stmt(pair)?);
         Ok(acc)
@@ -383,13 +383,13 @@ fn invert<T, E>(x: Option<Result<T, E>>) -> Result<Option<T>, E> {
     x.map_or(Ok(None), |v| v.map(Some))
 }
 
-pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
+pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<StatNode>, LuzError> {
     Ok(match pair.as_rule() {
         Rule::Chunk | Rule::block => parse_stmts(&mut pair.into_inner())?,
-        Rule::DoStat => vec![Stat::Do(DoStat {
+        Rule::DoStat => vec![StatNode::Do(DoStat {
             block: parse_stmt(pair.into_inner().next().expect("Do body"))?,
         })],
-        Rule::BreakStat => vec![Stat::Break],
+        Rule::BreakStat => vec![StatNode::Break],
         Rule::GotoStat => vec![GotoStat::new(
             pair.into_inner()
                 .next()
@@ -492,9 +492,9 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
 
             let body = parse_script(&mut signature.next().expect("Function body").into_inner())?;
 
-            vec![Stat::Assign(AssignStat::new_local(
+            vec![StatNode::Assign(AssignStat::new_local(
                 vec![(name, None)],
-                vec![Exp::FuncDef(FuncDef {
+                vec![ExpNode::FuncDef(FuncDef {
                     params: params.build().unwrap(),
                     body: body,
                 })],
@@ -547,19 +547,19 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
             let access = if namelist.len() > 1 {
                 namelist[1..]
                     .iter()
-                    .fold(Exp::Name(namelist[0].clone()), |acc, val| {
-                        Exp::Access(ExpAccess {
+                    .fold(ExpNode::Name(namelist[0].clone()), |acc, val| {
+                        ExpNode::Access(ExpAccess {
                             exp: Box::new(acc),
-                            prop: Box::new(Exp::Literal(LuzObj::String(val.clone()))),
+                            prop: Box::new(ExpNode::Literal(LuzObj::String(val.clone()))),
                         })
                     })
             } else {
-                Exp::Name(namelist[0].clone())
+                ExpNode::Name(namelist[0].clone())
             };
 
-            vec![Stat::Assign(AssignStat::new_normal(
+            vec![StatNode::Assign(AssignStat::new_normal(
                 vec![access],
-                vec![Exp::FuncDef(FuncDef {
+                vec![ExpNode::FuncDef(FuncDef {
                     params: params.build().unwrap(),
                     body: body,
                 })],

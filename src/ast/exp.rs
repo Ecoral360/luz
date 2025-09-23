@@ -1,10 +1,9 @@
-use std::ops::Not;
-
 use derive_more::derive::From;
 use derive_new::new;
 use pest::{error::Error as PestError, iterators::Pair};
 
 use crate::{
+    ast::LineInfo,
     luz::{
         err::LuzError,
         obj::{FuncParams, LuzObj},
@@ -12,29 +11,35 @@ use crate::{
     Rule,
 };
 
-use super::Stat;
+use super::StatNode;
+
+#[derive(Debug, Clone, new)]
+pub struct Exp {
+    pub node: ExpNode,
+    pub line_info: LineInfo,
+}
 
 #[derive(Debug, Clone, From)]
-pub enum Exp {
+pub enum ExpNode {
     Literal(LuzObj),
     Vararg,
     Name(String),
-    Var(Box<Exp>),
-    Unop(Unop, Box<Exp>),
+    Var(Box<ExpNode>),
+    Unop(Unop, Box<ExpNode>),
     Binop {
         op: Binop,
-        lhs: Box<Exp>,
-        rhs: Box<Exp>,
+        lhs: Box<ExpNode>,
+        rhs: Box<ExpNode>,
     },
     CmpOp {
         op: CmpOp,
-        lhs: Box<Exp>,
-        rhs: Box<Exp>,
+        lhs: Box<ExpNode>,
+        rhs: Box<ExpNode>,
     },
     LogicCmpOp {
         op: LogicCmpOp,
-        lhs: Box<Exp>,
-        rhs: Box<Exp>,
+        lhs: Box<ExpNode>,
+        rhs: Box<ExpNode>,
     },
     Access(ExpAccess),
     FuncDef(FuncDef),
@@ -42,10 +47,10 @@ pub enum Exp {
     TableConstructor(ExpTableConstructor),
 }
 
-impl Exp {
-    pub fn normalize(&self) -> &Exp {
+impl ExpNode {
+    pub fn normalize(&self) -> &ExpNode {
         match self {
-            Exp::Unop(unop, exp) if *unop == Unop::Not => exp.normalize(),
+            ExpNode::Unop(unop, exp) if *unop == Unop::Not => exp.normalize(),
             _ => self,
         }
     }
@@ -53,30 +58,30 @@ impl Exp {
 
 #[derive(Debug, Clone, new)]
 pub struct ExpAccess {
-    pub exp: Box<Exp>,
-    pub prop: Box<Exp>,
+    pub exp: Box<ExpNode>,
+    pub prop: Box<ExpNode>,
 }
 
 #[derive(Debug, Clone, new)]
 pub struct FuncDef {
     pub params: FuncParams,
-    pub body: Vec<Stat>,
+    pub body: Vec<StatNode>,
 }
 
 #[derive(Debug, Clone)]
 pub struct FuncCall {
-    pub func: Box<Exp>,
+    pub func: Box<ExpNode>,
     pub method_name: Option<String>,
-    pub args: Vec<Exp>,
+    pub args: Vec<ExpNode>,
     pub variadic: bool,
 }
 
 impl FuncCall {
-    pub fn new(func: Box<Exp>, method_name: Option<String>, args: Vec<Exp>) -> Self {
+    pub fn new(func: Box<ExpNode>, method_name: Option<String>, args: Vec<ExpNode>) -> Self {
         Self {
             func,
             method_name,
-            variadic: Exp::is_multires(&args),
+            variadic: ExpNode::is_multires(&args),
             args,
         }
     }
@@ -84,17 +89,17 @@ impl FuncCall {
 
 #[derive(Debug, Clone)]
 pub struct ExpTableConstructor {
-    pub arr_fields: Vec<Exp>,
+    pub arr_fields: Vec<ExpNode>,
     pub obj_fields: Vec<ExpTableConstructorField>,
-    pub last_exp: Option<Box<Exp>>,
+    pub last_exp: Option<Box<ExpNode>>,
     pub variadic: bool,
 }
 
 impl ExpTableConstructor {
     pub fn new(
-        arr_fields: Vec<Exp>,
+        arr_fields: Vec<ExpNode>,
         obj_fields: Vec<ExpTableConstructorField>,
-        last_exp: Option<Box<Exp>>,
+        last_exp: Option<Box<ExpNode>>,
     ) -> Self {
         Self {
             arr_fields,
@@ -107,16 +112,16 @@ impl ExpTableConstructor {
 
 #[derive(Debug, Clone, new)]
 pub struct ExpTableConstructorField {
-    pub key: Box<Exp>,
-    pub val: Box<Exp>,
+    pub key: Box<ExpNode>,
+    pub val: Box<ExpNode>,
 }
 
-impl Exp {
+impl ExpNode {
     pub fn is_multire(&self) -> bool {
-        matches!(self, Exp::FuncCall(_) | Exp::Vararg)
+        matches!(self, ExpNode::FuncCall(_) | ExpNode::Vararg)
     }
 
-    pub fn is_multires(explist: &Vec<Exp>) -> bool {
+    pub fn is_multires(explist: &Vec<ExpNode>) -> bool {
         explist.last().is_some_and(|exp| exp.is_multire())
     }
 
@@ -127,7 +132,7 @@ impl Exp {
         })
     }
 
-    pub fn do_binop(self, binop: Binop, rhs: Exp) -> Result<Self, LuzError> {
+    pub fn do_binop(self, binop: Binop, rhs: ExpNode) -> Result<Self, LuzError> {
         Ok(match (self, rhs) {
             (ref s @ Self::Literal(ref obj), ref rhs @ Self::Literal(ref obj2)) => {
                 let result = obj.clone().apply_binop(binop, obj2.clone());
@@ -148,7 +153,7 @@ impl Exp {
         })
     }
 
-    pub fn do_cmp(self, cmpop: CmpOp, rhs: Exp) -> Result<Self, LuzError> {
+    pub fn do_cmp(self, cmpop: CmpOp, rhs: ExpNode) -> Result<Self, LuzError> {
         Ok(match (self, rhs) {
             // (Self::Literal(obj), Self::Literal(obj2)) => obj.apply_cmp(cmpop, obj2)?.into(),
             (s, rhs) => Self::CmpOp {
@@ -159,7 +164,7 @@ impl Exp {
         })
     }
 
-    pub fn do_logic_cmp(self, logic_cmp_op: LogicCmpOp, rhs: Exp) -> Result<Self, LuzError> {
+    pub fn do_logic_cmp(self, logic_cmp_op: LogicCmpOp, rhs: ExpNode) -> Result<Self, LuzError> {
         Ok(match (self, rhs) {
             (Self::Literal(obj), rhs) if logic_cmp_op == LogicCmpOp::And && obj.is_truthy() => rhs,
             // (Self::Literal(LuzObj::Boolean(b)), rhs) => {

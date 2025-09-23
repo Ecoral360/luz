@@ -6,7 +6,7 @@ use pest::Parser;
 use pest_derive::Parser;
 
 use crate::{
-    ast::{parser::parse_script, Stat},
+    ast::{parser::parse_script, StatNode},
     compiler::{ctx::{CompilerCtx, ScopeRef, Upvalue}, visitor::Visitor, Compiler},
     luz::obj::{LuzFunction, LuzObj},
     runner::{err::LuzRuntimeError, Runner},
@@ -48,7 +48,7 @@ pub fn run_file(path: &str) -> Result<(), LuzError> {
     run(&input[start..])
 }
 
-fn run_compiler(stmts: Vec<Stat>) -> Result<(), LuzError> {
+fn run_compiler(stmts: Vec<StatNode>) -> Result<(), LuzError> {
     let mut compiler = Compiler {};
     let mut ctx = CompilerCtx::new_main();
     for stmt in stmts {

@@ -3,6 +3,7 @@ use std::{
     fmt::Display,
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub},
     str::FromStr,
+    u64,
 };
 
 use crate::runner::err::LuzRuntimeError;
@@ -164,12 +165,50 @@ impl Div for Numeral {
     }
 }
 
+impl Shl for Numeral {
+    type Output = Self;
+
+    fn shl(self, rhs: Self) -> Self::Output {
+        let (lhs, rhs) = match (self, rhs) {
+            (Numeral::Int(i1), Numeral::Int(i2)) => (i1, i2),
+            (Numeral::Int(i), Numeral::Float(f)) => (i, f as i64),
+            (Numeral::Float(f), Numeral::Int(i)) => (f as i64, i),
+            (Numeral::Float(f1), Numeral::Float(f2)) => (f1 as i64, f2 as i64),
+        };
+
+        let lhs = lhs as u64;
+        let rhs = rhs as u64;
+
+        let result = (lhs << rhs) as i64;
+
+        Numeral::Int(result)
+    }
+}
+
+impl Shr for Numeral {
+    type Output = Self;
+
+    fn shr(self, rhs: Self) -> Self::Output {
+        let (lhs, rhs) = match (self, rhs) {
+            (Numeral::Int(i1), Numeral::Int(i2)) => (i1, i2),
+            (Numeral::Int(i), Numeral::Float(f)) => (i, f as i64),
+            (Numeral::Float(f), Numeral::Int(i)) => (f as i64, i),
+            (Numeral::Float(f1), Numeral::Float(f2)) => (f1 as i64, f2 as i64),
+        };
+
+        let lhs = lhs as u64;
+        let rhs = rhs as u64;
+
+        let result = (lhs >> rhs) as i64;
+
+        Numeral::Int(result)
+    }
+}
+
 impl_op_int! {
     [BitOr, bitor, |]
     [BitXor, bitxor, ^]
     [BitAnd, bitand, &]
-    [Shl, shl, <<]
-    [Shr, shr, >>]
 }
 
 impl Numeral {
@@ -241,7 +280,11 @@ impl FromStr for Numeral {
             if let Some(dot_pos) = string.find(&['.', ',']) {
                 // Decimal hex number
                 let int_part = &string[2..dot_pos];
-                let frac_part = &string[dot_pos + 1..];
+                let power = string.find(['p', 'P']);
+                let frac_part = &string[dot_pos + 1..power.unwrap_or(string.len())];
+
+                let power_part = power.map(|p_idx| &string[p_idx..]);
+
                 let int = if int_part.is_empty() {
                     0
                 } else {
@@ -256,10 +299,19 @@ impl FromStr for Numeral {
                         .map_err(|_| LuzError::NumberParsing(string.to_string()))?;
                     (numer as f64) / denom
                 };
-                Ok(Numeral::Float(sign as f64 * (int as f64 + frac)).into())
+                let mut num = sign as f64 * (int as f64 + frac);
+                if let Some(power_part) = power_part {
+                    num = num.powi(
+                        2 >> power_part[1..]
+                            .parse::<i64>()
+                            .map_err(|_| LuzError::NumberParsing(string.to_string()))?,
+                    );
+                }
+
+                Ok(Numeral::Float(num).into())
             } else {
-                if let Ok(hex) = i64::from_str_radix(&string[2..], 16) {
-                    Ok(Numeral::Int(sign * hex).into())
+                if let Ok(hex) = i128::from_str_radix(&string[2..], 16) {
+                    Ok(Numeral::Int(sign * hex as i64).into())
                 } else {
                     Err(LuzError::NumberParsing(string.to_string()))?
                 }

@@ -9,7 +9,7 @@ use derive_builder::Builder;
 use derive_new::new;
 
 use crate::{
-    compiler::instructions::Instruction,
+    compiler::instructions::{self, Instruction},
     luz::{err::LuzError, lib::env::get_builtin_scope, obj::LuzObj},
 };
 
@@ -629,8 +629,14 @@ impl Scope {
             )
         };
 
+        let insts_width = (self.instructions.len() + 1).to_string().len() + 4;
+
         for (i, inst) in self.instructions.iter().enumerate() {
-            result += &format!("[{}] {}\n", i + 1, inst.debug(self));
+            result += &format!(
+                "{:<insts_width$} {}\n",
+                format!("[{}]", i + 1),
+                inst.debug(self, i + 1)
+            );
         }
 
         result += "---- Constants:\n";

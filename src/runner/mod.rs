@@ -286,9 +286,17 @@ impl Runner {
                 | LuaOpCode::OP_DIV
                 | LuaOpCode::OP_DIVK
                 | LuaOpCode::OP_IDIV
-                | LuaOpCode::OP_IDIVK => self.run_arithmetic(i_abc)?,
+                | LuaOpCode::OP_IDIVK
+                | LuaOpCode::OP_BXOR
+                | LuaOpCode::OP_BXORK
+                | LuaOpCode::OP_BAND
+                | LuaOpCode::OP_BANDK
+                | LuaOpCode::OP_BOR
+                | LuaOpCode::OP_BORK
+                | LuaOpCode::OP_SHL
+                | LuaOpCode::OP_SHR => self.run_arithmetic(i_abc)?,
 
-                LuaOpCode::OP_ADDI => {
+                LuaOpCode::OP_ADDI | LuaOpCode::OP_SHLI | LuaOpCode::OP_SHRI => {
                     let iABC { c, b, k, a, .. } = *i_abc;
 
                     let lhs = self.get_reg_val_or_const(b, k)?;
@@ -297,9 +305,16 @@ impl Runner {
 
                     let rhs = LuzObj::Numeral(Numeral::Int(c));
 
+                    let binop = match op {
+                        LuaOpCode::OP_ADDI => Binop::Add,
+                        LuaOpCode::OP_SHLI => Binop::ShiftLeft,
+                        LuaOpCode::OP_SHRI => Binop::ShiftRight,
+                        _ => unreachable!(),
+                    };
+
                     self.scope
                         .borrow_mut()
-                        .set_reg_val(a, lhs.apply_binop(Binop::Add, rhs)?);
+                        .set_reg_val(a, lhs.apply_binop(binop, rhs)?);
                 }
 
                 LuaOpCode::OP_MMBINI => {}
@@ -670,6 +685,9 @@ impl Runner {
                     | LuaOpCode::OP_MULK
                     | LuaOpCode::OP_DIVK
                     | LuaOpCode::OP_IDIVK
+                    | LuaOpCode::OP_BANDK
+                    | LuaOpCode::OP_BORK
+                    | LuaOpCode::OP_BXORK
             ),
         )?;
 
@@ -679,6 +697,11 @@ impl Runner {
             LuaOpCode::OP_MUL | LuaOpCode::OP_MULK => lhs.apply_binop(Binop::Mul, rhs)?,
             LuaOpCode::OP_DIV | LuaOpCode::OP_DIVK => lhs.apply_binop(Binop::FloatDiv, rhs)?,
             LuaOpCode::OP_IDIV | LuaOpCode::OP_IDIVK => lhs.apply_binop(Binop::FloorDiv, rhs)?,
+            LuaOpCode::OP_SHL => lhs.apply_binop(Binop::ShiftLeft, rhs)?,
+            LuaOpCode::OP_SHR => lhs.apply_binop(Binop::ShiftRight, rhs)?,
+            LuaOpCode::OP_BAND | LuaOpCode::OP_BANDK => lhs.apply_binop(Binop::BitAnd, rhs)?,
+            LuaOpCode::OP_BOR | LuaOpCode::OP_BORK => lhs.apply_binop(Binop::BitOr, rhs)?,
+            LuaOpCode::OP_BXOR | LuaOpCode::OP_BXORK => lhs.apply_binop(Binop::BitXor, rhs)?,
             _ => unreachable!(),
         };
 

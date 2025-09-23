@@ -5,6 +5,7 @@ use derive_new::new;
 use crate::{
     ast::{Binop, Unop},
     compiler::{ctx::Scope, opcode::LuaOpCode},
+    luz::err::LuzError,
 };
 
 #[allow(non_camel_case_types)]
@@ -57,12 +58,12 @@ pub const MAX_HALF_sBx: u32 = 131072;
 pub const MAX_HALF_sJ: u32 = 16777216;
 
 impl Instruction {
-    pub fn debug(&self, scope: &Scope) -> String {
+    pub fn debug(&self, scope: &Scope, inst_idx: usize) -> String {
         match self {
             Instruction::iABC(i_abc) => i_abc.debug(scope),
             Instruction::iABx(i_abx) => i_abx.debug(scope),
             Instruction::iAsBx(i_asbx) => i_asbx.debug(scope),
-            Instruction::isJ(i_sj) => i_sj.debug(scope),
+            Instruction::isJ(i_sj) => i_sj.debug(scope, inst_idx),
             Instruction::iAx(i_ax) => i_ax.debug(scope),
             Instruction::LOG(s) => format!("LOG: {}", s),
             _ => String::from("NOP"),
@@ -96,6 +97,17 @@ impl Instruction {
     pub fn op_addi(a: u8, b: u8, is_b_const: bool, c: u8) -> Instruction {
         iABC::new(c, b, is_b_const, a, LuaOpCode::OP_ADDI).into()
     }
+    pub fn op_shli(dest: u8, lhs: u8, is_lhs_const: bool, rhs_imm: u8) -> Instruction {
+        LuaOpCode::OP_SHLI
+            .to_iabc(dest, is_lhs_const, lhs, rhs_imm)
+            .into()
+    }
+    pub fn op_shri(dest: u8, lhs: u8, is_lhs_const: bool, rhs_imm: u8) -> Instruction {
+        LuaOpCode::OP_SHRI
+            .to_iabc(dest, is_lhs_const, lhs, rhs_imm)
+            .into()
+    }
+
     pub fn op_mmbini(obj_reg: u8, arg_i: u8, metamethod: u8, flip: bool) -> Instruction {
         LuaOpCode::OP_MMBINI
             .to_iabc(obj_reg, flip, arg_i, metamethod)
@@ -221,14 +233,12 @@ impl Instruction {
     }
 
     pub fn op_test(reg: u8, apply_not: bool) -> Instruction {
-        LuaOpCode::OP_TEST
-            .to_iabc(reg, apply_not, 0, apply_not as u8)
-            .into()
+        LuaOpCode::OP_TEST.to_iabc(reg, apply_not, 0, 0).into()
     }
 
     pub fn op_testset(reg: u8, val_reg: u8, apply_not: bool) -> Instruction {
         LuaOpCode::OP_TESTSET
-            .to_iabc(reg, apply_not, val_reg, apply_not as u8)
+            .to_iabc(reg, apply_not, val_reg, 0)
             .into()
     }
 
@@ -238,13 +248,11 @@ impl Instruction {
         } else {
             LuaOpCode::OP_EQ
         };
-        opcode.to_iabc(lhs, apply_not, rhs, apply_not as u8).into()
+        opcode.to_iabc(lhs, apply_not, rhs, 0).into()
     }
 
     pub fn op_eqi(lhs: u8, rhs_i: u8, apply_not: bool) -> Instruction {
-        LuaOpCode::OP_EQI
-            .to_iabc(lhs, apply_not, rhs_i, apply_not as u8)
-            .into()
+        LuaOpCode::OP_EQI.to_iabc(lhs, apply_not, rhs_i, 0).into()
     }
     pub fn op_lt(lhs: u8, rhs: u8, is_rhs_immidiate: bool, apply_not: bool) -> Instruction {
         let opcode = if is_rhs_immidiate {
@@ -252,7 +260,7 @@ impl Instruction {
         } else {
             LuaOpCode::OP_LT
         };
-        opcode.to_iabc(lhs, apply_not, rhs, apply_not as u8).into()
+        opcode.to_iabc(lhs, apply_not, rhs, 0).into()
     }
 
     pub fn op_le(lhs: u8, rhs: u8, is_rhs_immidiate: bool, apply_not: bool) -> Instruction {
@@ -261,14 +269,12 @@ impl Instruction {
         } else {
             LuaOpCode::OP_LE
         };
-        opcode.to_iabc(lhs, apply_not, rhs, apply_not as u8).into()
+        opcode.to_iabc(lhs, apply_not, rhs, 0).into()
     }
 
     pub fn op_gt(lhs: u8, rhs: u8, is_rhs_immidiate: bool, apply_not: bool) -> Instruction {
         if is_rhs_immidiate {
-            LuaOpCode::OP_GTI
-                .to_iabc(lhs, apply_not, rhs, apply_not as u8)
-                .into()
+            LuaOpCode::OP_GTI.to_iabc(lhs, apply_not, rhs, 0).into()
         } else {
             Instruction::op_lt(rhs, lhs, is_rhs_immidiate, apply_not)
         }
@@ -276,9 +282,7 @@ impl Instruction {
 
     pub fn op_ge(lhs: u8, rhs: u8, is_rhs_immidiate: bool, apply_not: bool) -> Instruction {
         if is_rhs_immidiate {
-            LuaOpCode::OP_GEI
-                .to_iabc(lhs, apply_not, rhs, apply_not as u8)
-                .into()
+            LuaOpCode::OP_GEI.to_iabc(lhs, apply_not, rhs, 0).into()
         } else {
             Instruction::op_lt(rhs, lhs, is_rhs_immidiate, apply_not)
         }
@@ -466,6 +470,22 @@ impl iABC {
                 let local = scope.get_const(self.b);
                 format!("{} ; {}", self, local.repr())
             }
+            LuaOpCode::OP_BANDK
+            | LuaOpCode::OP_BORK
+            | LuaOpCode::OP_BXORK
+            | LuaOpCode::OP_ADDK
+            | LuaOpCode::OP_SUBK
+            | LuaOpCode::OP_MULK
+            | LuaOpCode::OP_DIVK
+            | LuaOpCode::OP_MODK
+            | LuaOpCode::OP_POWK
+            | LuaOpCode::OP_IDIVK => {
+                let local = scope.get_const(self.c);
+                format!("{} ; {}", self, local.repr())
+            }
+            LuaOpCode::OP_LOADNIL => {
+                format!("{} ; {} out", self, self.b + 1)
+            }
             LuaOpCode::OP_GETTABUP => {
                 let upval = scope.get_upvalue(self.b);
                 let local = scope.get_const(self.c);
@@ -530,6 +550,9 @@ impl iABC {
     }
 }
 
+const INSTS_COL_WIDTH: usize = 13;
+const INST_ARG_COL_WIDTH: usize = 22;
+
 impl Display for iABC {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let showk = matches!(
@@ -547,47 +570,82 @@ impl Display for iABC {
             | LuaOpCode::OP_SETI => self.b as i32 - 128,
             _ => self.b as i32,
         };
+
         let c = match self.op {
-            LuaOpCode::OP_ADDI | LuaOpCode::OP_GETI => self.c as i32 - 128,
-            LuaOpCode::OP_EQK
-            | LuaOpCode::OP_GTI
+            LuaOpCode::OP_ADDI | LuaOpCode::OP_SHLI | LuaOpCode::OP_SHRI | LuaOpCode::OP_GETI => {
+                self.c as i32 - 128
+            }
+            LuaOpCode::OP_EQ
+            | LuaOpCode::OP_LT
+            | LuaOpCode::OP_LE
+            | LuaOpCode::OP_EQK
+            | LuaOpCode::OP_EQI
             | LuaOpCode::OP_LTI
-            | LuaOpCode::OP_GEI
             | LuaOpCode::OP_LEI
-            | LuaOpCode::OP_EQI => self.k as i32,
+            | LuaOpCode::OP_GTI
+            | LuaOpCode::OP_GEI
+            | LuaOpCode::OP_TEST
+            | LuaOpCode::OP_TESTSET => self.k as i32,
+
             _ => self.c as i32,
         };
+
         let s = match self.op {
             LuaOpCode::OP_RETURN0 => {
-                format!("{:?}", self.op)
+                format!("{}", self.op.to_string())
             }
-            LuaOpCode::OP_MOVE => {
-                format!("{:?} {} {}", self.op, self.a, self.b)
+            LuaOpCode::OP_MOVE
+            | LuaOpCode::OP_BNOT
+            | LuaOpCode::OP_LEN
+            | LuaOpCode::OP_NOT
+            | LuaOpCode::OP_UNM => {
+                format!(
+                    "{:<INSTS_COL_WIDTH$} {} {}",
+                    self.op.to_string(),
+                    self.a,
+                    self.b
+                )
             }
             LuaOpCode::OP_LOADFALSE
             | LuaOpCode::OP_LOADTRUE
             | LuaOpCode::OP_LFALSESKIP
             | LuaOpCode::OP_RETURN1
             | LuaOpCode::OP_CLOSE => {
-                format!("{:?} {}", self.op, self.a)
+                format!("{:<INSTS_COL_WIDTH$} {}", self.op.to_string(), self.a)
             }
             LuaOpCode::OP_TEST => {
-                format!("{:?} {} {}", self.op, self.a, self.k as u8)
+                format!(
+                    "{:<INSTS_COL_WIDTH$} {} {}",
+                    self.op.to_string(),
+                    self.a,
+                    self.k as u8
+                )
             }
             LuaOpCode::OP_MMBINI => {
                 format!(
-                    "{:?} {} {} {} {}",
-                    self.op,
+                    "{:<INSTS_COL_WIDTH$} {} {} {} {}",
+                    self.op.to_string(),
                     self.a,
                     (self.b as i32) - 128,
                     self.c,
                     self.k as u8
                 )
             }
-            _ => format!("{:?} {} {} {}", self.op, self.a, b, c),
+            _ => format!(
+                "{:<INSTS_COL_WIDTH$} {} {} {}",
+                self.op.to_string(),
+                self.a,
+                b,
+                c
+            ),
         };
 
-        write!(f, "{}{}", s, if showk && self.k { "k" } else { "" })
+        write!(
+            f,
+            "{:<INST_ARG_COL_WIDTH$}{}",
+            s,
+            if showk && self.k { "k" } else { "" }
+        )
     }
 }
 
@@ -644,7 +702,11 @@ impl Display for iABx {
             // LuaOpCode::OP_LOADK => -(self.b as i32 + 1),
             _ => self.b as i32,
         };
-        write!(f, "{:?} {} {}", self.op, self.a, b)
+        write!(
+            f,
+            "{:<INST_ARG_COL_WIDTH$}",
+            format!("{:<INSTS_COL_WIDTH$} {} {}", self.op.to_string(), self.a, b)
+        )
     }
 }
 
@@ -695,10 +757,13 @@ impl Display for iAsBx {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{:?} {} {}",
-            self.op,
-            self.a,
-            (self.b as i32) - MAX_HALF_sBx as i32
+            "{:<INST_ARG_COL_WIDTH$}",
+            format!(
+                "{:<INSTS_COL_WIDTH$} {} {}",
+                self.op.to_string(),
+                self.a,
+                (self.b as i32) - MAX_HALF_sBx as i32
+            )
         )
     }
 }
@@ -737,8 +802,15 @@ impl From<u32> for isJ {
 }
 
 impl isJ {
-    pub fn debug(&self, scope: &Scope) -> String {
+    pub fn debug(&self, _scope: &Scope, inst_idx: usize) -> String {
         let s = match self.op {
+            LuaOpCode::OP_JMP => {
+                format!(
+                    "{} ; to {}",
+                    self,
+                    inst_idx as i32 + self.b as i32 - MAX_HALF_sJ as i32 + 1
+                )
+            }
             _ => self.to_string(),
         };
 
@@ -748,7 +820,15 @@ impl isJ {
 
 impl Display for isJ {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?} {}", self.op, self.b as i32 - MAX_HALF_sJ as i32)
+        write!(
+            f,
+            "{:<INST_ARG_COL_WIDTH$}",
+            format!(
+                "{:<INSTS_COL_WIDTH$} {}",
+                self.op.to_string(),
+                self.b as i32 - MAX_HALF_sJ as i32
+            )
+        )
     }
 }
 
@@ -794,7 +874,11 @@ impl iAx {
 
 impl Display for iAx {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?} {}", self.op, self.a)
+        write!(
+            f,
+            "{:<INST_ARG_COL_WIDTH$}",
+            format!("{:<INSTS_COL_WIDTH$} {}", self.op.to_string(), self.a)
+        )
     }
 }
 

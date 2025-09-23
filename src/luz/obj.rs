@@ -16,6 +16,7 @@ pub use super::table::*;
 
 use super::err::LuzError;
 use crate::ast::{Binop, CmpOp, Unop};
+use crate::luz::numeral;
 use crate::luz::thread::LuzThread;
 use crate::luz::userdata::Userdata;
 use crate::runner::err::LuzRuntimeError;
@@ -236,7 +237,7 @@ impl LuzObj {
 
     pub fn bnot(&self) -> LuzObj {
         match self {
-            LuzObj::Numeral(numeral) => todo!(),
+            LuzObj::Numeral(numeral) => (!*numeral).into(),
             LuzObj::Boolean(_) => todo!(),
             LuzObj::String(s) => LuzObj::int(s.len() as i64),
             LuzObj::Function(ref_cell) => todo!(),

@@ -3,12 +3,18 @@ use std::str::FromStr;
 use derive_more::derive::From;
 use derive_new::new;
 
-use crate::luz::err::LuzError;
+use crate::{ast::LineInfo, luz::err::LuzError};
 
-use super::{Exp, FuncCall};
+use super::{ExpNode, FuncCall};
+
+#[derive(Debug, Clone, new)]
+pub struct Stat {
+    pub node: StatNode,
+    pub line_info: LineInfo,
+}
 
 #[derive(Debug, Clone, From)]
-pub enum Stat {
+pub enum StatNode {
     Assign(AssignStat),
     Return(ReturnStat),
     FuncCall(FuncCall),
@@ -32,14 +38,14 @@ pub struct LabelStat(pub String);
 
 #[derive(Debug, Clone)]
 pub struct ReturnStat {
-    pub explist: Vec<Exp>,
+    pub explist: Vec<ExpNode>,
     pub variadic: bool,
 }
 
 impl ReturnStat {
-    pub fn new(explist: Vec<Exp>) -> Self {
+    pub fn new(explist: Vec<ExpNode>) -> Self {
         Self {
-            variadic: Exp::is_multires(&explist),
+            variadic: ExpNode::is_multires(&explist),
             explist,
         }
     }
@@ -47,7 +53,7 @@ impl ReturnStat {
 
 #[derive(Debug, Clone, new)]
 pub struct DoStat {
-    pub block: Vec<Stat>,
+    pub block: Vec<StatNode>,
 }
 
 // #[derive(Debug, Clone, new)]
@@ -67,38 +73,38 @@ pub struct DoStat {
 
 #[derive(Debug, Clone, new)]
 pub struct IfStat {
-    pub cond: Box<Exp>,
-    pub then_br: Vec<Stat>,
-    pub elseif_brs: Vec<(Exp, Vec<Stat>)>,
-    pub else_br: Option<Vec<Stat>>,
+    pub cond: Box<ExpNode>,
+    pub then_br: Vec<StatNode>,
+    pub elseif_brs: Vec<(ExpNode, Vec<StatNode>)>,
+    pub else_br: Option<Vec<StatNode>>,
 }
 
 #[derive(Debug, Clone, new)]
 pub struct WhileStat {
-    pub cond: Box<Exp>,
-    pub block: Vec<Stat>,
+    pub cond: Box<ExpNode>,
+    pub block: Vec<StatNode>,
 }
 
 #[derive(Debug, Clone, new)]
 pub struct RepeaStat {
-    pub block: Vec<Stat>,
-    pub cond: Box<Exp>,
+    pub block: Vec<StatNode>,
+    pub cond: Box<ExpNode>,
 }
 
 #[derive(Debug, Clone, new)]
 pub struct ForRangeStat {
     pub var: String,
-    pub start: Box<Exp>,
-    pub limit: Box<Exp>,
-    pub step: Option<Box<Exp>>,
-    pub block: Vec<Stat>,
+    pub start: Box<ExpNode>,
+    pub limit: Box<ExpNode>,
+    pub step: Option<Box<ExpNode>>,
+    pub block: Vec<StatNode>,
 }
 
 #[derive(Debug, Clone, new)]
 pub struct ForInStat {
     pub vars: Vec<String>,
-    pub exps: Vec<Exp>,
-    pub block: Vec<Stat>,
+    pub exps: Vec<ExpNode>,
+    pub block: Vec<StatNode>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -122,12 +128,12 @@ impl FromStr for Attrib {
 #[derive(Debug, Clone, new)]
 pub enum AssignStat {
     Normal {
-        varlist: Vec<Exp>,
-        explist: Vec<Exp>,
+        varlist: Vec<ExpNode>,
+        explist: Vec<ExpNode>,
     },
     Local {
         varlist: Vec<(String, Option<Attrib>)>,
-        explist: Vec<Exp>,
+        explist: Vec<ExpNode>,
         /// If the value assigned is a closure
         closure: bool,
     },

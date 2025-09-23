@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 /// Link : <lua source code>/lopcodes.h
 /*===========================================================================
   We assume that instructions are unsigned 32-bit integers.
@@ -137,7 +139,13 @@ pub enum LuaOpCode {
 
     OP_EXTRAARG, /*	Ax	extra (larger) argument for previous opcode	*/
 
-    OP_debug
+    OP_debug,
+}
+
+impl Display for LuaOpCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", &format!("{:?}", self)[3..])
+    }
 }
 
 impl LuaOpCode {
