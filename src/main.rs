@@ -17,5 +17,9 @@ fn main() -> Result<(), LuzError> {
         .filter_level(args.verbosity.into())
         .init();
 
-    run_file(&args.file)
+    if let Err(err) = run_file(&args.file) {
+        println!("{}", err);
+    }
+
+    Ok(())
 }

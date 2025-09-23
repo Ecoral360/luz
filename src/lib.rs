@@ -6,8 +6,12 @@ use pest::Parser;
 use pest_derive::Parser;
 
 use crate::{
-    ast::{parser::parse_script, StatNode},
-    compiler::{ctx::{CompilerCtx, ScopeRef, Upvalue}, visitor::Visitor, Compiler},
+    ast::{parser::parse_script, Stat},
+    compiler::{
+        ctx::{CompilerCtx, ScopeRef, Upvalue},
+        visitor::Visitor,
+        Compiler,
+    },
     luz::obj::{LuzFunction, LuzObj},
     runner::{err::LuzRuntimeError, Runner},
 };
@@ -28,7 +32,7 @@ pub fn run(input: &str) -> Result<(), LuzError> {
         Ok(stmts) => {
             let stmts = parse_script(stmts)?;
             trace!("{:#?}", &stmts);
-            run_compiler(stmts)
+            run_compiler(String::new(), input, stmts)
         }
         Err(err) => {
             dbg!(err);
@@ -45,24 +49,38 @@ pub fn run_file(path: &str) -> Result<(), LuzError> {
         0
     };
 
-    run(&input[start..])
+    let input = &input[start..];
+
+    let mut stmts = LuaParser::parse(Rule::Chunk, &input);
+    match &mut stmts {
+        Ok(stmts) => {
+            let stmts = parse_script(stmts)?;
+            trace!("{:#?}", &stmts);
+            run_compiler(path.to_string(), input, stmts)
+        }
+        Err(err) => {
+            dbg!(err);
+            panic!();
+        }
+    }
 }
 
-fn run_compiler(stmts: Vec<StatNode>) -> Result<(), LuzError> {
-    let mut compiler = Compiler {};
+fn run_compiler(filename: String, input: &str, stmts: Vec<Stat>) -> Result<(), LuzError> {
+    let mut compiler = Compiler::new(input);
     let mut ctx = CompilerCtx::new_main();
     for stmt in stmts {
         compiler.visit_stat(&stmt, &mut ctx)?;
     }
     debug!("{}", ctx.instructions_to_string());
-    let mut runner = runner::Runner::new(ctx.scope_clone());
+    let mut runner = runner::Runner::new(filename, input, ctx.scope_clone());
     let res = runner.run()?;
     info!("{:?}", res);
     Ok(())
 }
 
 pub fn load(
-    input: &str,
+    filename: Option<String>,
+    input: String,
     name: String,
     parent_scope: Option<ScopeRef>,
     upvalues: Vec<Upvalue>,
@@ -72,7 +90,7 @@ pub fn load(
     let stmts = parse_script(&mut stmts)?;
     trace!("{:#?}", &stmts);
 
-    let mut compiler = Compiler {};
+    let mut compiler = Compiler::new(&input);
     let mut ctx = CompilerCtx::new_chunk(name, parent_scope, upvalues);
     for stmt in stmts {
         compiler.visit_stat(&stmt, &mut ctx)?;
@@ -80,18 +98,17 @@ pub fn load(
 
     debug!("{}", ctx.instructions_to_string());
 
-    let mut runner = runner::Runner::new(ctx.scope_clone());
     // let res = runner.run()?;
     // info!("{:?}", res);
     // Ok(())
+    let filename = filename.unwrap_or_default();
     Ok(LuzFunction::new_native(
         0,
-        Rc::new(RefCell::new(
-            move |_: &mut Runner, _args: Vec<LuzObj>| {
-                runner
-                    .run()
-                    .map_err(|e| LuzRuntimeError::message(e.to_string()))
-            },
-        )),
+        Rc::new(RefCell::new(move |_: &mut Runner, _args: Vec<LuzObj>| {
+            let mut runner = runner::Runner::new(filename.clone(), &input, ctx.scope_clone());
+            runner
+                .run()
+                .map_err(|e| LuzRuntimeError::message(e.to_string()))
+        })),
     ))
 }

@@ -19,6 +19,9 @@ pub enum LuzError {
         expected: Vec<LuzType>,
     },
 
+    #[error("Attempted to index a {wrong} value.")]
+    InvalidIndex { wrong: LuzType },
+
     #[error("Cannot coerse {obj:?} into {ty:?}")]
     InvalidCoersion { obj: LuzObj, ty: LuzType },
 
@@ -26,8 +29,8 @@ pub enum LuzError {
     NumberParsing(String),
 
     #[error("In {str:?}: {escape:?} is not a valid escape sequence.")]
-    InvalidStringEscape{ escape: char, str: String },
-    
+    InvalidStringEscape { escape: char, str: String },
+
     #[error("Invalid assertion: {0}")]
     InvalidAssertion(String),
 

@@ -6,7 +6,7 @@ use pest::{iterators::Pairs, pratt_parser::PrattParser};
 
 use crate::ast::{
     AssignStat, Attrib, DoStat, ExpNode, ExpTableConstructor, ExpTableConstructorField, ForInStat,
-    ForRangeStat, FuncCall, FuncDef, IfStat, RepeaStat, ReturnStat, StatNode, WhileStat,
+    ForRangeStat, FuncCall, FuncDef, IfStat, RepeaStat, ReturnStat, Stat, StatNode, WhileStat,
 };
 use crate::luz::err::LuzError;
 use crate::luz::obj::{FuncParamsBuilder, LuzObj, Numeral};
@@ -68,7 +68,9 @@ fn parse_prefix_exp(prefix_exp: ExpNode, pair: Pair<Rule>) -> Result<ExpNode, Lu
             if matches!(element.as_rule(), Rule::Name) {
                 Ok(ExpNode::Access(ExpAccess::new(
                     Box::new(prefix_exp),
-                    Box::new(ExpNode::Literal(LuzObj::String(element.as_str().to_owned()))),
+                    Box::new(ExpNode::Literal(LuzObj::String(
+                        element.as_str().to_owned(),
+                    ))),
                 )))
             } else {
                 Ok(ExpNode::Access(ExpAccess::new(
@@ -123,7 +125,10 @@ fn parse_args(args: Pair<Rule>) -> Result<Vec<ExpNode>, LuzError> {
     }
 }
 
-fn parse_prefix_exps(first_expr: Result<ExpNode, LuzError>, exp: Pairs<Rule>) -> Result<ExpNode, LuzError> {
+fn parse_prefix_exps(
+    first_expr: Result<ExpNode, LuzError>,
+    exp: Pairs<Rule>,
+) -> Result<ExpNode, LuzError> {
     let inner = exp;
     inner.fold(first_expr, |expr, el| parse_prefix_exp(expr?, el))
 }
@@ -336,13 +341,13 @@ pub fn parse_nameattriblist(pairs: Pairs<Rule>) -> Result<Vec<(String, Option<At
     Ok(names)
 }
 
-pub fn parse_script(pairs: &mut Pairs<Rule>) -> Result<Vec<StatNode>, LuzError> {
+pub fn parse_script(pairs: &mut Pairs<Rule>) -> Result<Vec<Stat>, LuzError> {
     let mut stats = parse_stmts(pairs)?;
-    stats.push(StatNode::Return(ReturnStat::new(vec![])));
+    stats.push(StatNode::Return(ReturnStat::new(vec![])).to_oef_stat());
     Ok(stats)
 }
 
-fn parse_stmts(pairs: &mut Pairs<Rule>) -> Result<Vec<StatNode>, LuzError> {
+fn parse_stmts(pairs: &mut Pairs<Rule>) -> Result<Vec<Stat>, LuzError> {
     pairs.try_fold(vec![], |mut acc, pair| {
         acc.extend(parse_stmt(pair)?);
         Ok(acc)
@@ -383,36 +388,43 @@ fn invert<T, E>(x: Option<Result<T, E>>) -> Result<Option<T>, E> {
     x.map_or(Ok(None), |v| v.map(Some))
 }
 
-pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<StatNode>, LuzError> {
+pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
+    let pair_span = pair.as_span();
     Ok(match pair.as_rule() {
         Rule::Chunk | Rule::block => parse_stmts(&mut pair.into_inner())?,
         Rule::DoStat => vec![StatNode::Do(DoStat {
             block: parse_stmt(pair.into_inner().next().expect("Do body"))?,
-        })],
-        Rule::BreakStat => vec![StatNode::Break],
-        Rule::GotoStat => vec![GotoStat::new(
+        })
+        .to_stat(pair_span)],
+        Rule::BreakStat => vec![StatNode::Break.to_stat(pair_span)],
+        Rule::GotoStat => vec![StatNode::Goto(GotoStat::new(
             pair.into_inner()
                 .next()
                 .expect("Label to goto")
                 .as_str()
                 .to_string(),
-        )
-        .into()],
-        Rule::Label => vec![LabelStat::new(
+        ))
+        .to_stat(pair_span)],
+        Rule::Label => vec![StatNode::Label(LabelStat::new(
             pair.into_inner()
                 .next()
                 .expect("Name of label")
                 .as_str()
                 .to_string(),
-        )
-        .into()],
+        ))
+        .to_stat(pair_span)],
         Rule::LocalAssignStat => {
             let mut inner = pair.into_inner();
             let varlist =
                 parse_nameattriblist(inner.next().expect("Variables in assignment").into_inner())?;
             let explist = invert(inner.next().map(|explist| parse_list(explist.into_inner())))?;
 
-            vec![AssignStat::new_local(varlist, explist.unwrap_or_default(), false).into()]
+            vec![StatNode::Assign(AssignStat::new_local(
+                varlist,
+                explist.unwrap_or_default(),
+                false,
+            ))
+            .to_stat(pair_span)]
         }
         Rule::RetStat => {
             let mut inner = pair.into_inner();
@@ -421,10 +433,10 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<StatNode>, LuzError> {
                 .map(|e| parse_list(e.into_inner()))
                 .unwrap_or_else(|| Ok(vec![]))?;
 
-            vec![ReturnStat::new(explist).into()]
+            vec![StatNode::Return(ReturnStat::new(explist)).to_stat(pair_span)]
         }
         Rule::FunctionCall => {
-            vec![parse_func_call(pair)?.into()]
+            vec![StatNode::FuncCall(parse_func_call(pair)?).to_stat(pair_span)]
         }
         Rule::AssignStat => {
             let mut inner = pair.into_inner();
@@ -436,7 +448,7 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<StatNode>, LuzError> {
                     .into_inner(),
             )?;
 
-            vec![AssignStat::new_normal(varlist, explist).into()]
+            vec![StatNode::Assign(AssignStat::new_normal(varlist, explist)).to_stat(pair_span)]
         }
         Rule::WhileStat => {
             let mut inner = pair.into_inner();
@@ -446,7 +458,7 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<StatNode>, LuzError> {
                 .map(|s| parse_stmts(&mut s.into_inner()))
                 .unwrap_or_else(|| Ok(vec![]))?;
 
-            vec![WhileStat::new(Box::new(cond), body).into()]
+            vec![StatNode::While(WhileStat::new(Box::new(cond), body)).to_stat(pair_span)]
         }
         Rule::RepeatStat => {
             let mut inner = pair.into_inner();
@@ -456,7 +468,7 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<StatNode>, LuzError> {
                 .unwrap_or_else(|| Ok(vec![]))?;
             let cond = parse_top_expr(inner.next().expect("While cond"))?;
 
-            vec![RepeaStat::new(body, Box::new(cond)).into()]
+            vec![StatNode::Repeat(RepeaStat::new(body, Box::new(cond))).to_stat(pair_span)]
         }
         Rule::LocalFunctionDefStat => {
             let mut inner = pair.into_inner();
@@ -499,7 +511,8 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<StatNode>, LuzError> {
                     body: body,
                 })],
                 true,
-            ))]
+            ))
+            .to_stat(pair_span)]
 
             // vec![FunctionDefStat::new_local(name, params.build().unwrap(), body).into()]
         }
@@ -563,7 +576,8 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<StatNode>, LuzError> {
                     params: params.build().unwrap(),
                     body: body,
                 })],
-            ))]
+            ))
+            .to_stat(pair_span)]
             // } else {
             //     vec![
             //         FunctionDefStat::new_normal(namelist, method, params.build().unwrap(), body)
@@ -588,14 +602,14 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<StatNode>, LuzError> {
             };
             let body = parse_stmts(&mut inner.next().expect("FoRange body").into_inner())?;
 
-            vec![ForRangeStat::new(
+            vec![StatNode::ForRange(ForRangeStat::new(
                 var,
                 Box::new(start),
                 Box::new(limit),
                 step.map(Box::new),
                 body,
-            )
-            .into()]
+            ))
+            .to_stat(pair_span)]
         }
         Rule::ForInStat => {
             let mut inner = pair.into_inner();
@@ -610,7 +624,7 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<StatNode>, LuzError> {
 
             let body = parse_stmts(&mut inner.next().expect("ForIn body").into_inner())?;
 
-            vec![ForInStat::new(namelist, explist, body).into()]
+            vec![StatNode::ForIn(ForInStat::new(namelist, explist, body)).to_stat(pair_span)]
         }
         Rule::IfStat => {
             let mut inner = pair.into_inner();
@@ -640,7 +654,10 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<StatNode>, LuzError> {
                 }
             }
 
-            vec![IfStat::new(Box::new(cond), then_br, elseif_brs, else_br).into()]
+            vec![
+                StatNode::If(IfStat::new(Box::new(cond), then_br, elseif_brs, else_br))
+                    .to_stat(pair_span),
+            ]
         }
         Rule::EOI => {
             vec![]

@@ -6,9 +6,10 @@ use derive_new::new;
 pub use exp::*;
 pub use stat::*;
 
-#[derive(Debug, Clone, new)]
+#[derive(Debug, Clone, new, Copy, Default)]
 pub struct LineInfo {
-    pub content: String,
-    pub line_no: usize,
-    pub col_no: usize,
+    pub start_pos: usize,
+    pub end_pos: usize,
+    pub start_line_col: (usize, usize),
+    pub end_line_col: (usize, usize),
 }

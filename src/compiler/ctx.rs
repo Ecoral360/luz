@@ -9,6 +9,7 @@ use derive_builder::Builder;
 use derive_new::new;
 
 use crate::{
+    ast::LineInfo,
     compiler::instructions::{self, Instruction},
     luz::{err::LuzError, lib::env::get_builtin_scope, obj::LuzObj},
 };
@@ -299,8 +300,13 @@ pub struct Scope {
 
     #[new(default)]
     instructions: Vec<Instruction>,
+
+    #[new(default)]
+    line_infos: Vec<(usize, LineInfo)>,
+
     #[new(default)]
     constants: Vec<LuzObj>,
+
     #[new(default)]
     regs: Vec<Register>,
 
@@ -701,6 +707,18 @@ impl Scope {
 
     pub fn name(&self) -> Option<&String> {
         self.name.as_ref()
+    }
+
+    pub fn get_line_info(&self, pc: usize) -> Option<&(usize, LineInfo)> {
+        self.line_infos.iter().rfind(|(i, _)| *i <= pc)
+    }
+
+    pub fn line_infos(&self) -> &[(usize, LineInfo)] {
+        &self.line_infos
+    }
+
+    pub fn push_line_infos(&mut self, line_info: LineInfo) {
+        self.line_infos.push((self.instructions().len(), line_info));
     }
 }
 

@@ -56,7 +56,11 @@ impl LuzFunction {
                 for (i, arg) in args.into_iter().enumerate() {
                     fc_scope.set_reg_val(i as u8, arg);
                 }
-                let mut fc_runner = Runner::new(Rc::new(RefCell::new(fc_scope)));
+                let mut fc_runner = Runner::new(
+                    String::new(),
+                    runner.input(),
+                    Rc::new(RefCell::new(fc_scope)),
+                );
                 fc_runner.set_vararg(Some(vararg));
 
                 fc_runner

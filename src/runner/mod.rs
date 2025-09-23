@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    ast::{Binop, CmpOp},
+    ast::{Binop, CmpOp, LineInfo},
     compiler::{
         ctx::{RegOrUpvalue, Scope, ScopeRef},
         instructions::{iABC, iABx, iAsBx, isJ, Instruction, MAX_HALF_sBx, MAX_HALF_sJ},
@@ -28,7 +28,9 @@ pub enum InstructionResult {
 }
 
 #[allow(unused)]
-pub struct Runner {
+pub struct Runner<'a> {
+    filename: String,
+    input: &'a str,
     scope: Rc<RefCell<Scope>>,
     vararg: Option<Vec<LuzObj>>,
     curr_instruction: Option<(usize, Instruction)>,
@@ -36,19 +38,21 @@ pub struct Runner {
 }
 
 #[allow(unused)]
-impl Runner {
+impl<'a> Runner<'a> {
     pub fn dump_trace(&self) {
         if let Some((idx, inst)) = &self.curr_instruction {
             println!("[{}] {}", idx, inst);
         }
     }
 
-    pub fn new(scope: Rc<RefCell<Scope>>) -> Self {
+    pub fn new(filename: String, input: &'a str, scope: Rc<RefCell<Scope>>) -> Self {
         let env = Scope::get_top(Rc::clone(&scope)).unwrap();
         let (global, registry) = make_env_table();
         env.borrow_mut().set_reg_with_name("_ENV", global);
 
         Self {
+            filename,
+            input,
             scope,
             vararg: Some(vec![]),
             curr_instruction: None,
@@ -76,19 +80,43 @@ impl Runner {
         self.scope.borrow_mut()
     }
 
+    fn get_line(&self, line_info: &LineInfo) -> &'a str {
+        &self.input[line_info.start_pos..line_info.end_pos]
+    }
+
+    fn format_err(&self, pc: usize, err: LuzError) -> LuzError {
+        let scope = self.scope();
+        let Some((_, line_info)) = scope.get_line_info(pc) else {
+            return LuzError::LuzRuntimeError(LuzRuntimeError::message(format!(
+                "luz: {}: {}",
+                self.filename, err
+            )));
+        };
+        LuzError::LuzRuntimeError(LuzRuntimeError::message(format!(
+            "luz: {}:{}: {}\n{}",
+            self.filename,
+            line_info.start_line_col.0,
+            err,
+            self.get_line(&line_info)
+        )))
+    }
+
     pub fn run(&mut self) -> Result<Vec<LuzObj>, LuzError> {
         let instructions = self.scope().instructions().clone();
         let mut rets = vec![];
         let mut instruction_iter = instructions.iter();
-        let mut i = 1;
+        let mut pc = 1;
         while let Some(instruction) = instruction_iter.next() {
-            self.curr_instruction = Some((i, instruction.clone()));
-            i += 1;
-            rets = match self.run_instruction(instruction)? {
+            self.curr_instruction = Some((pc, instruction.clone()));
+            pc += 1;
+            rets = match self
+                .run_instruction(instruction)
+                .map_err(|err| self.format_err(pc - 1, err))?
+            {
                 InstructionResult::Continue => continue,
                 InstructionResult::Skip(n) => {
                     for _ in 0..n {
-                        i += 1;
+                        pc += 1;
                         instruction_iter.next();
                     }
                     continue;
@@ -461,9 +489,8 @@ impl Runner {
                     let table = self.get_reg_val(*b)?;
 
                     let LuzObj::Table(table) = table else {
-                        return Err(LuzError::Type {
+                        return Err(LuzError::InvalidIndex {
                             wrong: table.get_type(),
-                            expected: vec![LuzType::Table],
                         });
                     };
                     let key = self.get_const_val(*c)?;
@@ -757,5 +784,9 @@ impl Runner {
 
     pub fn registry(&self) -> &RefCell<Table> {
         &self.registry
+    }
+
+    pub fn input(&self) -> &'a str {
+        self.input
     }
 }

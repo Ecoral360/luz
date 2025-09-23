@@ -1,8 +1,10 @@
+use derive_new::new;
+
 use crate::{
     ast::{
         AssignStat, Binop, CmpOp, DoStat, ExpAccess, ExpNode, ExpTableConstructor,
         ExpTableConstructorField, FuncCall, FuncDef, IfStat, LogicCmpOp, RepeaStat, ReturnStat,
-        StatNode, Unop,
+        Stat, StatNode, Unop,
     },
     compiler::{
         ctx::{CompilerCtx, CompilerCtxBuilder, RegOrUpvalue, Upvalue},
@@ -21,15 +23,17 @@ pub mod instructions;
 pub mod opcode;
 pub mod visitor;
 
-#[derive(Debug)]
-pub struct Compiler {}
+#[derive(Debug, new)]
+pub struct Compiler<'a> {
+    input: &'a str,
+}
 
 #[allow(unused)]
-impl Compiler {
+impl<'a> Compiler<'a> {
     fn collect_insts_and_rollback_stat(
         &mut self,
         ctx: &mut CompilerCtx,
-        stats: &Vec<StatNode>,
+        stats: &Vec<Stat>,
     ) -> Result<Vec<Instruction>, LuzError> {
         let nb_inst_before = ctx.scope().instructions().len();
         let to_be_closed = ctx.get_or_push_free_register();
@@ -451,6 +455,10 @@ impl Compiler {
 
         Ok(claimed)
     }
+
+    pub fn input(&self) -> &'a str {
+        self.input
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -462,7 +470,7 @@ enum ExpEval {
 }
 
 #[allow(unused)]
-impl Compiler {
+impl<'a> Compiler<'a> {
     fn visit_do_stat(&mut self, ctx: &mut CompilerCtx, do_stat: &DoStat) -> Result<(), LuzError> {
         let DoStat { block } = do_stat;
         let to_be_closed = ctx.get_or_push_free_register();
@@ -1680,7 +1688,7 @@ impl Compiler {
 }
 
 #[allow(unused)]
-impl Visitor for Compiler {
+impl<'a> Visitor for Compiler<'a> {
     type Return = Result<(), LuzError>;
     type Ctx = CompilerCtx;
 
@@ -1705,9 +1713,10 @@ impl Visitor for Compiler {
     }
 
     #[must_use]
-    fn visit_stat(&mut self, stat: &StatNode, ctx: &mut Self::Ctx) -> Self::Return {
+    fn visit_stat(&mut self, stat: &Stat, ctx: &mut Self::Ctx) -> Self::Return {
         let ctx = &mut ctx.new_with(CompilerCtxBuilder::default().nb_expected(1));
-        match stat {
+        ctx.scope_mut().push_line_infos(stat.line_info);
+        match &stat.node {
             StatNode::Assign(assign_stat) => self.visit_assign(ctx, assign_stat),
             StatNode::Return(return_stat) => self.visit_return(ctx, return_stat),
             StatNode::FuncCall(func_call) => self.visit_function_call(ctx, func_call),

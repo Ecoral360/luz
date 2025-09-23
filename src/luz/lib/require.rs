@@ -115,10 +115,16 @@ pub fn package_lib(registry: TableRef) -> LuzNativeLib {
                 let input = std::fs::read_to_string(fs_path).unwrap();
 
                 let upvalues = vec![Upvalue::new("_ENV".to_owned(), 0, 0, true)];
-                let r = load(&input, input.clone(), runner.env_scope(), upvalues)
-                    .map_err(|e| LuzRuntimeError::message(e.to_string()))?;
 
                 // let mod_result = r.call(runner, vec![], vec![])?;
+
+                let r = load(
+                    Some(fs_path.clone()),
+                    input.clone(),
+                    input.clone(),
+                    runner.env_scope(),
+                    upvalues,
+                ).map_err(|e| LuzRuntimeError::message(e.to_string()))?;
 
                 Ok(vec![LuzObj::Function(Rc::new(RefCell::new(r))), LuzObj::str(fs_path)])
             } else {

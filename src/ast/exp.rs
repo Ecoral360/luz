@@ -3,21 +3,13 @@ use derive_new::new;
 use pest::{error::Error as PestError, iterators::Pair};
 
 use crate::{
-    ast::LineInfo,
-    luz::{
+    ast::Stat, luz::{
         err::LuzError,
         obj::{FuncParams, LuzObj},
-    },
-    Rule,
+    }, Rule
 };
 
 use super::StatNode;
-
-#[derive(Debug, Clone, new)]
-pub struct Exp {
-    pub node: ExpNode,
-    pub line_info: LineInfo,
-}
 
 #[derive(Debug, Clone, From)]
 pub enum ExpNode {
@@ -65,7 +57,7 @@ pub struct ExpAccess {
 #[derive(Debug, Clone, new)]
 pub struct FuncDef {
     pub params: FuncParams,
-    pub body: Vec<StatNode>,
+    pub body: Vec<Stat>,
 }
 
 #[derive(Debug, Clone)]

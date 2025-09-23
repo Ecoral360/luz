@@ -9,10 +9,10 @@ use crate::{
     load,
     luz::{
         lib::{require::package_lib, string::string_lib, LuzNativeLib},
-        obj::{LuzFunction, LuzObj, Numeral, Table, TableRef},
+        obj::{LuzObj, Numeral, Table, TableRef},
     },
     luz_fn, luz_table,
-    runner::{err::LuzRuntimeError, Runner},
+    runner::err::LuzRuntimeError,
 };
 
 pub fn make_env_table() -> (LuzObj, TableRef) {
@@ -88,7 +88,7 @@ pub fn make_env_table() -> (LuzObj, TableRef) {
             // let name = args.pop_front();
 
             let upvalues = vec![Upvalue::new("_ENV".to_owned(), 0, 0, true)];
-            let r = load(&input, input.clone(), runner.env_scope(), upvalues)
+            let r = load(None, input.clone(), input.clone(), runner.env_scope(), upvalues)
                 .map_err(|e| LuzRuntimeError::message(e.to_string()))?;
 
             Ok(vec![LuzObj::Function(Rc::new(RefCell::new(r)))])
