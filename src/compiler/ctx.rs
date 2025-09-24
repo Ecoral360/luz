@@ -779,6 +779,24 @@ pub struct Register {
     range: Option<RegisterRange>,
 }
 
+impl Register {
+    // Returns a preview string (all field, but only only puts 'something' as val if val is Some(_))
+    pub fn to_string_preview(&self) -> String {
+        format!(
+            "Register {{ name: {:?}, addr: {}, val: {}, free: {}, range: {:?} }}",
+            self.name,
+            self.addr,
+            if self.val.is_some() {
+                "Some(...)"
+            } else {
+                "None"
+            },
+            self.free,
+            self.range
+        )
+    }
+}
+
 #[derive(Debug, new, Clone)]
 pub struct RegisterRange {
     pub start: Option<usize>,

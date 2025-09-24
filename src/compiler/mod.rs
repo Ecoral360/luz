@@ -66,7 +66,7 @@ impl<'a> Compiler<'a> {
         let nb_inst_before = ctx.scope().instructions().len();
         let to_be_closed = ctx.get_or_push_free_register();
 
-        self.visit_exp(exp, ctx);
+        let reg = self.load_exp(ctx, exp)?;
 
         let mut insts = ctx
             .scope_mut()
@@ -74,7 +74,7 @@ impl<'a> Compiler<'a> {
             .drain(nb_inst_before..)
             .collect::<Vec<_>>();
 
-        match exp {
+        match exp.normalize() {
             ExpNode::CmpOp { .. } | ExpNode::LogicCmpOp { .. } => {
                 if insts
                     .last()
@@ -91,8 +91,8 @@ impl<'a> Compiler<'a> {
                 }
             }
             _ => {
-                let reg = ctx.get_or_push_free_register();
-                ctx.push_inst(Instruction::op_test(reg, false));
+                let in_not = matches!(exp, ExpNode::Unop(op, ..) if *op == Unop::Not);
+                ctx.push_inst(Instruction::op_test(reg, in_not));
             }
         }
 
@@ -249,7 +249,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn load_exp(&mut self, ctx: &mut CompilerCtx, exp: &ExpNode) -> Result<u8, LuzError> {
-        match exp {
+        match exp.normalize() {
             ExpNode::Name(name) => {
                 let (in_table, src) = ctx.scope_mut().get_reg_or_upvalue(name)?;
                 match src {
@@ -635,7 +635,10 @@ impl<'a> Compiler<'a> {
         }
 
         // Add the FORLOOP instruction
-        ctx.push_inst(Instruction::op_forloop(forloop_test, nb_inst_loop as u32 + 1));
+        ctx.push_inst(Instruction::op_forloop(
+            forloop_test,
+            nb_inst_loop as u32 + 1,
+        ));
 
         Ok(())
     }
@@ -1125,22 +1128,104 @@ impl<'a> Compiler<'a> {
         let ExpAccess { exp, prop: value } = exp_access;
         let dest = ctx.get_or_push_free_register();
 
-        let tabaddr = self.load_exp(ctx, exp)?;
-        ctx.claim_register(tabaddr);
+        match exp.normalize() {
+            ExpNode::Name(name) => {
+                let (in_table, src) = ctx.scope_mut().get_reg_or_upvalue(name)?;
+                match src {
+                    RegOrUpvalue::Register(register) => {
+                        let tabaddr = register.addr;
+                        ctx.claim_register(tabaddr);
 
-        let prop = self.handle_immidiate(ctx, value, false)?;
-        if let Some(imm) = prop {
-            ctx.push_inst(Instruction::op_geti(dest, tabaddr, imm));
-        } else {
-            match **value {
-                ExpNode::Literal(LuzObj::String(ref n)) => {
-                    let attr = ctx.get_or_add_const(LuzObj::String(n.clone()));
-                    ctx.push_inst(Instruction::op_getfield(dest, tabaddr, attr as u8));
+                        let prop = self.handle_immidiate(ctx, value, false)?;
+                        if let Some(imm) = prop {
+                            ctx.push_inst(Instruction::op_geti(dest, tabaddr, imm));
+                        } else {
+                            match **value {
+                                ExpNode::Literal(LuzObj::String(ref n)) => {
+                                    let attr = ctx.get_or_add_const(LuzObj::String(n.clone()));
+                                    ctx.push_inst(Instruction::op_getfield(
+                                        dest, tabaddr, attr as u8,
+                                    ));
+                                }
+                                _ => {
+                                    self.visit_exp(value, ctx)?;
+                                    let reg = ctx.get_or_push_free_register();
+                                    ctx.push_inst(Instruction::op_gettable(dest, tabaddr, reg));
+                                }
+                            }
+                        }
+                    }
+                    RegOrUpvalue::Upvalue(upvalue) => {
+                        let tabaddr = ctx.get_or_push_free_register();
+                        ctx.claim_register(tabaddr);
+
+                        let prop = self.handle_immidiate(ctx, value, false)?;
+                        if let Some(imm) = prop {
+                            if in_table {
+                                let name_k = ctx.get_or_add_const(LuzObj::String(name.to_owned()));
+                                ctx.push_inst(Instruction::op_gettabup(
+                                    tabaddr,
+                                    upvalue.addr,
+                                    name_k as u8,
+                                ));
+                            } else {
+                                ctx.push_inst(Instruction::op_getupval(tabaddr, upvalue.addr));
+                            }
+                            ctx.push_inst(Instruction::op_geti(dest, tabaddr, imm));
+                        } else {
+                            match **value {
+                                ExpNode::Literal(LuzObj::String(ref n)) => {
+                                    let attr = ctx.get_or_add_const(LuzObj::String(n.clone()));
+                                    if in_table {
+                                        let name_k =
+                                            ctx.get_or_add_const(LuzObj::String(name.to_owned()));
+                                        ctx.push_inst(Instruction::op_gettabup(
+                                            tabaddr,
+                                            upvalue.addr,
+                                            name_k as u8,
+                                        ));
+                                        ctx.push_inst(Instruction::op_getfield(
+                                            dest, tabaddr, attr as u8,
+                                        ));
+                                    } else {
+                                        ctx.push_inst(Instruction::op_gettabup(
+                                            tabaddr,
+                                            upvalue.addr,
+                                            attr as u8,
+                                        ));
+                                    }
+                                }
+                                _ => {
+                                    self.visit_exp(value, ctx)?;
+                                    let reg = ctx.get_or_push_free_register();
+                                    ctx.push_inst(Instruction::op_getupval(tabaddr, upvalue.addr));
+                                    ctx.push_inst(Instruction::op_gettable(dest, tabaddr, reg));
+                                }
+                            }
+                        }
+                    }
                 }
-                _ => {
-                    self.visit_exp(value, ctx)?;
-                    let reg = ctx.get_or_push_free_register();
-                    ctx.push_inst(Instruction::op_gettable(dest, tabaddr, reg));
+            }
+            _ => {
+                self.visit_exp(exp, ctx)?;
+                let tabaddr = ctx.get_or_push_free_register();
+                ctx.claim_register(tabaddr);
+
+                let prop = self.handle_immidiate(ctx, value, false)?;
+                if let Some(imm) = prop {
+                    ctx.push_inst(Instruction::op_geti(dest, tabaddr, imm));
+                } else {
+                    match **value {
+                        ExpNode::Literal(LuzObj::String(ref n)) => {
+                            let attr = ctx.get_or_add_const(LuzObj::String(n.clone()));
+                            ctx.push_inst(Instruction::op_getfield(dest, tabaddr, attr as u8));
+                        }
+                        _ => {
+                            self.visit_exp(value, ctx)?;
+                            let reg = ctx.get_or_push_free_register();
+                            ctx.push_inst(Instruction::op_gettable(dest, tabaddr, reg));
+                        }
+                    }
                 }
             }
         }
@@ -1413,6 +1498,8 @@ impl<'a> Compiler<'a> {
             unreachable!()
         };
 
+        let ctx = &mut ctx.new_with(CompilerCtxBuilder::default().nb_expected(2));
+
         let lhs_result = ctx.get_or_push_free_register();
         let lhs_addr = self.handle_exp(ctx, lhs, true, false, false)?;
 
@@ -1552,7 +1639,7 @@ impl<'a> Compiler<'a> {
             ctx.push_claimed_register_with_start(Some(param.clone()), 1);
         }
         if params.is_vararg {
-            let vararg_reg = ctx.push_claimed_register(None);
+            let vararg_reg = ctx.get_or_push_free_register();
             ctx.push_inst(Instruction::op_varargprep(vararg_reg));
         }
         for stat in body {

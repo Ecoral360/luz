@@ -14,7 +14,7 @@ use crate::{
     luz::{
         err::LuzError,
         lib::env::make_env_table,
-        obj::{LuzFunction, LuzObj, LuzType, Numeral, Table},
+        obj::{LuzFunction, LuzObj, LuzType, Numeral, Table, TableRef},
     },
     runner::err::LuzRuntimeError,
 };
@@ -45,9 +45,14 @@ impl<'a> Runner<'a> {
         }
     }
 
-    pub fn new(filename: String, input: &'a str, scope: Rc<RefCell<Scope>>) -> Self {
+    pub fn new(
+        filename: String,
+        input: &'a str,
+        scope: Rc<RefCell<Scope>>,
+        registry: TableRef,
+    ) -> Self {
         let env = Scope::get_top(Rc::clone(&scope)).unwrap();
-        let (global, registry) = make_env_table();
+        let (global, registry) = make_env_table(registry);
         env.borrow_mut().set_reg_with_name("_ENV", global);
 
         Self {
@@ -105,7 +110,7 @@ impl<'a> Runner<'a> {
         let instructions = self.scope().instructions().clone();
         let mut rets = vec![];
         let mut pc = 1;
-        while let Some(instruction) = instructions.get(pc) {
+        while let Some(instruction) = instructions.get(pc - 1) {
             self.curr_instruction = Some((pc, instruction.clone()));
             pc += 1;
             rets = match self
@@ -382,16 +387,33 @@ impl<'a> Runner<'a> {
                 }
 
                 LuaOpCode::OP_VARARG => {
-                    for addr in 1..*c - 2 {
+                    if *c == 0 {
                         let mut scope = self.scope_mut();
 
-                        let next_val = scope
-                            .vararg()
-                            .get(addr as usize - 1)
-                            .cloned()
-                            .unwrap_or(LuzObj::Nil);
+                        let vararg = scope.vararg().to_vec();
+                        let mut vararg_iter = vararg.iter().enumerate();
 
-                        scope.set_reg_val(*a + addr, next_val);
+                        while let Some((addr, vararg)) = vararg_iter.next() {
+                            let next_val = scope
+                                .vararg()
+                                .get(addr as usize - 1)
+                                .cloned()
+                                .unwrap_or(LuzObj::Nil);
+
+                            scope.set_reg_val(*a + addr as u8 + 1, next_val);
+                        }
+                    } else {
+                        for addr in 1..*c - 2 {
+                            let mut scope = self.scope_mut();
+
+                            let next_val = scope
+                                .vararg()
+                                .get(addr as usize - 1)
+                                .cloned()
+                                .unwrap_or(LuzObj::Nil);
+
+                            scope.set_reg_val(*a + addr, next_val);
+                        }
                     }
                 }
 
@@ -511,10 +533,23 @@ impl<'a> Runner<'a> {
                 }
                 LuaOpCode::OP_GETTABUP => {
                     let iABC { a, b, c, .. } = *i_abc;
+
+                    {
+                        let s = self.scope();
+                        let up = &s.upvalues()[b as usize];
+                        if let Some(parent) = s.parent() {
+                            // dbg!(parent
+                            //     .borrow()
+                            //     .regs()
+                            //     .get(up.parent_addr as usize)
+                            //     .map(|r| r.to_string_preview()));
+                        }
+                    }
+
                     let table = self
                         .scope()
                         .get_upvalue_value(b)
-                        .ok_or(LuzError::CompileError("Upvalue missing".to_owned()))?;
+                        .ok_or(LuzError::CompileError("Upvalue table missing".to_owned()))?;
 
                     if let LuzObj::Table(table) = table {
                         let key = self.get_const_val(c)?;
@@ -615,6 +650,7 @@ impl<'a> Runner<'a> {
                             expected: vec![LuzType::Table],
                         });
                     };
+
                     let key = self.get_const_val(*b)?;
                     let val = if *k {
                         self.get_const_val(*c)?
@@ -866,8 +902,8 @@ impl<'a> Runner<'a> {
         self.vararg = vararg;
     }
 
-    pub fn registry(&self) -> &RefCell<Table> {
-        &self.registry
+    pub fn registry(&self) -> Rc<RefCell<Table>> {
+        Rc::clone(&self.registry)
     }
 
     pub fn input(&self) -> &'a str {

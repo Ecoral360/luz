@@ -54,20 +54,20 @@ pub fn package_lib(registry: TableRef) -> LuzNativeLib {
         }
 
 
-        Ok(vec![])
+        Err(LuzRuntimeError::message(format!("module '{}' not found", modname)))
     });
 
     let loaded = luz_table! {};
 
     registry
         .borrow_mut()
-        .insert(LuzObj::str("package.loaded"), loaded.clone());
+        .insert(LuzObj::str("package.loaded"), loaded);
 
     let preload = luz_table! {};
 
     registry
         .borrow_mut()
-        .insert(LuzObj::str("package.preload"), loaded.clone());
+        .insert(LuzObj::str("package.preload"), preload);
 
     let search_path = luz_fn!([4, _runner, _args](LuzObj::String(name), LuzObj::String(path), sep @ (LuzObj::String(..) | LuzObj::Nil), rep @ (LuzObj::String(..) | LuzObj::Nil)) {
         let templates = path.split(';');
@@ -135,11 +135,12 @@ pub fn package_lib(registry: TableRef) -> LuzNativeLib {
 
     let path = std::env::var("LUA_PATH_5_4")
         .or_else(|_| std::env::var("LUA_PATH"))
-        .unwrap_or(String::from("./?.lua"));
+        .unwrap_or(String::from("./src/?.lua"));
 
+    let reg = registry.borrow();
     let package = luz_table! {
-        loaded: loaded,
-        preload: preload,
+        loaded: reg.get(&LuzObj::str("package.loaded")).clone(),
+        preload: reg.get(&LuzObj::str("package.preload")).clone(),
         searchers: searchers,
         searchpath: search_path,
         path: LuzObj::String(path),

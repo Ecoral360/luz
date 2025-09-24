@@ -72,7 +72,12 @@ fn run_compiler(filename: String, input: &str, stmts: Vec<Stat>) -> Result<(), L
         compiler.visit_stat(&stmt, &mut ctx)?;
     }
     debug!("{}", ctx.instructions_to_string());
-    let mut runner = runner::Runner::new(filename, input, ctx.scope_clone());
+    let mut runner = runner::Runner::new(
+        filename,
+        input,
+        ctx.scope_clone(),
+        luz_table!().as_table_or_err().unwrap(),
+    );
     let res = runner.run()?;
     info!("{:?}", res);
     Ok(())
@@ -104,8 +109,9 @@ pub fn load(
     let filename = filename.unwrap_or_default();
     Ok(LuzFunction::new_native(
         0,
-        Rc::new(RefCell::new(move |_: &mut Runner, _args: Vec<LuzObj>| {
-            let mut runner = runner::Runner::new(filename.clone(), &input, ctx.scope_clone());
+        Rc::new(RefCell::new(move |run: &mut Runner, _args: Vec<LuzObj>| {
+            let mut runner =
+                runner::Runner::new(filename.clone(), &input, ctx.scope_clone(), run.registry());
             runner
                 .run()
                 .map_err(|e| LuzRuntimeError::message(e.to_string()))

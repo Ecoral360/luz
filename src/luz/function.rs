@@ -60,6 +60,7 @@ impl LuzFunction {
                     String::new(),
                     runner.input(),
                     Rc::new(RefCell::new(fc_scope)),
+                    runner.registry(),
                 );
                 fc_runner.set_vararg(Some(vararg));
 

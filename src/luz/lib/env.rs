@@ -11,13 +11,12 @@ use crate::{
         lib::{math::math_lib, require::package_lib, string::string_lib, LuzNativeLib},
         obj::{LuzObj, Numeral, Table, TableRef},
     },
-    luz_fn, luz_table,
+    luz_fn,
     runner::err::LuzRuntimeError,
 };
 
-pub fn make_env_table() -> (LuzObj, TableRef) {
+pub fn make_env_table(registry: TableRef) -> (LuzObj, TableRef) {
     let mut table = HashMap::new();
-    let registry = luz_table!().as_table_or_err().unwrap();
 
     table.insert(LuzObj::str("_VERSION"), LuzObj::str("Lua 5.4"));
 

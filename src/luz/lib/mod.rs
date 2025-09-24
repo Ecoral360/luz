@@ -95,7 +95,7 @@ macro_rules! luz_table {
             $(table.insert($crate::luz::obj::LuzObj::str(stringify!($key)), $val);)*
         }
 
-        $crate::luz::obj::LuzObj::Table(std::rc::Rc::new(std::cell::RefCell::new($crate::luz::table::Table::new(table, None))))
+        $crate::luz::obj::LuzObj::Table(std::rc::Rc::new(std::cell::RefCell::new($crate::luz::obj::Table::new(table, None))))
     }};
     ($($val:expr),* $(,)?) => {{
         #[allow(unused_mut)]

@@ -497,10 +497,25 @@ impl iABC {
             LuaOpCode::OP_LOADNIL => {
                 format!("{} ; {} out", self, self.b + 1)
             }
+            LuaOpCode::OP_VARARG => {
+                format!(
+                    "{} ; {} out",
+                    self,
+                    if self.c == 0 {
+                        "all".to_string()
+                    } else {
+                        format!("{}", self.c - 1)
+                    }
+                )
+            }
             LuaOpCode::OP_GETTABUP => {
                 let upval = scope.get_upvalue(self.b);
                 let local = scope.get_const(self.c);
                 format!("{} ; {} {}", self, upval.name, local.repr())
+            }
+            LuaOpCode::OP_GETUPVAL => {
+                let upval = scope.get_upvalue(self.b);
+                format!("{} ; {}", self, upval.name)
             }
             LuaOpCode::OP_SETTABUP => {
                 let upval = scope.get_upvalue(self.a);
@@ -609,7 +624,9 @@ impl Display for iABC {
             | LuaOpCode::OP_BNOT
             | LuaOpCode::OP_LEN
             | LuaOpCode::OP_NOT
-            | LuaOpCode::OP_UNM => {
+            | LuaOpCode::OP_UNM
+            | LuaOpCode::OP_GETUPVAL
+            | LuaOpCode::OP_VARARG => {
                 format!(
                     "{:<INSTS_COL_WIDTH$} {} {}",
                     self.op.to_string(),
