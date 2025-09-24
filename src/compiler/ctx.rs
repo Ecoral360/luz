@@ -365,6 +365,31 @@ pub struct Scope {
     locals: Vec<Register>,
 }
 
+impl Scope {
+    pub fn make_closure(&self) -> Rc<RefCell<Self>> {
+        let scope = Rc::new(RefCell::new(Self {
+            name: self.name.clone(),
+            parent: self.parent.as_ref().map(|p| Rc::clone(p)),
+            instructions: self.instructions.clone(),
+            line_infos: self.line_infos.clone(),
+            constants: self.constants.clone(),
+            regs: self.regs.clone(),
+            upvalues: self.upvalues.clone(),
+            sub_scopes: self.sub_scopes.clone(),
+            nb_params: self.nb_params.clone(),
+            vararg: self.vararg.clone(),
+            locals: self.locals.clone(),
+        }));
+
+        // Put the new current scope as the parent scope for its subscopes
+        for sub_scope in scope.borrow_mut().sub_scopes.iter_mut() {
+            sub_scope.borrow_mut().parent = Some(Rc::clone(&scope));
+        }
+
+        scope
+    }
+}
+
 pub type ScopeRef = Rc<RefCell<Scope>>;
 
 #[derive(Debug)]

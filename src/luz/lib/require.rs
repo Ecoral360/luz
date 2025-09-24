@@ -32,23 +32,33 @@ pub fn package_lib(registry: TableRef) -> LuzNativeLib {
         let searchers = package.borrow().get(&LuzObj::str("searchers")).as_table_or_err()?;
 
         let len = searchers.borrow().len();
+        // Iterate over searchers
+        // If one returns a function, call it to load the module
         for searcher_idx in 1..=len {
             let searchers = searchers.borrow();
             let searcher = searchers.get(&LuzObj::int(searcher_idx as i64));
+            // Expecting a function
             luz_let!(LuzObj::Function(f) = searcher);
+            // Call the searcher
             let result = f.borrow().call(runner, vec![modname.clone()], vec![])?;
+
+            // If it returns a function, call it to load the module
             if !result.is_empty() && result[0].type_is(LuzType::Function) {
                 luz_let!(LuzObj::Function(ref loader) = result[0]);
+
                 let loader_data = result.get(1).unwrap_or(&LuzObj::Nil);
+
+                // Call the loader
                 let module = loader.borrow().call(runner, vec![modname.clone(), loader_data.clone()], vec![])?;
+
                 if module.is_empty() || module[0].is_nil() {
                     let mut loaded = loaded.borrow_mut();
                     let module_val = loaded.get_or_insert(modname, true.into());
                     return Ok(vec![module_val, loader_data.clone()]);
                 } else {
                     let mut loaded = loaded.borrow_mut();
-                    loaded.insert(modname.clone(), module[0].clone());
-                    return Ok(vec![module[0].clone(), loader_data.clone()]);
+                    let module_val = loaded.get_or_insert(modname, module[0].clone());
+                    return Ok(vec![module_val, loader_data.clone()]);
                 }
             }
         }

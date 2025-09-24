@@ -16,7 +16,6 @@ pub use super::table::*;
 
 use super::err::LuzError;
 use crate::ast::{Binop, CmpOp, Unop};
-use crate::luz::numeral;
 use crate::luz::thread::LuzThread;
 use crate::luz::userdata::Userdata;
 use crate::runner::err::LuzRuntimeError;

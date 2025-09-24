@@ -699,7 +699,7 @@ impl<'a> Runner<'a> {
                 }
                 LuaOpCode::OP_CLOSURE => {
                     let iABx { b, a, .. } = *i_abx;
-                    let sub_scope = self.scope().sub_scopes()[b as usize].clone();
+                    let sub_scope = Rc::clone(&self.scope().sub_scopes()[b as usize]);
                     let nb_params = sub_scope.borrow().nb_params();
                     self.scope.borrow_mut().set_reg_val(
                         a,

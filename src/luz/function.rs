@@ -52,16 +52,12 @@ impl LuzFunction {
     ) -> Result<Vec<LuzObj>, LuzRuntimeError> {
         match self {
             LuzFunction::User { ref scope, .. } => {
-                let mut fc_scope = scope.borrow().clone();
+                let fc_scope = scope.borrow().make_closure();
                 for (i, arg) in args.into_iter().enumerate() {
-                    fc_scope.set_reg_val(i as u8, arg);
+                    fc_scope.borrow_mut().set_reg_val(i as u8, arg);
                 }
-                let mut fc_runner = Runner::new(
-                    String::new(),
-                    runner.input(),
-                    Rc::new(RefCell::new(fc_scope)),
-                    runner.registry(),
-                );
+                let mut fc_runner =
+                    Runner::new(String::new(), runner.input(), fc_scope, runner.registry());
                 fc_runner.set_vararg(Some(vararg));
 
                 fc_runner
