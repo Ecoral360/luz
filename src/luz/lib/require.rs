@@ -12,7 +12,7 @@ use crate::{
 };
 
 pub fn package_lib(registry: TableRef) -> LuzNativeLib {
-    let require_fn = luz_fn!([1, runner, args]() {
+    let require_fn = luz_fn!([1, runner](*args) {
         let loaded = runner.registry().borrow().get(&LuzObj::str("package.loaded")).as_table_or_err()?;
 
         luz_let!(modname =? args.get(0); else "bad argument #1 to 'require' (expected string)");
@@ -79,7 +79,7 @@ pub fn package_lib(registry: TableRef) -> LuzNativeLib {
         .borrow_mut()
         .insert(LuzObj::str("package.preload"), preload);
 
-    let search_path = luz_fn!([4, _runner, _args](LuzObj::String(name), LuzObj::String(path), sep @ (LuzObj::String(..) | LuzObj::Nil), rep @ (LuzObj::String(..) | LuzObj::Nil)) {
+    let search_path = luz_fn!([4](LuzObj::String(name), LuzObj::String(path), sep @ (LuzObj::String(..) | LuzObj::Nil), rep @ (LuzObj::String(..) | LuzObj::Nil)) {
         let templates = path.split(';');
         let sep = if sep.is_nil() { "." } else { &sep.to_string() };
         let rep = if rep.is_nil() { "/" } else { &rep.to_string() };
@@ -98,13 +98,13 @@ pub fn package_lib(registry: TableRef) -> LuzNativeLib {
     });
 
     let searchers = luz_table![
-        luz_fn!([1, runner, args](modname) {
+        luz_fn!([1, runner](modname) {
             let preload = runner.registry().borrow().get(&LuzObj::str("package.preload")).as_table_or_err()?;
 
             let result = preload.borrow().get(&modname).clone();
             Ok(vec![result, LuzObj::str(":preload:")])
         }),
-        luz_fn!([1, runner, args](modname) {
+        luz_fn!([1, runner](modname) {
             let package = runner.get_val("package").ok_or(LuzRuntimeError::message(
                 "Variable named 'package' not found",
             ))?.as_table_or_err()?;

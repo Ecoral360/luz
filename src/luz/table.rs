@@ -8,6 +8,7 @@ use super::obj::LuzObj;
 pub struct Table {
     table: HashMap<LuzObj, LuzObj>,
     arr: Vec<LuzObj>,
+    keys: Vec<LuzObj>,
     metatable: Option<Rc<RefCell<Table>>>,
     tag_method_flags: u8,
 }
@@ -21,6 +22,7 @@ impl PartialEq for Table {
 impl Table {
     pub fn new(table: HashMap<LuzObj, LuzObj>, metatable: Option<Rc<RefCell<Table>>>) -> Self {
         Self {
+            keys: table.keys().cloned().collect(),
             table,
             metatable,
             ..Default::default()
@@ -78,7 +80,15 @@ impl Table {
         if key == LuzObj::Numeral(Numeral::Int(self.arr.len() as i64 + 1)) {
             self.arr.push(item);
         } else {
-            self.table.insert(key, item);
+            if item == LuzObj::Nil {
+                self.table.remove(&key);
+                self.keys.retain(|k| *k != key);
+            } else {
+                self.table.insert(key.clone(), item);
+                if !self.keys.contains(&key) {
+                    self.keys.push(key);
+                }
+            }
         }
     }
 
@@ -108,6 +118,9 @@ impl Table {
     fn find_boundary_in_array(&self) -> usize {
         let mut left = 0;
         let mut right = self.arr.len();
+        if right == 0 {
+            return 0;
+        }
 
         // We do a binary search to find the smallest `i`
         // such that arr[i] is not Nil and arr[i+1] is Nil
@@ -133,6 +146,28 @@ impl Table {
 
     pub fn tag_method_flags(&self) -> u8 {
         self.tag_method_flags
+    }
+
+    pub fn first_idx(&self) -> LuzObj {
+        if !self.arr.is_empty() {
+            return LuzObj::int(1);
+        }
+        if !self.keys.is_empty() {
+            return self.keys.first().unwrap().clone();
+        }
+        LuzObj::Nil
+    }
+
+    pub fn next_idx(&self, idx: &LuzObj) -> LuzObj {
+        if let LuzObj::Numeral(num) = idx {
+            if num.floor() == *num && (num.as_int() as usize) < self.arr.len() {
+                return LuzObj::int(num.as_int() + 1);
+            }
+        }
+
+        let res = self.keys.iter().skip_while(|k| *k != idx).nth(1);
+
+        res.cloned().unwrap_or(LuzObj::Nil)
     }
 }
 

@@ -3,8 +3,8 @@ use derive_new::new;
 use crate::{
     ast::{
         AssignStat, Binop, CmpOp, DoStat, ExpAccess, ExpNode, ExpTableConstructor,
-        ExpTableConstructorField, ForRangeStat, FuncCall, FuncDef, IfStat, LogicCmpOp, RepeaStat,
-        ReturnStat, Stat, StatNode, Unop,
+        ExpTableConstructorField, ForInStat, ForRangeStat, FuncCall, FuncDef, IfStat, LogicCmpOp,
+        RepeaStat, ReturnStat, Stat, StatNode, Unop,
     },
     compiler::{
         ctx::{CompilerCtx, CompilerCtxBuilder, RegOrUpvalue, RegisterBuilder, Upvalue},
@@ -213,15 +213,6 @@ impl<'a> Compiler<'a> {
                     }
                     Ok(ExpEval::InRegister(reg))
                 }
-                // LuzObj::String(name) => {
-                //     let (in_table, src) = ctx.scope_mut().get_reg_or_upvalue(name)?;
-                //     match src {
-                //         RegOrUpvalue::Register(register) => Ok(ExpEval::InRegister(register.addr)),
-                //         RegOrUpvalue::Upvalue(upvalue) => {
-                //             Ok(ExpEval::InUpvalue { in_table, upvalue })
-                //         }
-                //     }
-                // }
                 _ => {
                     if supports_constants {
                         Ok(ExpEval::InConstant(ctx.get_or_add_const(lit.clone()) as u8))
@@ -430,7 +421,7 @@ impl<'a> Compiler<'a> {
         &mut self,
         ctx: &mut CompilerCtx,
         explist: &Vec<ExpNode>,
-        nb_expected: u8,
+        total_nb_expected: u8,
     ) -> Result<Vec<u8>, LuzError> {
         let mut new_ctx = ctx.new_with(CompilerCtxBuilder::default().nb_expected(2));
         let mut claimed = vec![];
@@ -439,19 +430,35 @@ impl<'a> Compiler<'a> {
             return Ok(claimed);
         }
 
+        let mut nb_got = 0;
+
         for exp in &explist[..explist.len() - 1] {
             self.visit_exp(exp, &mut new_ctx)?;
             claimed.push(ctx.claim_next_free_register());
+            nb_got += 1;
         }
 
+        let needed = total_nb_expected.max(nb_got) - nb_got;
+
         let mut last_ctx = if ExpNode::is_multires(explist) {
-            ctx.new_with(CompilerCtxBuilder::default().nb_expected(0))
+            nb_got = total_nb_expected;
+            ctx.new_with(CompilerCtxBuilder::default().nb_expected(needed))
         } else {
-            ctx.new_with(CompilerCtxBuilder::default().nb_expected(nb_expected + 2))
+            nb_got += 1;
+            ctx.new_with(CompilerCtxBuilder::default().nb_expected(2))
         };
 
         self.visit_exp(&explist[explist.len() - 1], &mut last_ctx)?;
         claimed.push(ctx.claim_next_free_register());
+
+        let remaining = total_nb_expected.max(nb_got) - nb_got;
+        if remaining != 0 {
+            let start = ctx.get_or_push_free_register();
+            for _ in 0..remaining {
+                claimed.push(ctx.claim_next_free_register());
+            }
+            ctx.push_inst(Instruction::op_loadnil(start, remaining as u32));
+        }
 
         Ok(claimed)
     }
@@ -639,6 +646,96 @@ impl<'a> Compiler<'a> {
             forloop_test,
             nb_inst_loop as u32 + 1,
         ));
+
+        Ok(())
+    }
+
+    fn visit_for_in(
+        &mut self,
+        ctx: &mut CompilerCtx,
+        for_in_stat: &ForInStat,
+    ) -> Result<(), LuzError> {
+        let ForInStat { vars, exps, block } = for_in_stat;
+
+        let to_be_closed = ctx.get_or_push_free_register();
+
+        let exp_claimed = self.handle_multires(ctx, exps, 5)?;
+        ctx.unclaim_registers(&exp_claimed);
+
+        let tforprep_idx = ctx.instructions_len();
+        let iter_addr = ctx.get_or_push_free_register();
+        ctx.push_inst(Instruction::op_tforprep(iter_addr, 0));
+
+        let nb_inst_before = ctx.instructions_len();
+
+        let forloop_iter = ctx
+            .rename_or_push_free_register_with_start(String::from("(for state)"), nb_inst_before);
+        let forloop_state = ctx
+            .rename_or_push_free_register_with_start(String::from("(for state)"), nb_inst_before);
+        let forloop_init = ctx
+            .rename_or_push_free_register_with_start(String::from("(for state)"), nb_inst_before);
+        let forloop_close = ctx
+            .rename_or_push_free_register_with_start(String::from("(for state)"), nb_inst_before);
+
+        ctx.claim_register(forloop_iter);
+        ctx.claim_register(forloop_state);
+        ctx.claim_register(forloop_init);
+        ctx.claim_register(forloop_close);
+
+        for var in vars {
+            let var_addr =
+                ctx.rename_or_push_free_register_with_start(var.to_string(), nb_inst_before + 1);
+            ctx.claim_register(var_addr);
+        }
+
+        for stmt in block {
+            self.visit_stat(stmt, ctx);
+        }
+
+        let loop_body_len = ctx.instructions_len() - nb_inst_before;
+
+        // Ending the for loop body vars
+        {
+            let mut scope = ctx.scope_mut();
+            let regs = scope.regs()[forloop_close as usize + 1..]
+                .iter()
+                .map(|reg| reg.addr)
+                .collect::<Vec<u8>>();
+
+            for reg in regs {
+                scope.set_end_of_register(reg);
+            }
+        }
+
+        ctx.push_inst(Instruction::op_tforcall(iter_addr, vars.len() as u8));
+
+        ctx.push_inst(Instruction::op_tforloop(
+            iter_addr,
+            loop_body_len as u32 + 2,
+        ));
+
+        {
+            let mut scope = ctx.scope_mut();
+            let Instruction::iABx(iABx { b, a, op }) = &mut scope.instructions_mut()[tforprep_idx]
+            else {
+                unreachable!()
+            };
+
+            *b = loop_body_len as u32;
+        }
+
+        // Ending the for loop inner vars
+        {
+            let mut scope = ctx.scope_mut();
+            let regs = scope.regs()[forloop_iter as usize..=forloop_close as usize]
+                .iter()
+                .map(|reg| reg.addr)
+                .collect::<Vec<u8>>();
+
+            for reg in regs {
+                scope.set_end_of_register(reg);
+            }
+        }
 
         Ok(())
     }
@@ -1946,15 +2043,12 @@ impl<'a> Visitor for Compiler<'a> {
             StatNode::Assign(assign_stat) => self.visit_assign(ctx, assign_stat),
             StatNode::Return(return_stat) => self.visit_return(ctx, return_stat),
             StatNode::FuncCall(func_call) => self.visit_function_call(ctx, func_call),
-            // Stat::FunctionDef(function_def_stat) => {
-            //     self.visit_function_def_stat(ctx, function_def_stat)
-            // }
             StatNode::Do(do_stat) => self.visit_do_stat(ctx, do_stat),
             StatNode::While(while_stat) => todo!(),
             StatNode::Repeat(repeat_stat) => self.visit_repeat_until(ctx, repeat_stat),
             StatNode::If(if_stat) => self.visit_if(ctx, if_stat),
             StatNode::ForRange(for_range_stat) => self.visit_for_range(ctx, for_range_stat),
-            StatNode::ForIn(for_in_stat) => todo!(),
+            StatNode::ForIn(for_in_stat) => self.visit_for_in(ctx, for_in_stat),
             StatNode::Break => todo!(),
             StatNode::Goto(goto_stat) => todo!(),
             StatNode::Label(label_stat) => todo!(),

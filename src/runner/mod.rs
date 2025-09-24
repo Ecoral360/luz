@@ -16,6 +16,7 @@ use crate::{
         lib::env::make_env_table,
         obj::{LuzFunction, LuzObj, LuzType, Numeral, Table, TableRef},
     },
+    luz_let,
     runner::err::LuzRuntimeError,
 };
 
@@ -316,6 +317,8 @@ impl<'a> Runner<'a> {
                 | LuaOpCode::OP_IDIVK
                 | LuaOpCode::OP_MOD
                 | LuaOpCode::OP_MODK
+                | LuaOpCode::OP_POW
+                | LuaOpCode::OP_POWK
                 | LuaOpCode::OP_BXOR
                 | LuaOpCode::OP_BXORK
                 | LuaOpCode::OP_BAND
@@ -394,23 +397,16 @@ impl<'a> Runner<'a> {
 
                         let vararg = scope.vararg().to_vec();
                         let mut vararg_iter = vararg.iter().enumerate();
-
-                        while let Some((addr, vararg)) = vararg_iter.next() {
-                            let next_val = scope
-                                .vararg()
-                                .get(addr as usize - 1)
-                                .cloned()
-                                .unwrap_or(LuzObj::Nil);
-
-                            scope.set_reg_val(*a + addr as u8 + 1, next_val);
+                        for (addr, next_val) in vararg_iter {
+                            scope.set_or_push_reg_val(*a + addr as u8, next_val.clone());
                         }
                     } else {
-                        for addr in 1..*c - 2 {
+                        for addr in 0..=*c - 2 {
                             let mut scope = self.scope_mut();
 
                             let next_val = scope
                                 .vararg()
-                                .get(addr as usize - 1)
+                                .get(addr as usize)
                                 .cloned()
                                 .unwrap_or(LuzObj::Nil);
 
@@ -499,10 +495,8 @@ impl<'a> Runner<'a> {
                             self.scope_mut().set_reg_val(func_addr + i as u8, result);
                         }
                         if (nb_expected_results - 1) > nb_results {
-                            let diff = nb_expected_results - 2 - nb_results;
-                            for addr in 0..diff + 1 {
-                                self.scope_mut()
-                                    .set_reg_val(func_addr + diff + addr, LuzObj::Nil);
+                            for addr in nb_results..nb_expected_results {
+                                self.scope_mut().set_reg_val(func_addr + addr, LuzObj::Nil);
                             }
                         }
                     }
@@ -680,13 +674,42 @@ impl<'a> Runner<'a> {
                         });
                     };
 
-                    for i in 1..=*b {
-                        let val = self.get_reg_val_or_nil(*a + i);
-                        table
-                            .borrow_mut()
-                            .insert(LuzObj::Numeral(Numeral::Int((*c + i) as i64)), val);
+                    if *b == 0 {
+                        let mut addr = 1;
+                        while let Ok(Some(val)) = self.take_reg_val(*a + addr) {
+                            table
+                                .borrow_mut()
+                                .insert(LuzObj::Numeral(Numeral::Int((*c + addr) as i64)), val);
+                            addr += 1;
+                        }
+                    } else {
+                        for i in 1..=*b {
+                            let val = self.get_reg_val_or_nil(*a + i);
+                            table
+                                .borrow_mut()
+                                .insert(LuzObj::Numeral(Numeral::Int((*c + i) as i64)), val);
+                        }
                     }
                 }
+
+                LuaOpCode::OP_TFORCALL => {
+                    luz_let!(LuzObj::Function(iter) = self.get_reg_val(*a)?);
+                    let state = self.get_reg_val(*a + 1)?;
+                    let ctrl = self.get_reg_val(*a + 2)?;
+
+                    let result = iter.borrow().call(self, vec![state, ctrl], vec![])?;
+
+                    let mut result_iter = result.into_iter();
+
+                    for addr in *a + 4..=*a + 3 + *c {
+                        let val = result_iter.next().unwrap_or(LuzObj::Nil);
+                        self.scope_mut().set_reg_val(addr, val);
+                    }
+
+                    let ctrl = self.get_reg_val(*a + 4)?;
+                    self.scope_mut().set_reg_val(*a + 2, ctrl);
+                }
+
                 op => todo!("iABC {:?}", op),
             },
             Instruction::iABx(i_abx) => match i_abx.op {
@@ -783,6 +806,27 @@ impl<'a> Runner<'a> {
                     }
                 }
 
+                LuaOpCode::OP_TFORPREP => {
+                    let iABx { a, b, .. } = *i_abx;
+
+                    let iter = self.get_reg_val(a)?;
+                    let state = self.get_reg_val(a + 1)?;
+                    let init = self.get_reg_val(a + 2)?;
+                    let close = self.get_reg_val(a + 3)?;
+
+                    return Ok(InstructionResult::Jmp(b as i32));
+                }
+
+                LuaOpCode::OP_TFORLOOP => {
+                    let iABx { a, b, .. } = *i_abx;
+                    let val = self.get_reg_val(a + 2)?;
+
+                    if !val.is_nil() {
+                        // self.scope_mut().set_reg_val(a, val);
+                        return Ok(InstructionResult::Jmp(-(b as i32)));
+                    }
+                }
+
                 op => todo!("iABx {:?}", op),
             },
             Instruction::iAsBx(i_asbx) => match i_asbx.op {
@@ -838,16 +882,18 @@ impl<'a> Runner<'a> {
                     | LuaOpCode::OP_BORK
                     | LuaOpCode::OP_BXORK
                     | LuaOpCode::OP_MODK
+                    | LuaOpCode::OP_POWK
             ),
         )?;
 
         let result = match op {
             LuaOpCode::OP_ADD | LuaOpCode::OP_ADDK => lhs.apply_binop(Binop::Add, rhs)?,
-            LuaOpCode::OP_MOD | LuaOpCode::OP_MODK => lhs.apply_binop(Binop::Mod, rhs)?,
             LuaOpCode::OP_SUB | LuaOpCode::OP_SUBK => lhs.apply_binop(Binop::Sub, rhs)?,
             LuaOpCode::OP_MUL | LuaOpCode::OP_MULK => lhs.apply_binop(Binop::Mul, rhs)?,
             LuaOpCode::OP_DIV | LuaOpCode::OP_DIVK => lhs.apply_binop(Binop::FloatDiv, rhs)?,
             LuaOpCode::OP_IDIV | LuaOpCode::OP_IDIVK => lhs.apply_binop(Binop::FloorDiv, rhs)?,
+            LuaOpCode::OP_MOD | LuaOpCode::OP_MODK => lhs.apply_binop(Binop::Mod, rhs)?,
+            LuaOpCode::OP_POW | LuaOpCode::OP_POWK => lhs.apply_binop(Binop::Exp, rhs)?,
             LuaOpCode::OP_SHL => lhs.apply_binop(Binop::ShiftLeft, rhs)?,
             LuaOpCode::OP_SHR => lhs.apply_binop(Binop::ShiftRight, rhs)?,
             LuaOpCode::OP_BAND | LuaOpCode::OP_BANDK => lhs.apply_binop(Binop::BitAnd, rhs)?,

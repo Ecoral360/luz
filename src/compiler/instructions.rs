@@ -423,11 +423,25 @@ impl Instruction {
         LuaOpCode::OP_VARARG.to_iabc(start, false, 0, nb).into()
     }
 
+    pub fn op_forprep(forloop_test: u8, loop_len: u32) -> Instruction {
+        LuaOpCode::OP_FORPREP.to_iabx(forloop_test, loop_len).into()
+    }
     pub fn op_forloop(forloop_test: u8, loop_len: u32) -> Instruction {
         LuaOpCode::OP_FORLOOP.to_iabx(forloop_test, loop_len).into()
     }
-    pub fn op_forprep(forloop_test: u8, loop_len: u32) -> Instruction {
-        LuaOpCode::OP_FORPREP.to_iabx(forloop_test, loop_len).into()
+
+    pub fn op_tforprep(iter_addr: u8, jmp_to_call: u32) -> Instruction {
+        LuaOpCode::OP_TFORPREP
+            .to_iabx(iter_addr, jmp_to_call)
+            .into()
+    }
+    pub fn op_tforcall(iter_addr: u8, nb_vars: u8) -> Instruction {
+        LuaOpCode::OP_TFORCALL
+            .to_iabc(iter_addr, false, 0, nb_vars)
+            .into()
+    }
+    pub fn op_tforloop(iter_addr: u8, loop_len: u32) -> Instruction {
+        LuaOpCode::OP_TFORLOOP.to_iabx(iter_addr, loop_len).into()
     }
 }
 
@@ -632,6 +646,14 @@ impl Display for iABC {
                     self.op.to_string(),
                     self.a,
                     self.b
+                )
+            }
+            LuaOpCode::OP_TFORCALL => {
+                format!(
+                    "{:<INSTS_COL_WIDTH$} {} {}",
+                    self.op.to_string(),
+                    self.a,
+                    self.c
                 )
             }
             LuaOpCode::OP_LOADFALSE

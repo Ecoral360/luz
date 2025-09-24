@@ -11,7 +11,7 @@ use crate::{
 
 pub fn string_lib(_registry: TableRef) -> LuzNativeLib {
     let table = luz_table! {
-        len: luz_fn!([1, _runner, args]() {
+        len: luz_fn!([1](*args) {
             let mut args = VecDeque::from(args);
             let Some(LuzObj::String(s)) = args.pop_front() else {
                 return Err(LuzRuntimeError::message(
@@ -20,7 +20,7 @@ pub fn string_lib(_registry: TableRef) -> LuzNativeLib {
             };
             Ok(vec![LuzObj::Numeral(Numeral::Int(s.chars().count() as i64))])
         }),
-        lower: luz_fn!([1, _runner, args]() {
+        lower: luz_fn!([1](*args) {
             let mut args = VecDeque::from(args);
             let Some(LuzObj::String(s)) = args.pop_front() else {
                 return Err(LuzRuntimeError::message(
@@ -29,7 +29,7 @@ pub fn string_lib(_registry: TableRef) -> LuzNativeLib {
             };
             Ok(vec![LuzObj::String(s.to_lowercase())])
         }),
-        upper: luz_fn!([1, _runner, args]() {
+        upper: luz_fn!([1](*args) {
             let mut args = VecDeque::from(args);
             let Some(LuzObj::String(s)) = args.pop_front() else {
                 return Err(LuzRuntimeError::message(

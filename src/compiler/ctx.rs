@@ -474,6 +474,14 @@ impl Scope {
         self.regs[addr as usize].val = Some(val);
     }
 
+    pub fn set_or_push_reg_val(&mut self, addr: u8, val: LuzObj) {
+        if self.regs.len() == addr as usize {
+            self.push_reg(RegisterBuilder::default().val(Some(val)));
+        } else {
+            self.regs[addr as usize].val = Some(val);
+        }
+    }
+
     pub fn take_reg_val(&mut self, addr: u8) -> Option<LuzObj> {
         self.regs
             .get_mut(addr as usize)
@@ -600,14 +608,15 @@ impl Scope {
     }
 
     pub fn set_end_of_register(&mut self, reg: u8) {
-        let end = self.next_reg_start();
+        let end = self.next_reg_start() - 1;
 
         let reg = &mut self.regs[reg as usize];
 
         let local_r = self.locals.iter_mut().rfind(|local| {
-            reg.name
-                .as_ref()
-                .is_some_and(|name| name == local.name.as_ref().unwrap())
+            reg.name.as_ref().is_some_and(|name| {
+                name == local.name.as_ref().unwrap()
+                    && local.range.as_ref().is_none_or(|range| range.end.is_none())
+            })
         });
 
         if let Some(Some(range)) = local_r.map(|local| &mut local.range) {
