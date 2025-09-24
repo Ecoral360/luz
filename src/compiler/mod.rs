@@ -368,55 +368,6 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
-    fn concat_branches(
-        &self,
-        has_cmp: bool,
-        is_left_cmp: bool,
-        mut left: Vec<Instruction>,
-        op: LogicCmpOp,
-        right: Vec<Instruction>,
-    ) -> Vec<Instruction> {
-        let last_jmp = &left.last().and_then(|inst| {
-            if inst.op() == LuaOpCode::OP_JMP {
-                Some(left.len() - 1)
-            } else {
-                None
-            }
-        });
-        let offset = if has_cmp {
-            if is_left_cmp {
-                0
-            } else {
-                2
-            }
-        } else {
-            if op == LogicCmpOp::Or {
-                -1
-            } else {
-                0
-            }
-        };
-        match last_jmp {
-            Some(jmp_idx) => {
-                left[*jmp_idx] = Instruction::op_jmp((right.len() as isize + offset) as i32)
-            }
-            None => {
-                if right.len() > 0 {
-                    left.push(Instruction::op_jmp((right.len() as isize + offset) as i32));
-                }
-            }
-        }
-        let mut final_insts = vec![];
-        for inst in left {
-            final_insts.push(inst);
-        }
-        for inst in right {
-            final_insts.push(inst);
-        }
-
-        final_insts
-    }
-
     fn handle_multires(
         &mut self,
         ctx: &mut CompilerCtx,
@@ -1426,6 +1377,8 @@ impl<'a> Compiler<'a> {
                 };
                 if dest != val {
                     ctx.push_inst(Instruction::op_testset(dest, val, !is_and));
+                } else {
+                    ctx.push_inst(Instruction::op_test(dest, !is_and));
                 }
                 jumps.push((ctx.instructions_len() as u32, None, *op));
                 ctx.push_inst(Instruction::op_jmp(1));
@@ -1446,9 +1399,9 @@ impl<'a> Compiler<'a> {
                     unreachable!();
                 };
 
-                // if is_and {
-                *k = !*k;
-                // }
+                if is_and {
+                    *k = !*k;
+                }
                 jumps.push((len as u32 - 1, Some(!*k), *op));
             }
             _ => {
@@ -1738,8 +1691,8 @@ impl<'a> Compiler<'a> {
             }
             CmpOp::GtEq => {
                 ctx.push_inst(Instruction::op_ge(
-                    rhs_addr,
                     lhs_addr,
+                    rhs_addr,
                     is_immidiate,
                     ctx.in_not(),
                 ));

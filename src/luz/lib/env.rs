@@ -33,7 +33,7 @@ pub fn make_env_table(registry: TableRef) -> (LuzObj, TableRef) {
             Ok(vec![LuzObj::String(arg.get_type().to_string())])
         }),
 
-        assert: luz_fn!([0, runner](*args) {
+        assert: luz_fn!([0](*args) {
             let mut args = args;
             let Some(condition) = args.pop_front() else {
                 return Err(LuzRuntimeError::message(
@@ -44,7 +44,6 @@ pub fn make_env_table(registry: TableRef) -> (LuzObj, TableRef) {
                 Ok(args.into())
             } else {
                 if args.len() < 2 {
-                    runner.dump_trace();
                     Err(LuzRuntimeError::message("assertion failed!"))
                 } else {
                     // Here we use swap_remove instead of just 'remove'

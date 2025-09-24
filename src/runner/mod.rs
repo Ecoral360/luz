@@ -530,18 +530,6 @@ impl<'a> Runner<'a> {
                 LuaOpCode::OP_GETTABUP => {
                     let iABC { a, b, c, .. } = *i_abc;
 
-                    {
-                        let s = self.scope();
-                        let up = &s.upvalues()[b as usize];
-                        if let Some(parent) = s.parent() {
-                            // dbg!(parent
-                            //     .borrow()
-                            //     .regs()
-                            //     .get(up.parent_addr as usize)
-                            //     .map(|r| r.to_string_preview()));
-                        }
-                    }
-
                     let table = self
                         .scope()
                         .get_upvalue_value(b)

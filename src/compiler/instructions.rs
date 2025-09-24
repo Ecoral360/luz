@@ -254,27 +254,26 @@ impl Instruction {
     pub fn op_eqi(lhs: u8, rhs_i: u8, apply_not: bool) -> Instruction {
         LuaOpCode::OP_EQI.to_iabc(lhs, apply_not, rhs_i, 0).into()
     }
+
     pub fn op_lt(lhs: u8, rhs: u8, is_rhs_immidiate: bool, apply_not: bool) -> Instruction {
-        let opcode = if is_rhs_immidiate {
-            LuaOpCode::OP_LTI
+        if is_rhs_immidiate {
+            LuaOpCode::OP_LTI.to_iabc(lhs, !apply_not, rhs, 0).into()
         } else {
-            LuaOpCode::OP_LT
-        };
-        opcode.to_iabc(lhs, apply_not, rhs, 0).into()
+            LuaOpCode::OP_LT.to_iabc(lhs, apply_not, rhs, 0).into()
+        }
     }
 
     pub fn op_le(lhs: u8, rhs: u8, is_rhs_immidiate: bool, apply_not: bool) -> Instruction {
-        let opcode = if is_rhs_immidiate {
-            LuaOpCode::OP_LEI
+        if is_rhs_immidiate {
+            LuaOpCode::OP_LEI.to_iabc(lhs, !apply_not, rhs, 0).into()
         } else {
-            LuaOpCode::OP_LE
-        };
-        opcode.to_iabc(lhs, apply_not, rhs, 0).into()
+            LuaOpCode::OP_LE.to_iabc(lhs, apply_not, rhs, 0).into()
+        }
     }
 
     pub fn op_gt(lhs: u8, rhs: u8, is_rhs_immidiate: bool, apply_not: bool) -> Instruction {
         if is_rhs_immidiate {
-            LuaOpCode::OP_GTI.to_iabc(lhs, apply_not, rhs, 0).into()
+            LuaOpCode::OP_GTI.to_iabc(lhs, !apply_not, rhs, 0).into()
         } else {
             Instruction::op_lt(rhs, lhs, is_rhs_immidiate, apply_not)
         }
@@ -282,7 +281,7 @@ impl Instruction {
 
     pub fn op_ge(lhs: u8, rhs: u8, is_rhs_immidiate: bool, apply_not: bool) -> Instruction {
         if is_rhs_immidiate {
-            LuaOpCode::OP_GEI.to_iabc(lhs, apply_not, rhs, 0).into()
+            LuaOpCode::OP_GEI.to_iabc(lhs, !apply_not, rhs, 0).into()
         } else {
             Instruction::op_lt(rhs, lhs, is_rhs_immidiate, apply_not)
         }
