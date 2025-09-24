@@ -7,7 +7,7 @@ use crate::{
         ReturnStat, Stat, StatNode, Unop,
     },
     compiler::{
-        ctx::{CompilerCtx, CompilerCtxBuilder, RegOrUpvalue, Upvalue},
+        ctx::{CompilerCtx, CompilerCtxBuilder, RegOrUpvalue, RegisterBuilder, Upvalue},
         instructions::{iABC, iABx, isJ, Instruction, MAX_HALF_sBx, MAX_HALF_sJ},
         opcode::LuaOpCode,
         visitor::Visitor,
@@ -1012,8 +1012,15 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
 
-        let result_reg = ctx.claim_next_free_register();
+        let result_reg = ctx.get_or_push_free_register();
 
+        if matches!(lhs.normalize(), ExpNode::Binop { .. })
+            && matches!(rhs.normalize(), ExpNode::Binop { .. })
+        {
+            ctx.claim_register(result_reg);
+        }
+
+        let lhs_result = ctx.get_or_push_free_register();
         let lhs_addr = self.handle_exp(
             ctx,
             lhs,
@@ -1022,10 +1029,34 @@ impl<'a> Compiler<'a> {
             !matches!(op, Binop::BitAnd | Binop::BitXor | Binop::BitOr),
         )?;
 
-        ctx.unclaim_registers(&[result_reg]);
+        let is_lhs_immidiate = matches!(lhs_addr, ExpEval::InImmediate(_));
+        let is_lhs_constant = matches!(lhs_addr, ExpEval::InConstant(_));
 
-        let is_b_const = matches!(lhs_addr, ExpEval::InConstant(_));
-        let is_b_imm = matches!(lhs_addr, ExpEval::InImmediate(_));
+        let (lhs_dirty, mut lhs_addr) = match lhs_addr {
+            ExpEval::InImmediate(i) => (None, i),
+            ExpEval::InRegister(i) => {
+                if lhs_result == i {
+                    ctx.claim_register(lhs_result);
+                }
+                (Some(lhs_result), i)
+            }
+            ExpEval::InConstant(c) => (None, c),
+            ExpEval::InUpvalue { in_table, upvalue } => {
+                self.visit_exp(lhs, ctx)?;
+                let reg = ctx.claim_next_free_register();
+                (Some(reg), reg)
+            }
+            _ => {
+                return Err(LuzError::CompileError(format!(
+                    "This value not supported in comparison: {:?}",
+                    lhs_addr
+                )))
+            }
+        };
+
+        // if !matches!(rhs.normalize(), ExpNode::Binop { .. }) {
+        //     ctx.unclaim_registers(&[result_reg]);
+        // }
 
         let rhs_addr = self.handle_exp(
             ctx,
@@ -1035,25 +1066,17 @@ impl<'a> Compiler<'a> {
             !matches!(op, Binop::BitAnd | Binop::BitXor | Binop::BitOr),
         )?;
 
+        ctx.unclaim_registers(&[result_reg]);
+
         let is_c_const = matches!(rhs_addr, ExpEval::InConstant(_));
         let is_c_imm = matches!(rhs_addr, ExpEval::InImmediate(_));
 
-        if is_b_imm && is_c_imm {
+        if is_lhs_immidiate && is_c_imm {
             return Err(LuzError::CompileError(format!(
                 "Both sides of {:?} cannot be immediate values, should have been optimized away before codegen",
                 op
             )));
         }
-
-        let (lhs_dirty, mut lhs_addr) = match lhs_addr {
-            ExpEval::InImmediate(i) => (false, i),
-            ExpEval::InRegister(r) => (false, r),
-            ExpEval::InConstant(c) => (false, c),
-            ExpEval::InUpvalue { in_table, upvalue } => {
-                self.visit_exp(lhs, ctx)?;
-                (true, ctx.claim_next_free_register())
-            }
-        };
 
         let (rhs_dirty, mut rhs_addr) = match rhs_addr {
             ExpEval::InImmediate(i) if *op == Binop::Sub => {
@@ -1071,18 +1094,18 @@ impl<'a> Compiler<'a> {
             }
         };
 
-        if lhs_dirty {
-            ctx.unclaim_registers(&[lhs_addr]);
+        if let Some(addr) = lhs_dirty {
+            ctx.unclaim_registers(&[addr]);
         }
         if rhs_dirty {
             ctx.unclaim_registers(&[rhs_addr]);
         }
 
-        if is_b_imm {
+        if is_lhs_immidiate {
             (lhs_addr, rhs_addr) = (rhs_addr, lhs_addr);
         }
 
-        if is_c_imm || is_b_imm {
+        if is_c_imm || is_lhs_immidiate {
             match op {
                 Binop::ShiftLeft => {
                     if is_c_imm {
@@ -1104,14 +1127,24 @@ impl<'a> Compiler<'a> {
                 }
                 _ => unreachable!(),
             }
-            ctx.push_inst(Instruction::op_mmbini(lhs_addr, rhs_addr, 6, is_b_imm));
+            ctx.push_inst(Instruction::op_mmbini(
+                lhs_addr,
+                rhs_addr,
+                6,
+                is_lhs_immidiate,
+            ));
         } else {
             ctx.push_inst(Instruction::op_arithmetic(
-                *op, result_reg, lhs_addr, is_b_const, rhs_addr, is_c_const,
+                *op,
+                result_reg,
+                lhs_addr,
+                is_lhs_constant,
+                rhs_addr,
+                is_c_const,
             ));
             if is_c_const {
                 ctx.push_inst(Instruction::op_mmbink(lhs_addr, rhs_addr, 6, false));
-            } else if is_b_const {
+            } else if is_lhs_constant {
                 ctx.push_inst(Instruction::op_mmbink(rhs_addr, lhs_addr, 6, true));
             } else {
                 ctx.push_inst(Instruction::op_mmbin(lhs_addr, rhs_addr, 6));
@@ -1148,8 +1181,7 @@ impl<'a> Compiler<'a> {
                                     ));
                                 }
                                 _ => {
-                                    self.visit_exp(value, ctx)?;
-                                    let reg = ctx.get_or_push_free_register();
+                                    let reg = self.load_exp(ctx, value)?;
                                     ctx.push_inst(Instruction::op_gettable(dest, tabaddr, reg));
                                 }
                             }
@@ -1196,8 +1228,7 @@ impl<'a> Compiler<'a> {
                                     }
                                 }
                                 _ => {
-                                    self.visit_exp(value, ctx)?;
-                                    let reg = ctx.get_or_push_free_register();
+                                    let reg = self.load_exp(ctx, value)?;
                                     ctx.push_inst(Instruction::op_getupval(tabaddr, upvalue.addr));
                                     ctx.push_inst(Instruction::op_gettable(dest, tabaddr, reg));
                                 }
@@ -1318,10 +1349,10 @@ impl<'a> Compiler<'a> {
                     unreachable!();
                 };
 
-                if is_and {
-                    *k = !*k;
-                }
-                jumps.push((len as u32 - 1, Some(*k), *op));
+                // if is_and {
+                *k = !*k;
+                // }
+                jumps.push((len as u32 - 1, Some(!*k), *op));
             }
             _ => {
                 self.visit_exp(lhs, ctx)?;
@@ -1771,6 +1802,17 @@ impl<'a> Compiler<'a> {
             let ExpTableConstructorField { key, val } = obj_field;
             claimed.push(ctx.claim_next_free_register());
             self.assign_to_table(ctx, dest, key, val)?;
+        }
+
+        if let Some(last_exp) = last_exp {
+            let mut all_out_ctx = ctx.new_with(CompilerCtxBuilder::default().nb_expected(0));
+            let reg = self.handle_consecutive_exp(&mut all_out_ctx, last_exp)?;
+            ctx.claim_register(reg);
+            claimed.push(reg);
+
+            if arr_fields.is_empty() {
+                ctx.push_inst(Instruction::op_setlist(dest, 0, 0));
+            }
         }
 
         if !arr_fields.is_empty() {

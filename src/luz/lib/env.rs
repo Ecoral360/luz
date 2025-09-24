@@ -19,6 +19,7 @@ pub fn make_env_table(registry: TableRef) -> (LuzObj, TableRef) {
     let mut table = HashMap::new();
 
     table.insert(LuzObj::str("_VERSION"), LuzObj::str("Lua 5.4"));
+    table.insert(LuzObj::str("_LUZ_VERSION"), LuzObj::str("Luz 0.1"));
 
     table.insert(
         LuzObj::str("print"),

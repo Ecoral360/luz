@@ -314,6 +314,8 @@ impl<'a> Runner<'a> {
                 | LuaOpCode::OP_DIVK
                 | LuaOpCode::OP_IDIV
                 | LuaOpCode::OP_IDIVK
+                | LuaOpCode::OP_MOD
+                | LuaOpCode::OP_MODK
                 | LuaOpCode::OP_BXOR
                 | LuaOpCode::OP_BXORK
                 | LuaOpCode::OP_BAND
@@ -835,11 +837,13 @@ impl<'a> Runner<'a> {
                     | LuaOpCode::OP_BANDK
                     | LuaOpCode::OP_BORK
                     | LuaOpCode::OP_BXORK
+                    | LuaOpCode::OP_MODK
             ),
         )?;
 
         let result = match op {
             LuaOpCode::OP_ADD | LuaOpCode::OP_ADDK => lhs.apply_binop(Binop::Add, rhs)?,
+            LuaOpCode::OP_MOD | LuaOpCode::OP_MODK => lhs.apply_binop(Binop::Mod, rhs)?,
             LuaOpCode::OP_SUB | LuaOpCode::OP_SUBK => lhs.apply_binop(Binop::Sub, rhs)?,
             LuaOpCode::OP_MUL | LuaOpCode::OP_MULK => lhs.apply_binop(Binop::Mul, rhs)?,
             LuaOpCode::OP_DIV | LuaOpCode::OP_DIVK => lhs.apply_binop(Binop::FloatDiv, rhs)?,
