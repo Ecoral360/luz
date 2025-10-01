@@ -5,7 +5,7 @@ use crate::{
         lib::LuzNativeLib,
         obj::{LuzObj, Numeral, TableRef},
     },
-    luz_fn, luz_table,
+    luz_fn, luz_let, luz_table,
     runner::err::LuzRuntimeError,
 };
 
@@ -57,6 +57,27 @@ pub fn string_lib(_registry: TableRef) -> LuzNativeLib {
                 return Ok(vec![LuzObj::Nil]);
             };
             Ok(vec![LuzObj::int(start as i64), LuzObj::int(end as i64)])
+        }),
+        sub: luz_fn!([3](LuzObj::String(s), LuzObj::Numeral(i), j @ (LuzObj::Numeral(_) | LuzObj::Nil)) {
+            luz_let!(LuzObj::Numeral(j) = j.or(LuzObj::int(-1)));
+
+            let j = j.as_int();
+            let mut j = if j < 0 { s.len() as i64 - (j + 1) } else { j };
+            if j > s.len() as i64 {
+                j = s.len() as i64;
+            }
+
+            let i = i.as_int();
+            let mut i = if i < 0 { s.len() as i64 - i } else { i };
+            if i < 1 {
+                i = 1;
+            }
+
+            if i > j {
+                Ok(vec![LuzObj::String(String::new())])
+            } else {
+                Ok(vec![LuzObj::String(s[(i as usize - 1)..j as usize].to_string())])
+            }
         }),
         format: luz_fn!([1](LuzObj::String(formatstring), *args) {
             Ok(vec![LuzObj::String(format(&formatstring, args))])

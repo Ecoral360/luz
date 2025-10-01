@@ -3,7 +3,8 @@ use derive_new::new;
 use pest::{error::Error as PestError, iterators::Pair};
 
 use crate::{
-    ast::Stat,
+    ast::{DoStat, Stat},
+    compiler::opcode::TMcode,
     luz::{
         err::LuzError,
         obj::{FuncParams, LuzObj},
@@ -39,6 +40,7 @@ pub enum ExpNode {
     FuncDef(FuncDef),
     FuncCall(FuncCall),
     TableConstructor(ExpTableConstructor),
+    WrappedStat(Vec<Stat>),
 }
 
 impl ExpNode {
@@ -212,6 +214,26 @@ pub enum Binop {
     BitXor,
     ShiftRight,
     ShiftLeft,
+}
+
+impl From<Binop> for TMcode {
+    fn from(value: Binop) -> TMcode {
+        match value {
+            Binop::Concat => TMcode::TM_CONCAT,
+            Binop::Add => TMcode::TM_ADD,
+            Binop::Sub => TMcode::TM_SUB,
+            Binop::Mul => TMcode::TM_MUL,
+            Binop::FloatDiv => TMcode::TM_DIV,
+            Binop::FloorDiv => TMcode::TM_IDIV,
+            Binop::Mod => TMcode::TM_MOD,
+            Binop::Exp => TMcode::TM_POW,
+            Binop::BitAnd => TMcode::TM_BAND,
+            Binop::BitOr => TMcode::TM_BOR,
+            Binop::BitXor => TMcode::TM_BXOR,
+            Binop::ShiftRight => TMcode::TM_SHR,
+            Binop::ShiftLeft => TMcode::TM_SHL,
+        }
+    }
 }
 
 impl TryFrom<Pair<'_, Rule>> for Binop {

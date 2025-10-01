@@ -1,5 +1,3 @@
-use std::collections::VecDeque;
-
 use crate::{
     ast::CmpOp,
     luz::{
@@ -7,7 +5,6 @@ use crate::{
         obj::{LuzObj, LuzType, Numeral, TableRef},
     },
     luz_fn, luz_let, luz_table,
-    runner::err::LuzRuntimeError,
 };
 
 pub fn math_lib(_registry: TableRef) -> LuzNativeLib {
@@ -170,7 +167,7 @@ pub fn math_lib(_registry: TableRef) -> LuzNativeLib {
             Ok(vec![LuzObj::Numeral(result)])
         }),
         tointeger: luz_fn!([1](x) {
-            let result = x.coerse(LuzType::Integer).unwrap_or(LuzObj::str("fail"));
+            let result = x.coerse(LuzType::Integer).unwrap_or(LuzObj::Nil);
 
             Ok(vec![result])
         }),
@@ -178,7 +175,7 @@ pub fn math_lib(_registry: TableRef) -> LuzNativeLib {
             let result = match x {
                 LuzObj::Numeral(Numeral::Int(..)) => "integer",
                 LuzObj::Numeral(Numeral::Float(..)) => "float",
-                _ => "fail",
+                _ => {return Ok(vec![LuzObj::Nil])}
             };
 
             Ok(vec![LuzObj::str(result)])

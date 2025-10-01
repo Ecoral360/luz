@@ -12,7 +12,10 @@ use crate::{
         visitor::Visitor,
         Compiler,
     },
-    luz::obj::{LuzFunction, LuzObj},
+    luz::{
+        lib::env::make_env_table,
+        obj::{LuzFunction, LuzObj},
+    },
     runner::{err::LuzRuntimeError, Runner},
 };
 
@@ -66,17 +69,18 @@ pub fn run_file(path: &str) -> Result<(), LuzError> {
 }
 
 fn run_compiler(filename: String, input: &str, stmts: Vec<Stat>) -> Result<(), LuzError> {
-    let mut compiler = Compiler::new(input);
-    let mut ctx = CompilerCtx::new_main();
-    for stmt in stmts {
-        compiler.visit_stat(&stmt, &mut ctx)?;
-    }
+    // let mut compiler = Compiler::new(input);
+    let ctx = Compiler::compile(input, stmts)?;
+    // let mut ctx = CompilerCtx::new_main();
+    // for stmt in stmts {
+    //     compiler.visit_stat(&stmt, &mut ctx)?;
+    // }
     debug!("{}", ctx.instructions_to_string());
     let mut runner = runner::Runner::new(
         filename,
         input,
         ctx.scope_clone(),
-        luz_table!().as_table_or_err().unwrap(),
+        make_env_table(luz_table!().as_table_or_err()?),
     );
     let res = runner.run()?;
     info!("{:?}", res);
@@ -111,7 +115,7 @@ pub fn load(
         0,
         Rc::new(RefCell::new(move |run: &mut Runner, _args: Vec<LuzObj>| {
             let mut runner =
-                runner::Runner::new(filename.clone(), &input, ctx.scope_clone(), run.registry());
+                runner::Runner::new_chunk(filename.clone(), &input, ctx.scope_clone(), run.registry());
             runner
                 .run()
                 .map_err(|e| LuzRuntimeError::message(e.to_string()))

@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
-    compiler::ctx::Upvalue,
+    compiler::ctx::{Scope, Upvalue},
     load,
     luz::{
         lib::LuzNativeLib,
@@ -13,13 +13,13 @@ use crate::{
 
 pub fn package_lib(registry: TableRef) -> LuzNativeLib {
     let require_fn = luz_fn!([1, runner](*args) {
-        let loaded = runner.registry().borrow().get(&LuzObj::str("package.loaded")).as_table_or_err()?;
+        let loaded = runner.registry().borrow().rawget(&LuzObj::str("package.loaded")).as_table_or_err()?;
 
         luz_let!(modname =? args.get(0); else "bad argument #1 to 'require' (expected string)");
 
         {
             let loaded = loaded.borrow();
-            let module = loaded.get(modname);
+            let module = loaded.rawget(modname);
             if !module.is_nil() {
                 return Ok(vec![module.clone()]);
             }
@@ -29,14 +29,14 @@ pub fn package_lib(registry: TableRef) -> LuzNativeLib {
             "Variable named 'package' not found",
         ))?.as_table_or_err()?;
 
-        let searchers = package.borrow().get(&LuzObj::str("searchers")).as_table_or_err()?;
+        let searchers = package.borrow().rawget(&LuzObj::str("searchers")).as_table_or_err()?;
 
         let len = searchers.borrow().len();
         // Iterate over searchers
         // If one returns a function, call it to load the module
         for searcher_idx in 1..=len {
             let searchers = searchers.borrow();
-            let searcher = searchers.get(&LuzObj::int(searcher_idx as i64));
+            let searcher = searchers.rawget(&LuzObj::int(searcher_idx as i64));
             // Expecting a function
             luz_let!(LuzObj::Function(f) = searcher);
             // Call the searcher
@@ -99,9 +99,9 @@ pub fn package_lib(registry: TableRef) -> LuzNativeLib {
 
     let searchers = luz_table![
         luz_fn!([1, runner](modname) {
-            let preload = runner.registry().borrow().get(&LuzObj::str("package.preload")).as_table_or_err()?;
+            let preload = runner.registry().borrow().rawget(&LuzObj::str("package.preload")).as_table_or_err()?;
 
-            let result = preload.borrow().get(&modname).clone();
+            let result = preload.borrow().rawget(&modname).clone();
             Ok(vec![result, LuzObj::str(":preload:")])
         }),
         luz_fn!([1, runner](modname) {
@@ -111,9 +111,9 @@ pub fn package_lib(registry: TableRef) -> LuzNativeLib {
 
             let package = package.borrow();
 
-            let path = package.get(&LuzObj::str("path"));
+            let path = package.rawget(&LuzObj::str("path"));
 
-            let search_path = package.get(&LuzObj::str("searchpath"));
+            let search_path = package.rawget(&LuzObj::str("searchpath"));
             luz_let!(LuzObj::Function(f) = search_path);
 
             let result = f.borrow().call(runner, vec![modname.clone(), path.clone()], vec![])?;
@@ -124,16 +124,12 @@ pub fn package_lib(registry: TableRef) -> LuzNativeLib {
 
                 let input = std::fs::read_to_string(fs_path).unwrap();
 
-                let upvalues = vec![Upvalue::new("_ENV".to_owned(), 0, 0, true)];
-
-                // let mod_result = r.call(runner, vec![], vec![])?;
-
                 let r = load(
                     Some(fs_path.clone()),
                     input.clone(),
                     input.clone(),
-                    runner.env_scope(),
-                    upvalues,
+                    None,
+                    vec![],
                 ).map_err(|e| LuzRuntimeError::message(e.to_string()))?;
 
                 Ok(vec![LuzObj::Function(Rc::new(RefCell::new(r))), LuzObj::str(fs_path)])
@@ -149,8 +145,8 @@ pub fn package_lib(registry: TableRef) -> LuzNativeLib {
 
     let reg = registry.borrow();
     let package = luz_table! {
-        loaded: reg.get(&LuzObj::str("package.loaded")).clone(),
-        preload: reg.get(&LuzObj::str("package.preload")).clone(),
+        loaded: reg.rawget(&LuzObj::str("package.loaded")).clone(),
+        preload: reg.rawget(&LuzObj::str("package.preload")).clone(),
         searchers: searchers,
         searchpath: search_path,
         path: LuzObj::String(path),

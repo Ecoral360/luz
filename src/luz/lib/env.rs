@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::VecDeque, rc::Rc};
+use std::{cell::RefCell, collections::VecDeque, rc::Rc, str::FromStr};
 
 use crate::{
     compiler::ctx::{RegisterBuilder, Scope, Upvalue},
@@ -11,7 +11,18 @@ use crate::{
     runner::err::LuzRuntimeError,
 };
 
-pub fn make_env_table(registry: TableRef) -> (LuzObj, TableRef) {
+pub fn make_env_table(registry: TableRef) -> TableRef {
+    // adding the string metatable to the registry
+    {
+        let mut registry = registry.borrow_mut();
+        registry.insert(
+            LuzObj::str(":hidden.string.metatable:"),
+            luz_table! {
+                __add: luz_fn!([1]() { Ok(vec![])})
+            },
+        );
+    }
+
     let table = luz_table! {
         _VERSION: LuzObj::str("Lua 5.4"),
         _LUZ_VERSION: LuzObj::str("Luz 0.1"),
@@ -31,6 +42,23 @@ pub fn make_env_table(registry: TableRef) -> (LuzObj, TableRef) {
         type: luz_fn!([1, _runner](*args) {
             let arg = args.get(0).unwrap_or(&LuzObj::Nil);
             Ok(vec![LuzObj::String(arg.get_type().to_string())])
+        }),
+
+        error: luz_fn!([1](message) {
+            Err(LuzRuntimeError::message(message.to_string()))
+        }),
+
+
+        getmetatable: luz_fn!([1, runner](obj) {
+            match obj {
+                LuzObj::String(..) => {
+                    let registry = runner.registry();
+                    let registry = registry.borrow();
+                    let meta = registry.rawget(&LuzObj::str(":hidden.string.metatable:"));
+                    Ok(vec![meta.clone()])
+                }
+                _ => Ok(vec![LuzObj::Nil])
+            }
         }),
 
         assert: luz_fn!([0](*args) {
@@ -54,7 +82,7 @@ pub fn make_env_table(registry: TableRef) -> (LuzObj, TableRef) {
             }
         }),
 
-        load: luz_fn!([1, runner](*args) {
+        load: luz_fn!([1](*args) {
             let mut args = VecDeque::from(args);
             let Some(chunk) = args.pop_front() else {
                 return Err(LuzRuntimeError::message(
@@ -70,14 +98,13 @@ pub fn make_env_table(registry: TableRef) -> (LuzObj, TableRef) {
 
             // let name = args.pop_front();
 
-            let upvalues = vec![Upvalue::new("_ENV".to_owned(), 0, 0, true)];
-            let r = load(None, input.clone(), input.clone(), runner.env_scope(), upvalues)
+            let r = load(None, input.clone(), input.clone(), None, vec![])
                 .map_err(|e| LuzRuntimeError::message(e.to_string()))?;
 
             Ok(vec![LuzObj::Function(Rc::new(RefCell::new(r)))])
         }),
 
-        select: luz_fn!([1, _runner](*args) {
+        select: luz_fn!([1](*args) {
             let arg = args.pop_front().unwrap();
             let vararg = args;
             match &arg {
@@ -98,7 +125,7 @@ pub fn make_env_table(registry: TableRef) -> (LuzObj, TableRef) {
         }),
 
         pcall: luz_fn!([1, runner](*args) {
-            let LuzObj::Function(f) = args.pop_front().unwrap() else { unreachable!() };
+            let Some(LuzObj::Function(f)) = args.pop_front().unwrap().callable() else { unreachable!() };
             let f = f.borrow();
 
             let nb_fixed = f.nb_fixed_params();
@@ -136,14 +163,14 @@ pub fn make_env_table(registry: TableRef) -> (LuzObj, TableRef) {
                 return Err(LuzRuntimeError::message("bad argument #1 to 'rawget' (a table expected)"))
             };
             let t = t.borrow();
-            Ok(vec![t.get(&args[1]).clone()])
+            Ok(vec![t.rawget(&args[1]).clone()])
         }),
 
         ipairs: luz_fn!([1](table @ LuzObj::Table(..)) {
 
             let iter_func = luz_fn!([2](LuzObj::Table(state), LuzObj::Numeral(Numeral::Int(ctrl))) {
                 let table = state.borrow();
-                let obj = table.get(&LuzObj::int(ctrl + 1));
+                let obj = table.rawget(&LuzObj::int(ctrl + 1));
 
                 if obj.is_nil() {
                     Ok(vec![LuzObj::Nil])
@@ -159,14 +186,14 @@ pub fn make_env_table(registry: TableRef) -> (LuzObj, TableRef) {
             let table = table.borrow();
             if index.is_nil() {
                 let next = table.first_idx();
-                let value = table.get(&next);
+                let value = table.rawget(&next);
                 return Ok(vec![next, value.clone()]);
             }
             let next = table.next_idx(&index);
             if next.is_nil() {
                 Ok(vec![next])
             } else {
-                let value = table.get(&next);
+                let value = table.rawget(&next);
                 Ok(vec![next, value.clone()])
             }
         }),
@@ -174,7 +201,18 @@ pub fn make_env_table(registry: TableRef) -> (LuzObj, TableRef) {
         pairs: luz_fn!([1, runner](t @ LuzObj::Table(..)) {
             let next = runner.get_val("next").unwrap_or(LuzObj::Nil);
             return Ok(vec![next, t, LuzObj::Nil])
-        })
+        }),
+
+        tonumber: luz_fn!([1](e, base @ (LuzObj::Numeral(Numeral::Int(..)) | LuzObj::Nil)) {
+            match e {
+                LuzObj::String(s) => {
+                    let num = Numeral::from_str(&s).map(|num| LuzObj::Numeral(num)).unwrap_or(LuzObj::Nil);
+                    Ok(vec![num])
+                }
+                LuzObj::Numeral(..) => Ok(vec![e]),
+                _ => Ok(vec![LuzObj::Nil])
+            }
+        }),
     };
 
     add_lib(&table, string_lib(Rc::clone(&registry)));
@@ -191,7 +229,8 @@ pub fn make_env_table(registry: TableRef) -> (LuzObj, TableRef) {
             .borrow_mut()
             .insert(LuzObj::str("_G"), LuzObj::Table(global_table_ref));
     }
-    (global_env, registry)
+    registry.borrow_mut().insert(LuzObj::str("_G"), global_env);
+    registry
 }
 
 fn add_lib(glob_table: &LuzObj, lib: LuzNativeLib) {

@@ -218,9 +218,9 @@ binop = _{
   | Slash
   | Caret
   | Pourcent
-  | Ampersand
   | Neq
   | Tilde
+  | Ampersand
   | Pipe
   | ShiftRight
   | ShiftLeft

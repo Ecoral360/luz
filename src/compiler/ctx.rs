@@ -22,6 +22,9 @@ pub struct CompilerCtx {
     scope: ScopeRef,
     /// The expression is a child of a "not" expression
     in_not: bool,
+
+    /// specify a destination register for the current expression
+    dest_addr: Option<u8>,
 }
 
 impl CompilerCtx {
@@ -34,21 +37,26 @@ impl CompilerCtx {
         Self {
             scope: Rc::new(RefCell::new(scope)),
             nb_expected: 2,
+            dest_addr: None,
             in_not: false,
         }
     }
-    pub fn new_chunk(name: String, parent_scope: Option<ScopeRef>, upvalues: Vec<Upvalue>) -> Self {
-        let mut scope = Scope::new(Some(name), parent_scope);
-        // scope
-        //     .upvalues
-        //     .push(Upvalue::new("_ENV".to_owned(), 0, 0, true));
+    pub fn new_chunk(
+        name: String,
+        parent_scope: Option<ScopeRef>,
+        mut upvalues: Vec<Upvalue>,
+    ) -> Self {
+        let mut scope = Scope::new(Some(name), parent_scope.or(Some(get_builtin_scope())));
+        scope
+            .upvalues
+            .push(Upvalue::new("_ENV".to_owned(), 0, 0, true));
 
-        scope.upvalues = upvalues;
+        scope.upvalues.append(&mut upvalues);
 
         Self {
             scope: Rc::new(RefCell::new(scope)),
             nb_expected: 2,
-
+            dest_addr: None,
             in_not: false,
         }
     }
@@ -58,6 +66,7 @@ impl CompilerCtx {
             nb_expected: builder.nb_expected.unwrap_or(self.nb_expected),
             scope: Rc::clone(builder.scope.as_ref().unwrap_or(&self.scope)),
             in_not: builder.in_not.unwrap_or(self.in_not),
+            dest_addr: builder.dest_addr.unwrap_or(self.dest_addr),
         }
     }
 
@@ -67,6 +76,10 @@ impl CompilerCtx {
 
     pub fn in_not(&self) -> bool {
         self.in_not
+    }
+
+    pub fn dest_addr(&self) -> Option<u8> {
+        self.dest_addr
     }
 }
 
@@ -399,7 +412,7 @@ pub enum RegOrUpvalue {
 }
 
 impl Scope {
-    pub fn get_top(mut scope: Rc<RefCell<Self>>) -> Option<ScopeRef> {
+    pub fn get_global(mut scope: Rc<RefCell<Self>>) -> Option<ScopeRef> {
         loop {
             let s = Rc::clone(&scope);
             let s = s.borrow();
@@ -414,6 +427,7 @@ impl Scope {
             }
         }
     }
+
     pub fn new_ref(name: String, parent: Option<ScopeRef>) -> ScopeRef {
         Rc::new(RefCell::new(Scope::new(Some(name), parent)))
     }
@@ -592,7 +606,7 @@ impl Scope {
         if in_table {
             let table = obj.as_table_or_err().unwrap();
             let table = table.borrow();
-            Some(table.get(&LuzObj::str(register_name)).clone())
+            Some(table.rawget(&LuzObj::str(register_name)).clone())
         } else {
             None
         }

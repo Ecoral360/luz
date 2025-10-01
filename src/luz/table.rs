@@ -1,6 +1,9 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use crate::luz::obj::{LuzType, Numeral};
+use crate::{
+    luz::obj::{LuzType, Numeral},
+    runner::{err::LuzRuntimeError, Runner},
+};
 
 use super::obj::LuzObj;
 
@@ -36,7 +39,7 @@ impl Table {
         *t1 == *t2
     }
 
-    pub fn get(&self, key: &LuzObj) -> &LuzObj {
+    pub fn rawget(&self, key: &LuzObj) -> &LuzObj {
         match key.get_type() {
             LuzType::Nil => &LuzObj::Nil,
             LuzType::Number => {
@@ -72,6 +75,38 @@ impl Table {
         }
     }
 
+    pub fn get(
+        &self,
+        runner: &mut Runner,
+        key: &LuzObj,
+    ) -> Result<Option<LuzObj>, LuzRuntimeError> {
+        let result = self.rawget(key);
+        if result.is_nil() {
+            let meta_index = self.rawget_metatable(&LuzObj::str("__index"));
+            if meta_index.is_nil() {
+                Ok(Some(LuzObj::Nil))
+            } else {
+                let callable = meta_index.callable();
+                match meta_index {
+                    LuzObj::Table(t) => {
+                        t.borrow().get(runner, key)
+                    }
+                    _ if callable.is_some() => {
+                        let Some(LuzObj::Function(f)) = callable else { unreachable!() };
+                        let result = f.borrow().call(runner, vec![
+                            LuzObj::Table(Rc::new(RefCell::new(self.clone()))), 
+                            key.clone()
+                        ], vec![])?;
+                        Ok(Some(result.get(0).unwrap_or(&LuzObj::Nil).clone()))
+                    }
+                    _ => Err(LuzRuntimeError::message("the metavalue for __index must be a function, a table or a value with a __index metavalue"))
+                }
+            }
+        } else {
+            Ok(Some(result.clone()))
+        }
+    }
+
     pub fn push(&mut self, item: LuzObj) {
         self.arr.push(item);
     }
@@ -93,7 +128,7 @@ impl Table {
     }
 
     pub fn get_or_insert(&mut self, key: &LuzObj, item: LuzObj) -> LuzObj {
-        let val = self.get(key).clone();
+        let val = self.rawget(key).clone();
         if val.is_nil() {
             self.insert(key.clone(), item.clone());
             item
@@ -104,6 +139,13 @@ impl Table {
 
     pub fn raw_metatable(&self) -> Option<Rc<RefCell<Table>>> {
         self.metatable.as_ref().map(|m| Rc::clone(m))
+    }
+
+    pub fn rawget_metatable(&self, key: &LuzObj) -> LuzObj {
+        match &self.metatable {
+            Some(metatable) => metatable.borrow().rawget(key).clone(),
+            None => LuzObj::Nil,
+        }
     }
 
     pub fn metatable(&self) -> LuzObj {

@@ -161,8 +161,75 @@ impl LuaOpCode {
     pub fn to_iasbx(self, a: u8, b: u32) -> iAsBx {
         iAsBx::new(b, a, self)
     }
-    pub fn to_isj(self, a: u8, b: u32) -> isJ {
-        isJ::new(b, a, self)
+    pub fn to_isj(self, j: u32) -> isJ {
+        isJ::new(j, self)
+    }
+}
+
+#[allow(non_camel_case_types)]
+#[derive(TryFromPrimitive, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum TMcode {
+    TM_INDEX,
+    TM_NEWINDEX,
+    TM_GC,
+    TM_MODE,
+    TM_LEN,
+    TM_EQ, /* last tag method with fast access */
+    TM_ADD,
+    TM_SUB,
+    TM_MUL,
+    TM_MOD,
+    TM_POW,
+    TM_DIV,
+    TM_IDIV,
+    TM_BAND,
+    TM_BOR,
+    TM_BXOR,
+    TM_SHL,
+    TM_SHR,
+    TM_UNM,
+    TM_BNOT,
+    TM_LT,
+    TM_LE,
+    TM_CONCAT,
+    TM_CALL,
+    TM_CLOSE,
+    TM_N, /* number of elements in the enum */
+}
+
+impl Display for TMcode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            TMcode::TM_INDEX => "__index",
+            TMcode::TM_NEWINDEX => "__newindex",
+            TMcode::TM_GC => "__gc",
+            TMcode::TM_MODE => "__mode",
+            TMcode::TM_LEN => "__len",
+            TMcode::TM_EQ => "__eq",
+            TMcode::TM_ADD => "__add",
+            TMcode::TM_SUB => "__sub",
+            TMcode::TM_MUL => "__mul",
+            TMcode::TM_MOD => "__mod",
+            TMcode::TM_POW => "__pow",
+            TMcode::TM_DIV => "__div",
+            TMcode::TM_IDIV => "__idiv",
+            TMcode::TM_BAND => "__band",
+            TMcode::TM_BOR => "__bor",
+            TMcode::TM_BXOR => "__bxor",
+            TMcode::TM_SHL => "__shl",
+            TMcode::TM_SHR => "__shr",
+            TMcode::TM_UNM => "__unm",
+            TMcode::TM_BNOT => "__bnot",
+            TMcode::TM_LT => "__lt",
+            TMcode::TM_LE => "__le",
+            TMcode::TM_CONCAT => "__concat",
+            TMcode::TM_CALL => "__call",
+            TMcode::TM_CLOSE => "__close",
+            TMcode::TM_N => "TM_N",
+        };
+
+        write!(f, "{}", s)
     }
 }
 

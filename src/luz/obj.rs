@@ -16,9 +16,11 @@ pub use super::table::*;
 
 use super::err::LuzError;
 use crate::ast::{Binop, CmpOp, Unop};
+use crate::compiler::opcode::TMcode;
 use crate::luz::thread::LuzThread;
 use crate::luz::userdata::Userdata;
 use crate::runner::err::LuzRuntimeError;
+use crate::runner::Runner;
 
 pub type TableRef = Rc<RefCell<Table>>;
 
@@ -65,6 +67,89 @@ impl Display for LuzObj {
 }
 
 impl LuzObj {
+    pub fn call_metamethod(
+        runner: &mut Runner,
+        tm: TMcode,
+        lhs: LuzObj,
+        rhs: LuzObj,
+    ) -> Result<LuzObj, LuzRuntimeError> {
+        let mut meta = lhs.get_metamethod(runner, tm)?;
+        if meta.is_none() {
+            meta = rhs.get_metamethod(runner, tm)?;
+        }
+
+        let Some(LuzObj::Function(f)) = meta else {
+            return Err(LuzRuntimeError::message(format!(
+                "no metamethod '{}' for obj {} and {}",
+                tm, lhs.repr(), rhs.repr()
+            )));
+        };
+
+        let result = f
+            .borrow()
+            .call(runner, vec![lhs.clone(), rhs.clone()], vec![])?;
+
+        Ok(result.get(0).unwrap_or(&LuzObj::Nil).clone())
+    }
+
+    pub fn get_metamethod(
+        &self,
+        runner: &mut Runner,
+        tm: TMcode,
+    ) -> Result<Option<LuzObj>, LuzRuntimeError> {
+        match self {
+            LuzObj::Table(t) => {
+                let t = t.borrow();
+                let method = t.rawget_metatable(&LuzObj::String(tm.to_string()));
+                if method.is_nil() {
+                    Ok(None)
+                } else {
+                    Ok(method.callable())
+                }
+            }
+            LuzObj::String(..) => {
+                let registry = runner.registry();
+                let registry = registry.borrow();
+                let meta = registry
+                    .rawget(&LuzObj::str(":hidden.string.metatable:"))
+                    .as_table_or_err()?;
+                let meta = meta.borrow();
+                let method = meta.get(runner, &LuzObj::String(tm.to_string()))?;
+                Ok(method.map(|met| met.callable()).flatten())
+            }
+            _ => Err(LuzRuntimeError::message(format!(
+                "no metamethod '{}' for obj {}",
+                tm, self
+            ))),
+        }
+    }
+
+    pub fn index(
+        &self,
+        runner: &mut Runner,
+        key: &LuzObj,
+    ) -> Result<Option<LuzObj>, LuzRuntimeError> {
+        match self {
+            LuzObj::Table(t) => {
+                let t = t.borrow();
+                t.get(runner, key)
+            }
+            LuzObj::String(..) => {
+                let registry = runner.registry();
+                let registry = registry.borrow();
+                let meta = registry
+                    .rawget(&LuzObj::str(":hidden.string.metatable:"))
+                    .as_table_or_err()?;
+                let meta = meta.borrow();
+                meta.get(runner, key)
+            }
+            _ => Err(LuzRuntimeError::message(format!(
+                "obj {} is not indexable",
+                self
+            ))),
+        }
+    }
+
     pub fn or(self, default: LuzObj) -> Self {
         if self.is_nil() {
             default
@@ -583,6 +668,30 @@ impl LuzObj {
         match self {
             Self::String(s) => format!("{:?}", s),
             _ => self.to_string(),
+        }
+    }
+
+    pub fn callable(&self) -> Option<LuzObj> {
+        match self {
+            f @ LuzObj::Function(..) => Some(f.clone()),
+            LuzObj::Table(t) => {
+                let t = t.borrow();
+                let metavalue = t.rawget_metatable(&LuzObj::str("__call"));
+                metavalue.callable()
+            }
+            _ => None,
+        }
+    }
+
+    pub fn call(
+        &self,
+        runner: &mut Runner,
+        args: Vec<LuzObj>,
+        vararg: Vec<LuzObj>,
+    ) -> Result<Vec<LuzObj>, LuzRuntimeError> {
+        match self.callable() {
+            Some(LuzObj::Function(f)) => f.borrow().call(runner, args, vararg),
+            _ => Err(LuzRuntimeError::message("not callable")),
         }
     }
 }

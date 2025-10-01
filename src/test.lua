@@ -20,6 +20,7 @@ a = 0xF0F0F0F0F0F0F0F0
 assert(a | -1 == -1)
 assert(a ~ a == 0 and a ~ 0 == a and a ~ ~a == -1)
 assert(a >> 4 == ~a)
+
 a = 0xF0; b = 0xCC; c = 0xAA; d = 0xFD
 assert(a | b ~ c & d == 0xF4)
 
@@ -29,17 +30,17 @@ assert(a | b ~ c & d == 0xF4)
 a = 0xF0000000; b = 0xCC000000;
 c = 0xAA000000; d = 0xFD000000
 assert(a | b ~ c & d == 0xF4000000)
-assert(~~a == a and ~a == -1 ~ a and -d == ~d + 1)
+assert(~ ~a == a and ~a == -1 ~ a and -d == ~d + 1)
 
 a = a << 32
 b = b << 32
 c = c << 32
 d = d << 32
 assert(a | b ~ c & d == 0xF4000000 << 32)
-assert(~~a == a and ~a == -1 ~ a and -d == ~d + 1)
+assert(~ ~a == a and ~a == -1 ~ a and -d == ~d + 1)
 
 
-do   -- constant folding
+do -- constant folding
   local code = string.format("return -1 >> %d", math.maxinteger)
   assert(load(code)() == 0)
   local code = string.format("return -1 >> %d", math.mininteger)
@@ -53,17 +54,17 @@ end
 assert(-1 >> 1 == (1 << (numbits - 1)) - 1 and 1 << 31 == 0x80000000)
 assert(-1 >> (numbits - 1) == 1)
 assert(-1 >> numbits == 0 and
-       -1 >> -numbits == 0 and
-       -1 << numbits == 0 and
-       -1 << -numbits == 0)
+  -1 >> -numbits == 0 and
+  -1 << numbits == 0 and
+  -1 << -numbits == 0)
 
 assert(1 >> math.mininteger == 0)
 assert(1 >> math.maxinteger == 0)
 assert(1 << math.mininteger == 0)
 assert(1 << math.maxinteger == 0)
 
-assert((2^30 - 1) << 2^30 == 0)
-assert((2^30 - 1) >> 2^30 == 0)
+assert((2 ^ 30 - 1) << 2 ^ 30 == 0)
+assert((2 ^ 30 - 1) >> 2 ^ 30 == 0)
 
 assert(1 >> -3 == 1 << 3 and 1000 >> 5 == 1000 << -5)
 
@@ -82,132 +83,130 @@ assert(0xffffffff >> (1 .. "9") == 0x1fff)
 assert(10 | (1 .. "9") == 27)
 
 do
-  local st, msg = pcall(function () return 4 & "a" end)
+  local st, msg = pcall(function() return 4 & "a" end)
   assert(string.find(msg, "'band'"))
 
-  local st, msg = pcall(function () return ~"a" end)
+  local st, msg = pcall(function() return ~"a" end)
   assert(string.find(msg, "'bnot'"))
 end
 
 
 -- out of range number
-assert(not pcall(function () return "0xffffffffffffffff.0" | 0 end))
+assert(not pcall(function() return "0xffffffffffffffff.0" | 0 end))
 
 -- embedded zeros
-assert(not pcall(function () return "0xffffffffffffffff\0" | 0 end))
+assert(not pcall(function() return "0xffffffffffffffff\0" | 0 end))
 
-print'+'
-
-
-package.preload.bit32 = function ()     --{
-
--- no built-in 'bit32' library: implement it using bitwise operators
-
-local bit = {}
-
-function bit.bnot (a)
-  return ~a & 0xFFFFFFFF
-end
+print '+'
 
 
---
--- in all vararg functions, avoid creating 'arg' table when there are
--- only 2 (or less) parameters, as 2 parameters is the common case
---
+package.preload.bit32 = function() --{
+  -- no built-in 'bit32' library: implement it using bitwise operators
 
-function bit.band (x, y, z, ...)
-  if not z then
-    return ((x or -1) & (y or -1)) & 0xFFFFFFFF
-  else
-    local arg = {...}
-    local res = x & y & z
-    for i = 1, #arg do res = res & arg[i] end
-    return res & 0xFFFFFFFF
+  local bit = {}
+
+  function bit.bnot(a)
+    return ~a & 0xFFFFFFFF
   end
-end
 
-function bit.bor (x, y, z, ...)
-  if not z then
-    return ((x or 0) | (y or 0)) & 0xFFFFFFFF
-  else
-    local arg = {...}
-    local res = x | y | z
-    for i = 1, #arg do res = res | arg[i] end
-    return res & 0xFFFFFFFF
+  --
+  -- in all vararg functions, avoid creating 'arg' table when there are
+  -- only 2 (or less) parameters, as 2 parameters is the common case
+  --
+
+  function bit.band(x, y, z, ...)
+    if not z then
+      return ((x or -1) & (y or -1)) & 0xFFFFFFFF
+    else
+      local arg = { ... }
+      local res = x & y & z
+      for i = 1, #arg do
+        res = res & arg[i]
+      end
+      return res & 0xFFFFFFFF
+    end
   end
-end
 
-function bit.bxor (x, y, z, ...)
-  if not z then
-    return ((x or 0) ~ (y or 0)) & 0xFFFFFFFF
-  else
-    local arg = {...}
-    local res = x ~ y ~ z
-    for i = 1, #arg do res = res ~ arg[i] end
-    return res & 0xFFFFFFFF
+  function bit.bor(x, y, z, ...)
+    if not z then
+      return ((x or 0) | (y or 0)) & 0xFFFFFFFF
+    else
+      local arg = { ... }
+      local res = x | y | z
+      for i = 1, #arg do res = res | arg[i] end
+      return res & 0xFFFFFFFF
+    end
   end
-end
 
-function bit.btest (...)
-  return bit.band(...) ~= 0
-end
-
-function bit.lshift (a, b)
-  return ((a & 0xFFFFFFFF) << b) & 0xFFFFFFFF
-end
-
-function bit.rshift (a, b)
-  return ((a & 0xFFFFFFFF) >> b) & 0xFFFFFFFF
-end
-
-function bit.arshift (a, b)
-  a = a & 0xFFFFFFFF
-  if b <= 0 or (a & 0x80000000) == 0 then
-    return (a >> b) & 0xFFFFFFFF
-  else
-    return ((a >> b) | ~(0xFFFFFFFF >> b)) & 0xFFFFFFFF
+  function bit.bxor(x, y, z, ...)
+    if not z then
+      return ((x or 0) ~ (y or 0)) & 0xFFFFFFFF
+    else
+      local arg = { ... }
+      local res = x ~ y ~ z
+      for i = 1, #arg do res = res ~ arg[i] end
+      return res & 0xFFFFFFFF
+    end
   end
-end
 
-function bit.lrotate (a ,b)
-  b = b & 31
-  a = a & 0xFFFFFFFF
-  a = (a << b) | (a >> (32 - b))
-  return a & 0xFFFFFFFF
-end
+  function bit.btest(...)
+    return bit.band(...) ~= 0
+  end
 
-function bit.rrotate (a, b)
-  return bit.lrotate(a, -b)
-end
+  function bit.lshift(a, b)
+    return ((a & 0xFFFFFFFF) << b) & 0xFFFFFFFF
+  end
 
-local function checkfield (f, w)
-  w = w or 1
-  assert(f >= 0, "field cannot be negative")
-  assert(w > 0, "width must be positive")
-  assert(f + w <= 32, "trying to access non-existent bits")
-  return f, ~(-1 << w)
-end
+  function bit.rshift(a, b)
+    return ((a & 0xFFFFFFFF) >> b) & 0xFFFFFFFF
+  end
 
-function bit.extract (a, f, w)
-  local f, mask = checkfield(f, w)
-  return (a >> f) & mask
-end
+  function bit.arshift(a, b)
+    a = a & 0xFFFFFFFF
+    if b <= 0 or (a & 0x80000000) == 0 then
+      return (a >> b) & 0xFFFFFFFF
+    else
+      return ((a >> b) | ~(0xFFFFFFFF >> b)) & 0xFFFFFFFF
+    end
+  end
 
-function bit.replace (a, v, f, w)
-  local f, mask = checkfield(f, w)
-  v = v & mask
-  a = (a & ~(mask << f)) | (v << f)
-  return a & 0xFFFFFFFF
-end
+  function bit.lrotate(a, b)
+    b = b & 31
+    a = a & 0xFFFFFFFF
+    a = (a << b) | (a >> (32 - b))
+    return a & 0xFFFFFFFF
+  end
 
-return bit
+  function bit.rrotate(a, b)
+    return bit.lrotate(a, -b)
+  end
 
-end  --}
+  local function checkfield(f, w)
+    w = w or 1
+    assert(f >= 0, "field cannot be negative")
+    assert(w > 0, "width must be positive")
+    assert(f + w <= 32, "trying to access non-existent bits")
+    return f, ~(-1 << w)
+  end
 
+  function bit.extract(a, f, w)
+    local f, mask = checkfield(f, w)
+    return (a >> f) & mask
+  end
+
+  function bit.replace(a, v, f, w)
+    local f, mask = checkfield(f, w)
+    v = v & mask
+    a = (a & ~(mask << f)) | (v << f)
+    return a & 0xFFFFFFFF
+  end
+
+  return bit
+end --}
 
 print("testing bitwise library")
 
-local bit32 = require'bit32'
+local bit32 = require 'bit32'
 
 assert(bit32.band() == bit32.bnot(0))
 assert(bit32.btest() == true)
@@ -215,7 +214,7 @@ assert(bit32.bor() == 0)
 assert(bit32.bxor() == 0)
 
 assert(bit32.band() == bit32.band(0xffffffff))
-assert(bit32.band(1,2) == 0)
+assert(bit32.band(1, 2) == 0)
 
 
 -- out-of-range numbers
@@ -240,7 +239,7 @@ assert(bit32.rrotate(0x12345678, 8) == 0x78123456)
 assert(bit32.lrotate(0xaaaaaaaa, 2) == 0xaaaaaaaa)
 assert(bit32.lrotate(0xaaaaaaaa, -2) == 0xaaaaaaaa)
 for i = -50, 50 do
-  assert(bit32.lrotate(0x89abcdef, i) == bit32.lrotate(0x89abcdef, i%32))
+  assert(bit32.lrotate(0x89abcdef, i) == bit32.lrotate(0x89abcdef, i % 32))
 end
 
 assert(bit32.lshift(0x12345678, 4) == 0x23456780)
@@ -274,8 +273,8 @@ assert(0x12345678 >> -32 == 0x1234567800000000)
 
 print("+")
 -- some special cases
-local c = {0, 1, 2, 3, 10, 0x80000000, 0xaaaaaaaa, 0x55555555,
-           0xffffffff, 0x7fffffff}
+local c = { 0, 1, 2, 3, 10, 0x80000000, 0xaaaaaaaa, 0x55555555,
+  0xffffffff, 0x7fffffff }
 
 for _, b in pairs(c) do
   assert(bit32.band(b) == b)
@@ -316,8 +315,8 @@ for _, b in pairs(c) do
 end
 
 assert(not pcall(bit32.band, {}))
-assert(not pcall(bit32.bnot, "a"))
 assert(not pcall(bit32.lshift, 45))
+assert(not pcall(bit32.bnot, "a"))
 assert(not pcall(bit32.lshift, 45, print))
 assert(not pcall(bit32.rshift, 45, print))
 
@@ -360,4 +359,3 @@ if 2.0^50 < 2.0^50 + 1.0 and 2.0^50 < (-1 >> 1) then
 end
 
 print'OK'
-

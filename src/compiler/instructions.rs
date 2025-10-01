@@ -1,11 +1,14 @@
 use std::fmt::Display;
 
 use derive_new::new;
+use num_enum::TryFromPrimitive;
 
 use crate::{
     ast::{Binop, Unop},
-    compiler::{ctx::Scope, opcode::LuaOpCode},
-    luz::err::LuzError,
+    compiler::{
+        ctx::Scope,
+        opcode::{LuaOpCode, TMcode},
+    },
 };
 
 #[allow(non_camel_case_types)]
@@ -47,6 +50,157 @@ impl Instruction {
             Instruction::isJ(is_j) => is_j.op,
             Instruction::iAx(i_ax) => i_ax.op,
             _ => LuaOpCode::OP_debug,
+        }
+    }
+
+    pub fn a(&self) -> Option<u8> {
+        match self {
+            Instruction::iABC(i_abc) => Some(i_abc.a),
+            Instruction::iABx(i_abx) => Some(i_abx.a),
+            Instruction::iAsBx(i_as_bx) => Some(i_as_bx.a),
+            Instruction::isJ(_) => None,
+            Instruction::iAx(_) => None,
+            _ => None,
+        }
+    }
+
+    pub fn b(&self) -> Option<u8> {
+        match self {
+            Instruction::iABC(i_abc) => Some(i_abc.b as u8),
+            Instruction::iABx(_) => None,
+            Instruction::iAsBx(_) => None,
+            Instruction::isJ(_) => None,
+            Instruction::iAx(_) => None,
+            _ => None,
+        }
+    }
+    
+    pub fn c(&self) -> Option<u8> {
+        match self {
+            Instruction::iABC(i_abc) => Some(i_abc.c as u8),
+            Instruction::iABx(_) => None,
+            Instruction::iAsBx(_) => None,
+            Instruction::isJ(_) => None,
+            Instruction::iAx(_) => None,
+            _ => None,
+        }
+    }
+
+    pub fn k(&self) -> Option<bool> {
+        match self {
+            Instruction::iABC(i_abc) => Some(i_abc.k),
+            Instruction::iABx(_) => None,
+            Instruction::iAsBx(_) => None,
+            Instruction::isJ(_) => None,
+            Instruction::iAx(_) => None,
+            _ => None,
+        }
+    }
+
+    pub fn bx(&self) -> Option<u32> {
+        match self {
+            Instruction::iABC(_) => None,
+            Instruction::iABx(i_abx) => Some(i_abx.b),
+            Instruction::iAsBx(_) => None,
+            Instruction::isJ(_) => None,
+            Instruction::iAx(_) => None,
+            _ => None,
+        }
+    }
+    
+    pub fn sj(&self) -> Option<u32> {
+        match self {
+            Instruction::iABC(_) => None,
+            Instruction::iABx(_) => None,
+            Instruction::iAsBx(_) => None,
+            Instruction::isJ(is_j) => Some(is_j.j),
+            Instruction::iAx(_) => None,
+            _ => None,
+        }
+    }
+
+
+    pub fn set_op(&mut self, op: LuaOpCode) {
+        match self {
+            Instruction::NOP => todo!(),
+            Instruction::LOG(_) => todo!(),
+            Instruction::iABC(i_abc) => i_abc.op = op,
+            Instruction::iABx(i_abx) => i_abx.op = op,
+            Instruction::iAsBx(i_as_bx) => i_as_bx.op = op,
+            Instruction::isJ(is_j) => is_j.op = op,
+            Instruction::iAx(i_ax) => i_ax.op = op,
+        }
+    }
+
+    pub fn set_a(&mut self, a: u8) {
+        match self {
+            Instruction::NOP => todo!(),
+            Instruction::LOG(_) => todo!(),
+            Instruction::iABC(i_abc) => i_abc.a = a,
+            Instruction::iABx(i_abx) => i_abx.a = a,
+            Instruction::iAsBx(i_as_bx) => i_as_bx.a = a,
+            Instruction::isJ(_) => todo!(),
+            Instruction::iAx(_) => todo!(),
+        }
+    }
+
+    pub fn set_b(&mut self, b: u8) {
+        match self {
+            Instruction::NOP => todo!(),
+            Instruction::LOG(_) => todo!(),
+            Instruction::iABC(i_abc) => i_abc.b = b,
+            Instruction::iABx(_) => todo!(),
+            Instruction::iAsBx(i_as_bx) => i_as_bx.b = b as u32,
+            Instruction::isJ(_) => todo!(),
+            Instruction::iAx(_) => todo!(),
+        }
+    }
+
+    pub fn set_c(&mut self, c: u8) {
+        match self {
+            Instruction::NOP => todo!(),
+            Instruction::LOG(_) => todo!(),
+            Instruction::iABC(i_abc) => i_abc.c = c,
+            Instruction::iABx(_) => todo!(),
+            Instruction::iAsBx(_) => todo!(),
+            Instruction::isJ(_) => todo!(),
+            Instruction::iAx(_) => todo!(),
+        }
+    }
+
+    pub fn set_k(&mut self, k: bool) {
+        match self {
+            Instruction::NOP => todo!(),
+            Instruction::LOG(_) => todo!(),
+            Instruction::iABC(i_abc) => i_abc.k = k,
+            Instruction::iABx(_) => todo!(),
+            Instruction::iAsBx(_) => todo!(),
+            Instruction::isJ(_) => todo!(),
+            Instruction::iAx(_) => todo!(),
+        }
+    }
+
+    pub fn set_bx(&mut self, bx: u32) {
+        match self {
+            Instruction::NOP => todo!(),
+            Instruction::LOG(_) => todo!(),
+            Instruction::iABC(_) => todo!(),
+            Instruction::iABx(i_abx) => i_abx.b = bx,
+            Instruction::iAsBx(_) => todo!(),
+            Instruction::isJ(_) => todo!(),
+            Instruction::iAx(_) => todo!(),
+        }
+    }
+
+    pub fn set_sj(&mut self, sj: u32) {
+        match self {
+            Instruction::NOP => todo!(),
+            Instruction::LOG(_) => todo!(),
+            Instruction::iABC(_) => todo!(),
+            Instruction::iABx(_) => todo!(),
+            Instruction::iAsBx(_) => todo!(),
+            Instruction::isJ(is_j) => is_j.j = sj,
+            Instruction::iAx(_) => todo!(),
         }
     }
 }
@@ -217,7 +371,7 @@ impl Instruction {
 
     pub fn op_jmp(jmp_dist: i32) -> Instruction {
         LuaOpCode::OP_JMP
-            .to_isj(0, (jmp_dist + MAX_HALF_sJ as i32) as u32) // a is unused
+            .to_isj((jmp_dist + MAX_HALF_sJ as i32) as u32) // a is unused
             .into()
     }
 
@@ -289,7 +443,7 @@ impl Instruction {
 
     pub fn op_return(reg: u8, is_const: bool, nb_exps: u8) -> Instruction {
         LuaOpCode::OP_RETURN
-            .to_iabc(reg, is_const, nb_exps, 1)
+            .to_iabc(reg, is_const, nb_exps, 0)
             .into()
     }
     pub fn op_return0() -> Instruction {
@@ -494,6 +648,9 @@ impl iABC {
                 let local = scope.get_const(self.b);
                 format!("{} ; {}", self, local.repr())
             }
+            LuaOpCode::OP_MMBINK | LuaOpCode::OP_MMBINI | LuaOpCode::OP_MMBIN => {
+                format!("{} ; {}", self, TMcode::try_from_primitive(self.c).unwrap())
+            }
             LuaOpCode::OP_BANDK
             | LuaOpCode::OP_BORK
             | LuaOpCode::OP_BXORK
@@ -680,6 +837,25 @@ impl Display for iABC {
                     self.k as u8
                 )
             }
+            LuaOpCode::OP_MMBINK => {
+                format!(
+                    "{:<INSTS_COL_WIDTH$} {} {} {} {}",
+                    self.op.to_string(),
+                    self.a,
+                    self.b,
+                    self.c,
+                    self.k as u8
+                )
+            }
+            LuaOpCode::OP_MMBIN => {
+                format!(
+                    "{:<INSTS_COL_WIDTH$} {} {} {}",
+                    self.op.to_string(),
+                    self.a,
+                    self.b,
+                    self.c,
+                )
+            }
             _ => format!(
                 "{:<INSTS_COL_WIDTH$} {} {} {}",
                 self.op.to_string(),
@@ -820,8 +996,7 @@ impl Display for iAsBx {
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, new)]
 pub struct isJ {
-    pub b: u32, // actually 25 bits
-    pub a: u8,
+    pub j: u32,        // actually 25 bits
     pub op: LuaOpCode, // actually 7 bits
 }
 
@@ -833,18 +1008,16 @@ impl Into<Instruction> for isJ {
 
 impl Into<u32> for isJ {
     fn into(self) -> u32 {
-        self.op as u32 | (self.a as u32) << 7 | self.b << 16
+        self.op as u32 | self.j << 16
     }
 }
 
 impl From<u32> for isJ {
     fn from(val: u32) -> Self {
         let op = get_arg(val, 7, 0);
-        let a = get_arg(val, 8, 7);
         let b = get_arg(val, 17, 15);
         Self {
-            b: b as u32,
-            a: a as u8,
+            j: b as u32,
             op: (op as u8).try_into().unwrap(),
         }
     }
@@ -857,7 +1030,7 @@ impl isJ {
                 format!(
                     "{} ; to {}",
                     self,
-                    inst_idx as i32 + self.b as i32 - MAX_HALF_sJ as i32 + 1
+                    inst_idx as i32 + self.j as i32 - MAX_HALF_sJ as i32 + 1
                 )
             }
             _ => self.to_string(),
@@ -875,7 +1048,7 @@ impl Display for isJ {
             format!(
                 "{:<INSTS_COL_WIDTH$} {}",
                 self.op.to_string(),
-                self.b as i32 - MAX_HALF_sJ as i32
+                self.j as i32 - MAX_HALF_sJ as i32
             )
         )
     }

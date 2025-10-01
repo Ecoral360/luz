@@ -4,16 +4,17 @@ use std::{
     rc::Rc,
 };
 
+use num_enum::TryFromPrimitive;
+
 use crate::{
     ast::{Binop, CmpOp, LineInfo, Unop},
     compiler::{
         ctx::{Scope, ScopeRef},
         instructions::{iABC, iABx, iAsBx, isJ, Instruction, MAX_HALF_sBx, MAX_HALF_sJ},
-        opcode::LuaOpCode,
+        opcode::{LuaOpCode, TMcode},
     },
     luz::{
         err::LuzError,
-        lib::env::make_env_table,
         obj::{LuzFunction, LuzObj, LuzType, Numeral, Table, TableRef},
     },
     luz_let,
@@ -36,6 +37,7 @@ pub struct Runner<'a> {
     vararg: Option<Vec<LuzObj>>,
     curr_instruction: Option<(usize, Instruction)>,
     registry: Rc<RefCell<Table>>,
+    pc: usize,
 }
 
 #[allow(unused)]
@@ -46,14 +48,15 @@ impl<'a> Runner<'a> {
         }
     }
 
-    pub fn new(
+    pub fn new_chunk(
         filename: String,
         input: &'a str,
         scope: Rc<RefCell<Scope>>,
         registry: TableRef,
     ) -> Self {
-        let env = Scope::get_top(Rc::clone(&scope)).unwrap();
-        let (global, registry) = make_env_table(registry);
+        let env = Scope::get_global(Rc::clone(&scope)).unwrap();
+        let global = registry.borrow().rawget(&LuzObj::str("_G")).clone();
+
         env.borrow_mut().set_reg_with_name("_ENV", global);
 
         Self {
@@ -63,6 +66,28 @@ impl<'a> Runner<'a> {
             vararg: Some(vec![]),
             curr_instruction: None,
             registry,
+            pc: 1,
+        }
+    }
+
+    pub fn new(
+        filename: String,
+        input: &'a str,
+        scope: Rc<RefCell<Scope>>,
+        registry: TableRef,
+    ) -> Self {
+        let env = Scope::get_global(Rc::clone(&scope)).unwrap();
+        let global = registry.borrow().rawget(&LuzObj::str("_G")).clone();
+        env.borrow_mut().set_reg_with_name("_ENV", global);
+
+        Self {
+            filename,
+            input,
+            scope,
+            vararg: Some(vec![]),
+            curr_instruction: None,
+            registry,
+            pc: 1,
         }
     }
 
@@ -71,7 +96,7 @@ impl<'a> Runner<'a> {
     }
 
     pub fn env_scope(&self) -> Option<ScopeRef> {
-        Scope::get_top(Rc::clone(&self.scope))
+        Scope::get_global(Rc::clone(&self.scope))
     }
 
     pub fn get_val(&mut self, name: &str) -> Option<LuzObj> {
@@ -99,7 +124,8 @@ impl<'a> Runner<'a> {
             )));
         };
         LuzError::LuzRuntimeError(LuzRuntimeError::message(format!(
-            "luz: {}:{}: {}\n{}",
+            "[pc={}] luz: {}:{}: {}\n{}",
+            self.pc,
             self.filename,
             line_info.start_line_col.0,
             err,
@@ -110,20 +136,27 @@ impl<'a> Runner<'a> {
     pub fn run(&mut self) -> Result<Vec<LuzObj>, LuzError> {
         let instructions = self.scope().instructions().clone();
         let mut rets = vec![];
-        let mut pc = 1;
-        while let Some(instruction) = instructions.get(pc - 1) {
-            self.curr_instruction = Some((pc, instruction.clone()));
-            pc += 1;
+        while let Some(instruction) = instructions.get(self.pc - 1) {
+            self.curr_instruction = Some((self.pc, instruction.clone()));
             rets = match self
                 .run_instruction(instruction)
-                .map_err(|err| self.format_err(pc - 1, err))?
+                .map_err(|err| self.format_err(self.pc, err))?
             {
-                InstructionResult::Continue => continue,
+                InstructionResult::Continue => {
+                    self.pc += 1;
+                    continue;
+                }
                 InstructionResult::Jmp(n) => {
+                    if n == 0 {
+                        Err(self.format_err(
+                            self.pc,
+                            LuzRuntimeError::message("infinite loop").into(),
+                        ))?;
+                    }
                     if n < 0 {
-                        pc -= n.abs() as usize;
+                        self.pc -= n.abs() as usize;
                     } else {
-                        pc += n as usize;
+                        self.pc += n as usize + 1;
                     }
                     continue;
                 }
@@ -151,7 +184,7 @@ impl<'a> Runner<'a> {
             .ok_or(LuzError::RuntimeError(format!("Register not found {reg}")))?
             .val
             .as_ref()
-            .expect(&format!("Value not found for {reg}"))
+            .ok_or(LuzError::RuntimeError(format!("Value not found for register {reg}")))?
             .clone();
         Ok(val)
     }
@@ -352,9 +385,39 @@ impl<'a> Runner<'a> {
                         .set_reg_val(a, lhs.apply_binop(binop, rhs)?);
                 }
 
-                LuaOpCode::OP_MMBINI => {}
-                LuaOpCode::OP_MMBINK => {}
-                LuaOpCode::OP_MMBIN => {}
+                LuaOpCode::OP_MMBINK | LuaOpCode::OP_MMBINI | LuaOpCode::OP_MMBIN => {
+                    let result_reg = {
+                        let scope = self.scope();
+                        let Instruction::iABC(iABC { a, .. }) = &scope.instructions()[self.pc - 2]
+                        else {
+                            unreachable!(
+                                "Should not have anything but an operation before the MMBIN op"
+                            )
+                        };
+                        *a
+                    };
+
+                    let mut lhs = self.get_reg_val(*a)?;
+                    let mut rhs = match op {
+                        LuaOpCode::OP_MMBINK => self.get_const_val(*b)?,
+                        LuaOpCode::OP_MMBINI => LuzObj::int((*b as i64) - 128),
+                        LuaOpCode::OP_MMBIN => self.get_reg_val(*b)?,
+                        _ => unreachable!(),
+                    };
+
+                    if *k {
+                        (lhs, rhs) = (rhs, lhs)
+                    }
+
+                    if lhs.get_type() == LuzType::Number && rhs.get_type() == LuzType::Number {
+                        return Ok(InstructionResult::Continue);
+                    }
+
+                    let tm = TMcode::try_from_primitive(*c).expect("Valid metamethod");
+
+                    let result = LuzObj::call_metamethod(self, tm, lhs, rhs)?;
+                    self.scope_mut().set_reg_val(result_reg, result);
+                }
 
                 LuaOpCode::OP_CONCAT => {
                     let start = *a;
@@ -436,7 +499,7 @@ impl<'a> Runner<'a> {
                         self.get_reg_val(*c)?
                     };
                     let table = self_table.borrow();
-                    let val = table.get(&key);
+                    let val = table.rawget(&key);
                     self.scope.borrow_mut().set_reg_val(*a, val.clone());
                 }
                 LuaOpCode::OP_CALL => {
@@ -448,7 +511,7 @@ impl<'a> Runner<'a> {
                     } = *i_abc;
 
                     let func = self.get_reg_val(func_addr)?;
-                    let LuzObj::Function(f) = func else {
+                    let Some(LuzObj::Function(f)) = func.callable() else {
                         return Err(LuzError::Type {
                             wrong: func.get_type(),
                             expected: vec![LuzType::Function],
@@ -517,14 +580,12 @@ impl<'a> Runner<'a> {
                 LuaOpCode::OP_GETFIELD => {
                     let table = self.get_reg_val(*b)?;
 
-                    let LuzObj::Table(table) = table else {
-                        return Err(LuzError::InvalidIndex {
-                            wrong: table.get_type(),
-                        });
-                    };
                     let key = self.get_const_val(*c)?;
-                    let table = table.borrow();
-                    let val = table.get(&key);
+                    let Some(val) = table.index(self, &key)? else {
+                        self.scope.borrow_mut().set_reg_val(*a, LuzObj::Nil);
+                        return Ok(InstructionResult::Continue);
+                    };
+
                     self.scope.borrow_mut().set_reg_val(*a, val.clone());
                 }
                 LuaOpCode::OP_GETTABUP => {
@@ -535,38 +596,35 @@ impl<'a> Runner<'a> {
                         .get_upvalue_value(b)
                         .ok_or(LuzError::CompileError("Upvalue table missing".to_owned()))?;
 
-                    if let LuzObj::Table(table) = table {
-                        let key = self.get_const_val(c)?;
-                        let table = table.borrow();
-                        let val = table.get(&key);
-                        self.scope.borrow_mut().set_reg_val(a, val.clone());
-                    } else {
+                    let key = self.get_const_val(c)?;
+                    let Some(val) = table.index(self, &key)? else {
                         self.scope.borrow_mut().set_reg_val(a, LuzObj::Nil);
+                        return Ok(InstructionResult::Continue);
                     };
+
+                    self.scope.borrow_mut().set_reg_val(a, val.clone());
                 }
                 LuaOpCode::OP_GETTABLE => {
                     let table = self.get_reg_val(*b)?;
 
-                    if let LuzObj::Table(table) = table {
-                        let key = self.get_reg_val(*c)?;
-                        let table = table.borrow();
-                        let val = table.get(&key);
-                        self.scope.borrow_mut().set_reg_val(*a, val.clone());
-                    } else {
+                    let key = self.get_reg_val(*c)?;
+                    let Some(val) = table.index(self, &key)? else {
                         self.scope.borrow_mut().set_reg_val(*a, LuzObj::Nil);
+                        return Ok(InstructionResult::Continue);
                     };
+
+                    self.scope.borrow_mut().set_reg_val(*a, val.clone());
                 }
                 LuaOpCode::OP_GETI => {
                     let table = self.get_reg_val(*b)?;
 
-                    if let LuzObj::Table(table) = table {
-                        let key = (*c as i64) - 128;
-                        let table = table.borrow();
-                        let val = table.get(&LuzObj::Numeral(Numeral::Int(key)));
-                        self.scope.borrow_mut().set_reg_val(*a, val.clone());
-                    } else {
+                    let key = LuzObj::Numeral(Numeral::Int((*c as i64) - 128));
+                    let Some(val) = table.index(self, &key)? else {
                         self.scope.borrow_mut().set_reg_val(*a, LuzObj::Nil);
+                        return Ok(InstructionResult::Continue);
                     };
+
+                    self.scope.borrow_mut().set_reg_val(*a, val.clone());
                 }
                 LuaOpCode::OP_SETTABUP => {
                     let table = self
@@ -681,7 +739,7 @@ impl<'a> Runner<'a> {
                 }
 
                 LuaOpCode::OP_TFORCALL => {
-                    luz_let!(LuzObj::Function(iter) = self.get_reg_val(*a)?);
+                    luz_let!(Some(LuzObj::Function(iter)) = self.get_reg_val(*a)?.callable());
                     let state = self.get_reg_val(*a + 1)?;
                     let ctrl = self.get_reg_val(*a + 2)?;
 
@@ -836,7 +894,7 @@ impl<'a> Runner<'a> {
             },
             Instruction::isJ(is_j) => match is_j.op {
                 LuaOpCode::OP_JMP => {
-                    let isJ { b, .. } = *is_j;
+                    let isJ { j: b, .. } = *is_j;
                     let offset = b - MAX_HALF_sJ;
                     return Ok(InstructionResult::Jmp(offset as i32));
                 }
