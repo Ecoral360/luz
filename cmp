@@ -1,0 +1,13 @@
+#!/bin/sh
+
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --debug-trace | -d) DEBUG_TRACE=1 ;;
+    *) FILE="$1" ;;
+  esac
+  shift
+done
+
+RUST_BACKTRACE=$DEBUG_TRACE cargo run "$FILE" -vvv
+luac -l -l -p "$FILE"

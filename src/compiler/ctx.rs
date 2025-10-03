@@ -16,6 +16,7 @@ use crate::{
 
 #[derive(Debug, new, Builder, Clone)]
 pub struct CompilerCtx {
+    filename: String,
     /// If Some(0) -> varargs
     /// else real nb of expected = nb_expected - 1
     nb_expected: u8,
@@ -28,13 +29,14 @@ pub struct CompilerCtx {
 }
 
 impl CompilerCtx {
-    pub fn new_main() -> Self {
+    pub fn new_main(filename: String) -> Self {
         let mut scope = Scope::new(Some(String::from("main")), Some(get_builtin_scope()));
         scope.instructions.push(Instruction::op_varargprep(0));
         scope
             .upvalues
             .push(Upvalue::new("_ENV".to_owned(), 0, 0, true));
         Self {
+            filename,
             scope: Rc::new(RefCell::new(scope)),
             nb_expected: 2,
             dest_addr: None,
@@ -42,6 +44,7 @@ impl CompilerCtx {
         }
     }
     pub fn new_chunk(
+        filename: String,
         name: String,
         parent_scope: Option<ScopeRef>,
         mut upvalues: Vec<Upvalue>,
@@ -58,6 +61,7 @@ impl CompilerCtx {
             nb_expected: 2,
             dest_addr: None,
             in_not: false,
+            filename,
         }
     }
 
@@ -67,6 +71,7 @@ impl CompilerCtx {
             scope: Rc::clone(builder.scope.as_ref().unwrap_or(&self.scope)),
             in_not: builder.in_not.unwrap_or(self.in_not),
             dest_addr: builder.dest_addr.unwrap_or(self.dest_addr),
+            filename: builder.filename.as_ref().unwrap_or(&self.filename).clone(),
         }
     }
 
@@ -80,6 +85,10 @@ impl CompilerCtx {
 
     pub fn dest_addr(&self) -> Option<u8> {
         self.dest_addr
+    }
+
+    pub fn filename(&self) -> &str {
+        &self.filename
     }
 }
 
@@ -277,6 +286,18 @@ impl CompilerCtx {
         }
     }
 
+    pub(crate) fn is_reg_named(&mut self, reg: u8) -> bool {
+        self.scope_mut().regs[reg as usize].name.is_some()
+    }
+
+    pub(crate) fn is_reg_claimed(&mut self, reg: u8) -> bool {
+        !self.is_reg_free(reg)
+    }
+
+    pub(crate) fn is_reg_free(&mut self, reg: u8) -> bool {
+        self.scope_mut().regs[reg as usize].free
+    }
+
     pub(crate) fn claim_register(&mut self, reg: u8) {
         self.scope_mut().regs[reg as usize].free = false;
     }
@@ -400,6 +421,10 @@ impl Scope {
         }
 
         scope
+    }
+
+    pub fn set_name(&mut self, name: Option<String>) {
+        self.name = name;
     }
 }
 

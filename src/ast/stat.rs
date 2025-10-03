@@ -66,12 +66,14 @@ pub struct LabelStat(pub String);
 pub struct ReturnStat {
     pub explist: Vec<ExpNode>,
     pub variadic: bool,
+    pub tailcall: bool,
 }
 
 impl ReturnStat {
     pub fn new(explist: Vec<ExpNode>) -> Self {
         Self {
             variadic: ExpNode::is_multires(&explist),
+            tailcall: matches!(&explist[..], &[ExpNode::FuncCall(..)]),
             explist,
         }
     }

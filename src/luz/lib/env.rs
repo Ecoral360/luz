@@ -39,8 +39,12 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
             Ok(vec![])
         }),
 
-        type: luz_fn!([1, _runner](*args) {
-            let arg = args.get(0).unwrap_or(&LuzObj::Nil);
+        type: luz_fn!([0, _runner](*args) {
+            let Some(arg) = args.pop_front() else {
+                return Err(LuzRuntimeError::message(
+                    "bad argument #1 to 'type' (value expected)",
+                ));
+            };
             Ok(vec![LuzObj::String(arg.get_type().to_string())])
         }),
 
@@ -61,9 +65,27 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
             }
         }),
 
+        setmetatable: luz_fn!([2](LuzObj::Table(table), metatable @ (LuzObj::Table(..) | LuzObj::Nil)) {
+            let mut table_obj = table.borrow_mut();
+            let existing_meta = table_obj.rawget_metatable(&LuzObj::str("__metatable"));
+            if !existing_meta.is_nil() {
+                return Err(LuzRuntimeError::message(
+                    "Cannot set the metatable for this table because the __metatable metafield is set."
+                ));
+            }
+            if metatable.is_nil() {
+                table_obj.set_metatable(None);
+            } else {
+                let metatable = metatable.as_table_or_err()?;
+                table_obj.set_metatable(Some(metatable));
+            }
+
+            Ok(vec![LuzObj::Table(Rc::clone(&table))])
+        }),
+
         assert: luz_fn!([0](*args) {
             let mut args = args;
-            let Some(condition) = args.pop_front() else {
+            let Some(condition) = args.get(0) else {
                 return Err(LuzRuntimeError::message(
                     "bad argument #1 to 'assert' (value expected)",
                 ));
@@ -139,6 +161,13 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
             // We collect the rest if there is
             let varargs = args_iter.collect();
 
+            if runner.depth() > 200 {
+                return Ok(vec![
+                    LuzObj::Boolean(false),
+                    LuzObj::str("stack overflow"),
+                ])
+            }
+
             let results = f.call(runner, fixed_args, varargs);
 
             Ok(match results {
@@ -154,6 +183,67 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
                             LuzRuntimeError::Crashing(c) => LuzObj::String(c)
                         }
                     ]
+                }
+            })
+        }),
+
+        xpcall: luz_fn!([1, runner](f, msgh, *args) {
+            let Some(LuzObj::Function(f)) = f.callable() else { unreachable!() };
+            let f = f.borrow();
+
+            let nb_fixed = f.nb_fixed_params();
+
+            let mut args_iter = args.into_iter();
+            let mut fixed_args = Vec::with_capacity(nb_fixed as usize);
+            for _ in 0..nb_fixed {
+                fixed_args.push(args_iter.next().unwrap_or(LuzObj::Nil));
+            }
+
+            // We collect the rest if there is
+            let varargs = args_iter.collect();
+
+            let results = f.call(runner, fixed_args, varargs);
+
+            Ok(match results {
+                Ok(mut results) => {
+                    results.insert(0, LuzObj::Boolean(true));
+                    results
+                }
+                Err(err) => {
+                    let Some(LuzObj::Function(msgh)) = msgh.callable() else { unreachable!() };
+                    let msgh = msgh.borrow();
+                    let err_obj = match err {
+                        LuzRuntimeError::ErrorObj(luz_obj) => luz_obj,
+                        LuzRuntimeError::Crashing(c) => LuzObj::String(c)
+                    };
+                    let mut results = msgh.call(runner, vec![err_obj], vec![]);
+                    let mut result = None;
+                    for _ in 0..100 {
+                        match results {
+                            Ok(obj) => {
+                                result = Some(obj);
+                                break;
+                            }
+                            Err(err) => {
+                                let err_obj = match err {
+                                    LuzRuntimeError::ErrorObj(luz_obj) => luz_obj,
+                                    LuzRuntimeError::Crashing(c) => LuzObj::String(c)
+                                };
+                                results = msgh.call(runner, vec![err_obj], vec![]);
+                            }
+                        }
+                    }
+                    if let Some(result) = result {
+                        vec![
+                            LuzObj::Boolean(false),
+                            result.get(0).unwrap_or(&LuzObj::Nil).clone()
+                        ]
+                    } else {
+                        vec![
+                            LuzObj::Boolean(false),
+                            LuzObj::str("error in error handling"),
+                        ]
+                    }
                 }
             })
         }),

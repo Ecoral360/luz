@@ -12,8 +12,6 @@ use crate::{
     Rule,
 };
 
-use super::StatNode;
-
 #[derive(Debug, Clone, From)]
 pub enum ExpNode {
     Literal(LuzObj),
@@ -41,12 +39,15 @@ pub enum ExpNode {
     FuncCall(FuncCall),
     TableConstructor(ExpTableConstructor),
     WrappedStat(Vec<Stat>),
+    #[from(skip)]
+    InParent(Box<ExpNode>),
 }
 
 impl ExpNode {
     pub fn normalize(&self) -> &ExpNode {
         match self {
             ExpNode::Unop(unop, exp) if *unop == Unop::Not => exp.normalize(),
+            ExpNode::InParent(exp) => exp.normalize(),
             _ => self,
         }
     }

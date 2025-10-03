@@ -143,7 +143,20 @@ fn parse_top_expr(pair: Pair<Rule>) -> Result<ExpNode, LuzError> {
             //     .collect();
             // let access_or_calls = pair.into_inner().find_tagged("postfix");
 
-            parse_expr(pair.into_inner())?
+            let inner = pair.into_inner();
+            if inner
+                .peek()
+                .is_some_and(|child| matches!(child.as_node_tag(), Some("in_parent")))
+            {
+                let exp = parse_expr(inner)?;
+                if exp.is_multire() {
+                    ExpNode::InParent(Box::new(exp))
+                } else {
+                    exp
+                }
+            } else {
+                parse_expr(inner)?
+            }
         }
         Rule::Nil => ExpNode::Literal(LuzObj::Nil),
         Rule::Boolean => ExpNode::Literal(LuzObj::Boolean(pair.as_str() == "true")),
@@ -165,7 +178,6 @@ fn parse_top_expr(pair: Pair<Rule>) -> Result<ExpNode, LuzError> {
         Rule::Name => ExpNode::Name(pair.as_str().to_string()),
 
         Rule::Access => {
-            dbg!(&pair);
             todo!()
         }
 
@@ -219,25 +231,21 @@ fn parse_top_expr(pair: Pair<Rule>) -> Result<ExpNode, LuzError> {
             let next = signature.peek().expect("Function body has something");
             let mut params = FuncParamsBuilder::default();
 
+            let mut fixed = vec![];
             if let Rule::parlist = next.as_rule() {
-                let mut parlist = signature
-                    .next()
-                    .unwrap()
-                    .into_inner()
-                    .next()
-                    .unwrap()
-                    .into_inner();
-                let last = parlist.next_back();
-                let mut fixed = parse_namelist(parlist);
-                if let Some(last_param) = last {
-                    if last_param.as_rule() == Rule::Ellipse {
-                        params.is_vararg(true);
-                    } else {
-                        fixed.push(last_param.as_str().to_string());
+                let mut parlist = signature.next().unwrap().into_inner();
+                let last = parlist.next_back().unwrap();
+                if last.as_rule() == Rule::Ellipse {
+                    params.is_vararg(true);
+                    if let Some(args) = parlist.next() {
+                        fixed.append(&mut parse_namelist(args.into_inner()));
                     }
+                } else {
+                    fixed.append(&mut parse_namelist(last.into_inner()));
                 }
-                params.fixed(fixed);
             }
+
+            params.fixed(fixed);
 
             let body = parse_stmts(&mut signature.next().expect("Function body").into_inner())?;
 
@@ -478,29 +486,21 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
             let next = signature.peek().expect("Function body has something");
             let mut params = FuncParamsBuilder::default();
 
+            let mut fixed = vec![];
             if let Rule::parlist = next.as_rule() {
-                let mut parlist = signature
-                    .next()
-                    .unwrap()
-                    .into_inner()
-                    .next()
-                    .unwrap()
-                    .into_inner();
-                let last = parlist.next_back();
-                let mut fixed = if parlist.len() == 0 {
-                    vec![]
-                } else {
-                    parse_namelist(parlist)
-                };
-                if let Some(last_param) = last {
-                    if last_param.as_rule() == Rule::Ellipse {
-                        params.is_vararg(true);
-                    } else {
-                        fixed.push(last_param.as_str().to_string());
+                let mut parlist = signature.next().unwrap().into_inner();
+                let last = parlist.next_back().unwrap();
+                if last.as_rule() == Rule::Ellipse {
+                    params.is_vararg(true);
+                    if let Some(args) = parlist.next() {
+                        fixed.append(&mut parse_namelist(args.into_inner()));
                     }
+                } else {
+                    fixed.append(&mut parse_namelist(last.into_inner()));
                 }
-                params.fixed(fixed);
             }
+
+            params.fixed(fixed);
 
             let body = parse_script(&mut signature.next().expect("Function body").into_inner())?;
 

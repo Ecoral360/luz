@@ -141,6 +141,10 @@ impl Table {
         self.metatable.as_ref().map(|m| Rc::clone(m))
     }
 
+    pub fn set_metatable(&mut self, metatable: Option<Rc<RefCell<Table>>>) {
+        self.metatable = metatable;
+    }
+
     pub fn rawget_metatable(&self, key: &LuzObj) -> LuzObj {
         match &self.metatable {
             Some(metatable) => metatable.borrow().rawget(key).clone(),

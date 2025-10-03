@@ -10,7 +10,7 @@ use crate::{
     ast::{Binop, CmpOp, LineInfo, Unop},
     compiler::{
         ctx::{Scope, ScopeRef},
-        instructions::{iABC, iABx, iAsBx, isJ, Instruction, MAX_HALF_sBx, MAX_HALF_sJ},
+        instructions::{self, iABC, iABx, iAsBx, isJ, Instruction, MAX_HALF_sBx, MAX_HALF_sJ},
         opcode::{LuaOpCode, TMcode},
     },
     luz::{
@@ -38,6 +38,8 @@ pub struct Runner<'a> {
     curr_instruction: Option<(usize, Instruction)>,
     registry: Rc<RefCell<Table>>,
     pc: usize,
+    starting_line_info: Option<LineInfo>,
+    depth: usize,
 }
 
 #[allow(unused)]
@@ -67,6 +69,8 @@ impl<'a> Runner<'a> {
             curr_instruction: None,
             registry,
             pc: 1,
+            starting_line_info: None,
+            depth: 0,
         }
     }
 
@@ -88,6 +92,8 @@ impl<'a> Runner<'a> {
             curr_instruction: None,
             registry,
             pc: 1,
+            starting_line_info: None,
+            depth: 0
         }
     }
 
@@ -107,6 +113,13 @@ impl<'a> Runner<'a> {
         self.scope.borrow()
     }
 
+    pub fn reset(&mut self, new_scope: Rc<RefCell<Scope>>) {
+        self.scope = new_scope;
+        // 0 because it will be increased in the next iteration
+        self.pc = 0;
+        self.curr_instruction = None;
+    }
+
     fn scope_mut(&mut self) -> RefMut<Scope> {
         self.scope.borrow_mut()
     }
@@ -124,22 +137,28 @@ impl<'a> Runner<'a> {
             )));
         };
         LuzError::LuzRuntimeError(LuzRuntimeError::message(format!(
-            "[pc={}] luz: {}:{}: {}\n{}",
-            self.pc,
+            "{}\n{}:{}[pc={}] {}",
+            err,
             self.filename,
             line_info.start_line_col.0,
-            err,
-            self.get_line(&line_info)
+            self.pc,
+            self.get_line(&line_info),
         )))
     }
 
     pub fn run(&mut self) -> Result<Vec<LuzObj>, LuzError> {
-        let instructions = self.scope().instructions().clone();
         let mut rets = vec![];
-        while let Some(instruction) = instructions.get(self.pc - 1) {
-            self.curr_instruction = Some((self.pc, instruction.clone()));
+        loop {
+            let Some(instruction) = ({
+                let scope = self.scope();
+                scope.instructions().get(self.pc - 1).cloned()
+            }) else {
+                break;
+            };
+
+            self.curr_instruction = Some((self.pc - 1, instruction.clone()));
             rets = match self
-                .run_instruction(instruction)
+                .run_instruction(&instruction)
                 .map_err(|err| self.format_err(self.pc, err))?
             {
                 InstructionResult::Continue => {
@@ -184,7 +203,9 @@ impl<'a> Runner<'a> {
             .ok_or(LuzError::RuntimeError(format!("Register not found {reg}")))?
             .val
             .as_ref()
-            .ok_or(LuzError::RuntimeError(format!("Value not found for register {reg}")))?
+            .ok_or(LuzError::RuntimeError(format!(
+                "Value not found for register {reg}"
+            )))?
             .clone();
         Ok(val)
     }
@@ -442,8 +463,16 @@ impl<'a> Runner<'a> {
 
                 LuaOpCode::OP_RETURN => {
                     let mut rets = vec![];
-                    for i in 0..*b - 1 {
-                        rets.push(self.get_reg_val(*a + i)?);
+                    if *b == 0 {
+                        let mut addr = 0;
+                        while let Ok(Some(val)) = self.take_reg_val(*a + addr) {
+                            rets.push(val);
+                            addr += 1;
+                        }
+                    } else {
+                        for i in 0..*b - 1 {
+                            rets.push(self.get_reg_val(*a + i)?);
+                        }
                     }
                     return Ok(InstructionResult::Return(rets));
                 }
@@ -502,13 +531,15 @@ impl<'a> Runner<'a> {
                     let val = table.rawget(&key);
                     self.scope.borrow_mut().set_reg_val(*a, val.clone());
                 }
-                LuaOpCode::OP_CALL => {
+                LuaOpCode::OP_CALL | LuaOpCode::OP_TAILCALL => {
                     let iABC {
                         c: nb_expected_results,
                         b: nb_args,
                         a: func_addr,
                         ..
                     } = *i_abc;
+
+                    let is_tail_call = *op == LuaOpCode::OP_TAILCALL;
 
                     let func = self.get_reg_val(func_addr)?;
                     let Some(LuzObj::Function(f)) = func.callable() else {
@@ -542,7 +573,15 @@ impl<'a> Runner<'a> {
                             args.push(LuzObj::Nil);
                         }
                     }
-                    let results = f.call(self, args, vararg)?;
+
+                    let results = if is_tail_call {
+                        let Some(results) = f.tailcall(self, args, vararg)? else {
+                            return Ok(InstructionResult::Continue);
+                        };
+                        results
+                    } else {
+                        f.call(self, args, vararg)?
+                    };
 
                     let nb_results = results.len() as u8;
                     if nb_expected_results == 0 {
@@ -775,7 +814,9 @@ impl<'a> Runner<'a> {
                     self.scope.borrow_mut().set_reg_val(
                         a,
                         LuzObj::Function(Rc::new(RefCell::new(LuzFunction::new_user(
-                            nb_params, sub_scope,
+                            nb_params,
+                            sub_scope,
+                            self.filename.clone(),
                         )))),
                     );
                 }
@@ -993,7 +1034,6 @@ impl<'a> Runner<'a> {
     pub fn vararg(&self) -> Option<&Vec<LuzObj>> {
         self.vararg.as_ref()
     }
-
     pub fn set_vararg(&mut self, vararg: Option<Vec<LuzObj>>) {
         self.vararg = vararg;
     }
@@ -1004,5 +1044,13 @@ impl<'a> Runner<'a> {
 
     pub fn input(&self) -> &'a str {
         self.input
+    }
+
+    pub fn depth(&self) -> usize {
+        self.depth
+    }
+
+    pub fn set_depth(&mut self, depth: usize) {
+        self.depth = depth;
     }
 }

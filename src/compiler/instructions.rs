@@ -74,7 +74,7 @@ impl Instruction {
             _ => None,
         }
     }
-    
+
     pub fn c(&self) -> Option<u8> {
         match self {
             Instruction::iABC(i_abc) => Some(i_abc.c as u8),
@@ -107,7 +107,7 @@ impl Instruction {
             _ => None,
         }
     }
-    
+
     pub fn sj(&self) -> Option<u32> {
         match self {
             Instruction::iABC(_) => None,
@@ -118,7 +118,6 @@ impl Instruction {
             _ => None,
         }
     }
-
 
     pub fn set_op(&mut self, op: LuaOpCode) {
         match self {
@@ -308,6 +307,11 @@ impl Instruction {
     pub fn op_call(func_reg: u8, n_args: u8, n_expected: u8) -> Instruction {
         LuaOpCode::OP_CALL
             .to_iabc(func_reg, false, n_args, n_expected)
+            .into()
+    }
+    pub fn op_tailcall(func_reg: u8, n_args: u8) -> Instruction {
+        LuaOpCode::OP_TAILCALL
+            .to_iabc(func_reg, false, n_args, 0)
             .into()
     }
     pub fn op_concat(start: u8, nb: u8) -> Instruction {
@@ -683,7 +687,7 @@ impl iABC {
                 let local = scope.get_const(self.c);
                 format!("{} ; {} {}", self, upval.name, local.repr())
             }
-            LuaOpCode::OP_GETUPVAL => {
+            LuaOpCode::OP_GETUPVAL | LuaOpCode::OP_SETUPVAL => {
                 let upval = scope.get_upvalue(self.b);
                 format!("{} ; {}", self, upval.name)
             }
@@ -816,6 +820,7 @@ impl Display for iABC {
             | LuaOpCode::OP_LOADTRUE
             | LuaOpCode::OP_LFALSESKIP
             | LuaOpCode::OP_RETURN1
+            | LuaOpCode::OP_VARARGPREP
             | LuaOpCode::OP_CLOSE => {
                 format!("{:<INSTS_COL_WIDTH$} {}", self.op.to_string(), self.a)
             }

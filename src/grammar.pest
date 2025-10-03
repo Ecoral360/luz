@@ -121,7 +121,7 @@ PostfixExp = { Access | Call }
 
 prefixExp = _{
     Name
-  | "(" ~ exp ~ ")"
+  | "(" ~ (#in_parent = exp) ~ ")"
 }
 
 Access = { "[" ~ exp ~ "]" | "." ~ Name }

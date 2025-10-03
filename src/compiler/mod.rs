@@ -28,11 +28,14 @@ pub struct Compiler<'a> {
     input: &'a str,
 }
 
-#[allow(unused)]
 impl<'a> Compiler<'a> {
-    pub fn compile(input: &'a str, stats: Vec<Stat>) -> Result<CompilerCtx, LuzError> {
+    pub fn compile(
+        filename: String,
+        input: &'a str,
+        stats: Vec<Stat>,
+    ) -> Result<CompilerCtx, LuzError> {
         let mut compiler = Self::new(input);
-        let mut ctx = CompilerCtx::new_main();
+        let mut ctx = CompilerCtx::new_main(filename);
         for stmt in stats {
             compiler.visit_stat(&stmt, &mut ctx)?;
         }
@@ -66,7 +69,7 @@ impl<'a> Compiler<'a> {
         let to_be_closed = ctx.get_or_push_free_register();
 
         for stmt in stats {
-            self.visit_stat(stmt, ctx);
+            self.visit_stat(stmt, ctx)?;
         }
 
         let mut scope = ctx.scope_mut();
@@ -122,6 +125,10 @@ impl<'a> Compiler<'a> {
                 };
 
                 *k = !*k;
+
+                if matches!(exp.normalize(), ExpNode::CmpOp { .. }) {
+                    insts.pop();
+                }
             }
             ExpNode::LogicCmpOp { .. } => {}
             _ => {
@@ -151,7 +158,6 @@ impl<'a> Compiler<'a> {
     ) -> Result<Option<u8>, LuzError> {
         match exp {
             ExpNode::Literal(lit) => match lit {
-                LuzObj::Numeral(Numeral::Int(i)) => Ok(Some((*i + 128) as u8)),
                 LuzObj::Numeral(Numeral::Int(i))
                     if loadi && (-(MAX_HALF_sBx as i64)..(MAX_HALF_sBx as i64)).contains(i) =>
                 {
@@ -159,6 +165,7 @@ impl<'a> Compiler<'a> {
                     ctx.push_inst(Instruction::op_loadi(reg, *i as u32));
                     Ok(None)
                 }
+                LuzObj::Numeral(Numeral::Int(i)) => Ok(Some((*i + 128) as u8)),
                 _ => Ok(None),
             },
             _ => Ok(None),
@@ -180,7 +187,9 @@ impl<'a> Compiler<'a> {
                 }
             }
             ExpEval::InConstant(_) => {}
-            ExpEval::InUpvalue { in_table, upvalue } => {
+            ExpEval::InUpvalue {
+                in_table, upvalue, ..
+            } => {
                 let ExpNode::Name(name) = exp else {
                     unreachable!()
                 };
@@ -262,7 +271,11 @@ impl<'a> Compiler<'a> {
                 let (in_table, src) = ctx.scope_mut().get_reg_or_upvalue(name)?;
                 match src {
                     RegOrUpvalue::Register(register) => Ok(ExpEval::InRegister(register.addr)),
-                    RegOrUpvalue::Upvalue(upvalue) => Ok(ExpEval::InUpvalue { in_table, upvalue }),
+                    RegOrUpvalue::Upvalue(upvalue) => Ok(ExpEval::InUpvalue {
+                        in_table,
+                        upvalue,
+                        name: name.clone(),
+                    }),
                 }
             }
             _ => {
@@ -367,7 +380,7 @@ impl<'a> Compiler<'a> {
         let (is_val_const, val_reg) = match value {
             ExpEval::InRegister(reg) => (false, reg),
             ExpEval::InConstant(kreg) => (true, kreg),
-            ExpEval::InUpvalue { in_table, upvalue } => todo!(),
+            ExpEval::InUpvalue { .. } => todo!(),
             _ => unreachable!("Not supported by op_settabup {:?}", value),
         };
 
@@ -458,7 +471,11 @@ enum ExpEval {
     InImmediate(u8),
     InRegister(u8),
     InConstant(u8),
-    InUpvalue { in_table: bool, upvalue: Upvalue },
+    InUpvalue {
+        in_table: bool,
+        upvalue: Upvalue,
+        name: String,
+    },
 }
 
 #[allow(unused)]
@@ -514,40 +531,6 @@ impl<'a> Compiler<'a> {
             else_br,
         } = if_stat;
 
-        // let mut branch = ExpNode::LogicCmpOp {
-        //     op: LogicCmpOp::And,
-        //     lhs: cond.clone(),
-        //     rhs: Box::new(ExpNode::WrappedStat(then_br.clone())),
-        // };
-        //
-        // for (cond, elseif_then) in elseif_brs {
-        //     branch = ExpNode::LogicCmpOp {
-        //         op: LogicCmpOp::Or,
-        //         lhs: Box::new(branch),
-        //         rhs: Box::new(ExpNode::LogicCmpOp {
-        //             op: LogicCmpOp::And,
-        //             lhs: Box::new(cond.clone()),
-        //             rhs: Box::new(ExpNode::WrappedStat(elseif_then.clone())),
-        //         }),
-        //     };
-        // }
-        //
-        // if let Some(else_br) = else_br {
-        //     branch = ExpNode::LogicCmpOp {
-        //         op: LogicCmpOp::Or,
-        //         lhs: Box::new(branch),
-        //         rhs: Box::new(ExpNode::WrappedStat(else_br.clone())),
-        //     };
-        // }
-        //
-        // self.visit_exp(
-        //     &branch,
-        //     &mut ctx.new_with(CompilerCtxBuilder::default().nb_expected(1)),
-        // );
-
-        // self.visit_exp(cond, ctx);
-
-        // let rhs_len = rhs_instructions.len();
         let before_inst = ctx.instructions_len();
         let mut branches = vec![];
 
@@ -873,6 +856,7 @@ impl<'a> Compiler<'a> {
         let mut varlist_iter = varlist.iter();
 
         let mut claimed = vec![];
+        let mut to_clean_up = vec![];
 
         let mut var_claimed = vec![];
         let mut var_exp_accesses = vec![];
@@ -894,6 +878,8 @@ impl<'a> Compiler<'a> {
                                 .new_with(CompilerCtxBuilder::default().dest_addr(Some(src.addr)));
                         }
                         RegOrUpvalue::Upvalue(src) => {
+                            // new_ctx = ctx
+                            //     .new_with(CompilerCtxBuilder::default().dest_addr(Some(src.addr)));
                             // if is_intable {
                             //     let name_k = ctx.get_or_add_const(LuzObj::String(name.to_owned()));
                             //
@@ -916,8 +902,33 @@ impl<'a> Compiler<'a> {
                         new_ctx.new_with(CompilerCtxBuilder::default().nb_expected(2));
 
                     let res = self.handle_exp(&mut one_exp_ctx, &obj, false, true, false)?;
-                    var_claimed.push(ctx.claim_next_free_register());
-                    var_exp_accesses.push(res);
+                    match &res {
+                        ExpEval::InUpvalue {
+                            in_table,
+                            upvalue,
+                            name,
+                        } => {
+                            let tabaddr = ctx.get_or_push_free_register();
+                            if *in_table {
+                                let name_k = ctx.get_or_add_const(LuzObj::String(name.to_owned()));
+                                ctx.push_inst(Instruction::op_gettabup(
+                                    tabaddr,
+                                    upvalue.addr,
+                                    name_k as u8,
+                                ));
+                                var_claimed.push(ctx.claim_next_free_register());
+                                var_exp_accesses.push(ExpEval::InRegister(tabaddr));
+                            } else {
+                                ctx.push_inst(Instruction::op_getupval(tabaddr, upvalue.addr));
+                                var_claimed.push(ctx.claim_next_free_register());
+                                var_exp_accesses.push(res);
+                            }
+                        }
+                        _ => {
+                            var_claimed.push(ctx.claim_next_free_register());
+                            var_exp_accesses.push(res);
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -927,7 +938,7 @@ impl<'a> Compiler<'a> {
         if !explist.is_empty() {
             for exp in &explist[..explist.len() - 1] {
                 let dest = self.load_exp_or_const(&mut one_exp_ctx, exp)?;
-                if !dest.0 {
+                if !dest.0 && ctx.is_reg_free(dest.1) {
                     ctx.claim_register(dest.1);
                 }
                 claimed.push(dest);
@@ -938,24 +949,24 @@ impl<'a> Compiler<'a> {
                 .new_with(CompilerCtxBuilder::default().nb_expected(nb_last_expected as u8 + 1));
 
             let dest = self.load_exp_or_const(&mut last_exp_ctx, explist.last().unwrap())?;
-            if !dest.0 {
+            if !dest.0 && ctx.is_reg_free(dest.1) {
                 ctx.claim_register(dest.1);
+                to_clean_up.push(dest.1);
             }
 
             claimed.push(dest);
-            // for expected in 0..nb_last_expected {
-            //     claimed.push((false, ctx.claim_next_free_register()));
-            // }
+            if nb_last_expected > 0 {
+                for expected in 0..nb_last_expected - 1 {
+                    let reg = ctx.claim_next_free_register();
+                    claimed.push((false, reg));
+                    to_clean_up.push(reg);
+                }
+            }
         }
 
         ctx.unclaim_registers(&var_claimed);
 
-        ctx.unclaim_registers(
-            &claimed
-                .iter()
-                .filter_map(|(is_const, reg)| if *is_const { None } else { Some(*reg) })
-                .collect::<Vec<_>>(),
-        );
+        ctx.unclaim_registers(&to_clean_up);
 
         let mut var_exp_accesses_iter = var_exp_accesses.iter();
 
@@ -1007,7 +1018,9 @@ impl<'a> Compiler<'a> {
                         ctx.push_inst(Instruction::op_seti(tabaddr, imm, dest, is_const));
                     } else {
                         match res {
-                            ExpEval::InUpvalue { in_table, upvalue } => {
+                            ExpEval::InUpvalue {
+                                in_table, upvalue, ..
+                            } => {
                                 let prop = match **prop {
                                     ExpNode::Literal(LuzObj::String(ref n)) => {
                                         ctx.get_or_add_const(LuzObj::String(n.clone())) as u8
@@ -1152,6 +1165,14 @@ impl<'a> Compiler<'a> {
             0 => {
                 ctx.push_inst(Instruction::op_return0());
             }
+            1 if matches!(stat.explist[0], ExpNode::FuncCall(..)) => {
+                let ExpNode::FuncCall(func) = &stat.explist[0] else {
+                    unreachable!()
+                };
+                self.visit_function_call(&mut new_ctx, func, true)?;
+                let reg = ctx.get_or_push_free_register();
+                ctx.push_inst(Instruction::op_return(reg, false, 0));
+            }
             // 1 => {
             //     let reg = self.load_exp(&mut new_ctx, &stat.explist[0])?;
             //     ctx.push_inst(Instruction::op_return1(reg));
@@ -1222,7 +1243,9 @@ impl<'a> Compiler<'a> {
                 (Some(lhs_result), i)
             }
             ExpEval::InConstant(c) => (None, c),
-            ExpEval::InUpvalue { in_table, upvalue } => {
+            ExpEval::InUpvalue {
+                in_table, upvalue, ..
+            } => {
                 self.visit_exp(lhs, ctx)?;
                 let reg = ctx.claim_next_free_register();
                 (Some(reg), reg)
@@ -1269,7 +1292,9 @@ impl<'a> Compiler<'a> {
             ExpEval::InImmediate(i) => (false, i),
             ExpEval::InRegister(r) => (false, r),
             ExpEval::InConstant(c) => (false, c),
-            ExpEval::InUpvalue { in_table, upvalue } => {
+            ExpEval::InUpvalue {
+                in_table, upvalue, ..
+            } => {
                 self.visit_exp(rhs, ctx)?;
                 (true, ctx.claim_next_free_register())
             }
@@ -1526,15 +1551,21 @@ impl<'a> Compiler<'a> {
                     }
                 };
                 if dest != val {
-                    if nb_expected != 1 {
-                        ctx.push_inst(Instruction::op_testset(dest, val, !is_and));
+                    if matches!(**lhs, ExpNode::Unop(op, ..) if op == Unop::Not) {
+                        ctx.push_inst(Instruction::op_test(val, is_and));
+                        post_cmp = vec![
+                            Instruction::op_lfalseskip(dest),
+                            Instruction::op_loadtrue(dest),
+                        ];
+                        jumps.push((ctx.instructions_len() as u32, Some(!is_and), *op));
                     } else {
-                        ctx.push_inst(Instruction::op_test(val, !is_and));
+                        ctx.push_inst(Instruction::op_testset(dest, val, !is_and));
+                        jumps.push((ctx.instructions_len() as u32, None, *op));
                     }
                 } else {
                     ctx.push_inst(Instruction::op_test(dest, !is_and));
+                    jumps.push((ctx.instructions_len() as u32, None, *op));
                 }
-                jumps.push((ctx.instructions_len() as u32, None, *op));
                 ctx.push_inst(Instruction::op_jmp(1));
             }
             ExpNode::CmpOp { .. } => {
@@ -1774,7 +1805,9 @@ impl<'a> Compiler<'a> {
                 (Some(lhs_result), i)
             }
             // ExpEval::InConstant(c) => (None, c),
-            ExpEval::InUpvalue { in_table, upvalue } => {
+            ExpEval::InUpvalue {
+                in_table, upvalue, ..
+            } => {
                 self.visit_exp(lhs, ctx)?;
                 let reg = ctx.claim_next_free_register();
                 (Some(reg), reg)
@@ -1802,7 +1835,9 @@ impl<'a> Compiler<'a> {
             ExpEval::InRegister(r) => (None, r),
             ExpEval::InImmediate(i) => (None, i),
             ExpEval::InConstant(c) => (None, c),
-            ExpEval::InUpvalue { in_table, upvalue } => {
+            ExpEval::InUpvalue {
+                in_table, upvalue, ..
+            } => {
                 let reg = ctx.claim_next_free_register();
                 self.visit_exp(rhs, ctx)?;
                 (Some(reg), reg)
@@ -1894,7 +1929,16 @@ impl<'a> Compiler<'a> {
         let FuncDef { params, body } = func_def;
 
         let reg = ctx.get_or_push_free_register();
-        let idx = ctx.push_scope(None);
+
+        let inst_len = ctx.instructions_len();
+        let line_info = ctx
+            .scope()
+            .get_line_info(inst_len + 1)
+            .map(|(_, info)| info)
+            .cloned();
+
+        let filename = ctx.filename();
+        let idx = ctx.push_scope(line_info.map(|li| li.format_with_filename(filename)));
         ctx.scope_mut().set_nb_params(params.fixed.len() as u32);
         for param in &params.fixed {
             ctx.push_claimed_register_with_start(Some(param.clone()), 1);
@@ -1915,6 +1959,7 @@ impl<'a> Compiler<'a> {
         &mut self,
         ctx: &mut CompilerCtx,
         f_call: &FuncCall,
+        tail_call: bool,
     ) -> Result<(), LuzError> {
         let FuncCall {
             func,
@@ -1922,7 +1967,8 @@ impl<'a> Compiler<'a> {
             args,
             variadic,
         } = f_call;
-        let mut f_addr = self.load_exp(ctx, func)?;
+        let mut one_exp_ctx = ctx.new_with(CompilerCtxBuilder::default().nb_expected(2));
+        let mut f_addr = self.load_exp(&mut one_exp_ctx, func)?;
         let is_f_addr_next_free = f_addr == ctx.get_or_push_free_register();
 
         ctx.claim_register(f_addr);
@@ -1987,15 +2033,26 @@ impl<'a> Compiler<'a> {
 
         ctx.unclaim_registers(&claimed);
 
-        ctx.push_inst(Instruction::op_call(
-            f_addr,
-            if *variadic {
-                0
-            } else {
-                (args.len() + 1 + method_name.as_ref().map_or(0, |_| 1)) as u8
-            },
-            nb_expected,
-        ));
+        if tail_call {
+            ctx.push_inst(Instruction::op_tailcall(
+                f_addr,
+                if *variadic {
+                    0
+                } else {
+                    (args.len() + 1 + method_name.as_ref().map_or(0, |_| 1)) as u8
+                },
+            ));
+        } else {
+            ctx.push_inst(Instruction::op_call(
+                f_addr,
+                if *variadic {
+                    0
+                } else {
+                    (args.len() + 1 + method_name.as_ref().map_or(0, |_| 1)) as u8
+                },
+                nb_expected,
+            ));
+        }
         Ok(())
     }
 
@@ -2118,6 +2175,13 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    fn visit_in_parent(&mut self, ctx: &mut CompilerCtx, exp: &ExpNode) -> Result<(), LuzError> {
+        let one_exp_ctx = &mut ctx.new_with(CompilerCtxBuilder::default().nb_expected(2));
+        self.visit_exp(exp, one_exp_ctx)?;
+
+        Ok(())
+    }
+
     fn visit_unop(&mut self, ctx: &mut CompilerCtx, exp: &ExpNode) -> Result<(), LuzError> {
         let ExpNode::Unop(unop, exp) = exp else {
             unreachable!()
@@ -2161,11 +2225,12 @@ impl<'a> Visitor for Compiler<'a> {
             ExpNode::LogicCmpOp { op, lhs, rhs } => self.visit_logicop(ctx, exp),
             ExpNode::Access(exp_access) => self.visit_access(ctx, exp_access),
             ExpNode::FuncDef(func_def) => self.visit_function_def_exp(ctx, func_def),
-            ExpNode::FuncCall(func_call) => self.visit_function_call(ctx, func_call),
+            ExpNode::FuncCall(func_call) => self.visit_function_call(ctx, func_call, false),
             ExpNode::TableConstructor(exp_table_constructor) => {
                 self.visit_table_constructor(ctx, exp_table_constructor)
             }
             ExpNode::WrappedStat(block) => self.visit_wrapped_stat(ctx, block),
+            ExpNode::InParent(exp_node) => self.visit_in_parent(ctx, exp_node),
         }
     }
 
@@ -2176,7 +2241,7 @@ impl<'a> Visitor for Compiler<'a> {
         match &stat.node {
             StatNode::Assign(assign_stat) => self.visit_assign(ctx, assign_stat),
             StatNode::Return(return_stat) => self.visit_return(ctx, return_stat),
-            StatNode::FuncCall(func_call) => self.visit_function_call(ctx, func_call),
+            StatNode::FuncCall(func_call) => self.visit_function_call(ctx, func_call, false),
             StatNode::Do(do_stat) => self.visit_do_stat(ctx, do_stat),
             StatNode::While(while_stat) => todo!(),
             StatNode::Repeat(repeat_stat) => self.visit_repeat_until(ctx, repeat_stat),

@@ -13,3 +13,9 @@ pub struct LineInfo {
     pub start_line_col: (usize, usize),
     pub end_line_col: (usize, usize),
 }
+
+impl LineInfo {
+    pub fn format_with_filename(&self, filename: &str) -> String {
+        format!("<{}:{},{}>", filename, self.start_line_col.0, self.end_line_col.0)
+    }
+}
