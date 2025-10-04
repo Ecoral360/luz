@@ -593,7 +593,13 @@ impl<'a> Runner<'a> {
                     if nb_expected_results == 0 {
                         // TODO: check we have enough registers
                         for (i, result) in results.into_iter().enumerate() {
-                            self.scope_mut().set_reg_val(func_addr + i as u8, result);
+                            self.scope_mut().set_or_push_reg_val(func_addr + i as u8, result);
+                        }
+                        let mut extra = 0;
+                        // The rest of the stack is set to nil
+                        while let Some(val) = self.scope_mut().take_reg_val(func_addr + nb_results + extra)
+                        {
+                            extra += 1;
                         }
                     } else {
                         for (i, result) in results.into_iter().enumerate() {
@@ -690,7 +696,7 @@ impl<'a> Runner<'a> {
                         self.get_reg_val(*c)?
                     };
                     let mut table = table.borrow_mut();
-                    table.insert(key, val);
+                    table.rawset(key, val);
                 }
                 LuaOpCode::OP_SETTABLE => {
                     let table = self.get_reg_val(*a)?;
@@ -708,7 +714,7 @@ impl<'a> Runner<'a> {
                         self.get_reg_val(*c)?
                     };
                     let mut table = table.borrow_mut();
-                    table.insert(key, val);
+                    table.rawset(key, val);
                 }
                 LuaOpCode::OP_SETI => {
                     let table = self.get_reg_val(*a)?;
@@ -726,7 +732,7 @@ impl<'a> Runner<'a> {
                         self.get_reg_val(*c)?
                     };
                     let mut table = table.borrow_mut();
-                    table.insert(LuzObj::Numeral(Numeral::Int(key)), val);
+                    table.rawset(LuzObj::Numeral(Numeral::Int(key)), val);
                 }
                 LuaOpCode::OP_SETFIELD => {
                     let table = self.get_reg_val(*a)?;
@@ -745,7 +751,7 @@ impl<'a> Runner<'a> {
                         self.get_reg_val(*c)?
                     };
                     let mut table = table.borrow_mut();
-                    table.insert(key, val);
+                    table.rawset(key, val);
                 }
                 LuaOpCode::OP_NEWTABLE => {
                     let mut table = HashMap::new();
@@ -770,7 +776,7 @@ impl<'a> Runner<'a> {
                         while let Ok(Some(val)) = self.take_reg_val(*a + addr) {
                             table
                                 .borrow_mut()
-                                .insert(LuzObj::Numeral(Numeral::Int((*c + addr) as i64)), val);
+                                .rawset(LuzObj::Numeral(Numeral::Int((*c + addr) as i64)), val);
                             addr += 1;
                         }
                     } else {
@@ -778,7 +784,7 @@ impl<'a> Runner<'a> {
                             let val = self.get_reg_val_or_nil(*a + i);
                             table
                                 .borrow_mut()
-                                .insert(LuzObj::Numeral(Numeral::Int((*c + i) as i64)), val);
+                                .rawset(LuzObj::Numeral(Numeral::Int((*c + i) as i64)), val);
                         }
                     }
                 }

@@ -71,13 +71,13 @@ pub fn package_lib(registry: TableRef) -> LuzNativeLib {
 
     registry
         .borrow_mut()
-        .insert(LuzObj::str("package.loaded"), loaded);
+        .rawset(LuzObj::str("package.loaded"), loaded);
 
     let preload = luz_table! {};
 
     registry
         .borrow_mut()
-        .insert(LuzObj::str("package.preload"), preload);
+        .rawset(LuzObj::str("package.preload"), preload);
 
     let search_path = luz_fn!([4](LuzObj::String(name), LuzObj::String(path), sep @ (LuzObj::String(..) | LuzObj::Nil), rep @ (LuzObj::String(..) | LuzObj::Nil)) {
         let templates = path.split(';');

@@ -89,6 +89,11 @@ pub fn string_lib(_registry: TableRef) -> LuzNativeLib {
             Ok(vec![LuzObj::int(packsize_string(&formatstring).unwrap() as i64)])
         }),
 
+
+        dump: luz_fn!([1](LuzObj::Function(f)) {
+            let f = f.borrow();
+            Ok(vec![LuzObj::String(f.dump()?)])
+        }),
     };
 
     LuzNativeLib {

@@ -426,6 +426,14 @@ impl Scope {
     pub fn set_name(&mut self, name: Option<String>) {
         self.name = name;
     }
+
+    pub fn set_constants(&mut self, constants: Vec<LuzObj>) {
+        self.constants = constants;
+    }
+
+    pub fn set_instructions(&mut self, instructions: Vec<Instruction>) {
+        self.instructions = instructions;
+    }
 }
 
 pub type ScopeRef = Rc<RefCell<Scope>>;
@@ -526,6 +534,10 @@ impl Scope {
             .get_mut(addr as usize)
             .map(|reg| reg.val.take())
             .flatten()
+    }
+
+    pub fn push_upval(&mut self, upvalue: Upvalue) {
+        self.upvalues.push(upvalue);
     }
 
     pub fn push_reg(&mut self, reg: &mut RegisterBuilder) {

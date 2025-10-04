@@ -4,7 +4,7 @@ use crate::{
     ast::{
         AssignStat, Binop, CmpOp, DoStat, ExpAccess, ExpNode, ExpTableConstructor,
         ExpTableConstructorField, ForInStat, ForRangeStat, FuncCall, FuncDef, IfStat, LogicCmpOp,
-        RepeaStat, ReturnStat, Stat, StatNode, Unop,
+        RepeaStat, ReturnStat, Stat, StatNode, Unop, WhileStat,
     },
     compiler::{
         ctx::{CompilerCtx, CompilerCtxBuilder, RegOrUpvalue, Upvalue},
@@ -798,6 +798,72 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    fn visit_while(&mut self, ctx: &mut CompilerCtx, stat: &WhileStat) -> Result<(), LuzError> {
+        let WhileStat { cond, block } = stat;
+
+        let cond = self.collect_insts_and_rollback_cond(ctx, cond)?;
+
+        let then_instrs = self.collect_insts_and_rollback_stat(ctx, block)?;
+
+        let before_inst = ctx.instructions_len();
+
+        let to_end_jmp = cond.0.len() + then_instrs.len() + 1;
+
+        let mut insts = vec![];
+        for inst in cond.0 {
+            insts.push(inst);
+        }
+
+        for inst in then_instrs {
+            insts.push(inst);
+        }
+        let offset = to_end_jmp as i32 - insts.len() as i32;
+
+        if offset > 0
+            && insts
+                .last()
+                .is_some_and(|inst| inst.op() != LuaOpCode::OP_JMP)
+        {
+            insts.push(Instruction::op_jmp(offset));
+        }
+
+        let jmps = cond.1;
+
+        for (idx, (jmp_addr, is_cmp, jmp_op)) in jmps.iter().enumerate() {
+            let len = insts.len() - 1;
+            let Instruction::isJ(isJ { j, .. }) = &mut insts[*jmp_addr as usize - before_inst]
+            else {
+                unreachable!()
+            };
+
+            *j = if *jmp_op == LogicCmpOp::And || idx == jmps.len() - 1 {
+                let next = jmps[idx + 1..]
+                    .iter()
+                    .find_map(|(idx, _, op)| {
+                        if *op == LogicCmpOp::Or {
+                            Some(*idx as usize - before_inst)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(len);
+                next as u32 - (*jmp_addr - before_inst as u32) + MAX_HALF_sJ
+            } else {
+                jmps[idx + 1].0 - before_inst as u32 - (*jmp_addr - before_inst as u32)
+                    + MAX_HALF_sJ
+            };
+        }
+
+        let len = insts.len();
+        for inst in insts {
+            ctx.push_inst(inst);
+        }
+
+        ctx.push_inst(Instruction::op_jmp(-(len as i32)));
+
+        Ok(())
+    }
+
     fn visit_repeat_until(
         &mut self,
         ctx: &mut CompilerCtx,
@@ -1179,9 +1245,22 @@ impl<'a> Compiler<'a> {
             //     let reg = self.load_exp(&mut new_ctx, &stat.explist[0])?;
             //     ctx.push_inst(Instruction::op_return1(reg));
             // }
-            // _ if Exp::is_multires(&stat.explist) => {
-            //     ctx.push_inst(Instruction::op_return(start, false, size as u8 + 1));
-            // }
+            _ if ExpNode::is_multires(&stat.explist) => {
+                let mut claimed = vec![];
+                for arg in &stat.explist[..stat.explist.len() - 1] {
+                    let mut one_exp_ctx =
+                        ctx.new_with(CompilerCtxBuilder::default().nb_expected(2));
+                    let reg = self.handle_consecutive_exp(&mut one_exp_ctx, arg)?;
+                    ctx.claim_register(reg);
+                    claimed.push(reg);
+                }
+                let mut all_out_ctx = ctx.new_with(CompilerCtxBuilder::default().nb_expected(0));
+                let reg = self.handle_consecutive_exp(
+                    &mut all_out_ctx,
+                    &stat.explist[stat.explist.len() - 1],
+                )?;
+                ctx.push_inst(Instruction::op_return(start, false, 0));
+            }
             _ => {
                 for exp in stat.explist.iter() {
                     self.handle_consecutive_exp(&mut new_ctx, exp)?;
@@ -1272,7 +1351,11 @@ impl<'a> Compiler<'a> {
             !matches!(op, Binop::BitAnd | Binop::BitXor | Binop::BitOr),
         )?;
 
-        ctx.unclaim_registers(&[result_reg]);
+        if let Some(addr) = lhs_dirty {
+            if addr != result_reg {
+                ctx.unclaim_registers(&[result_reg]);
+            }
+        }
 
         let is_c_const = matches!(rhs_addr, ExpEval::InConstant(_));
         let is_c_imm = matches!(rhs_addr, ExpEval::InImmediate(_));
@@ -2079,9 +2162,10 @@ impl<'a> Compiler<'a> {
         ));
         ctx.push_inst(Instruction::op_extraarg(0));
 
+        let mut one_exp_ctx = ctx.new_with(CompilerCtxBuilder::default().nb_expected(2));
         let mut claimed = vec![];
         for arr_field in arr_fields {
-            let reg = self.handle_consecutive_exp(ctx, arr_field)?;
+            let reg = self.handle_consecutive_exp(&mut one_exp_ctx, arr_field)?;
             ctx.claim_register(reg);
             claimed.push(reg);
         }
@@ -2099,12 +2183,8 @@ impl<'a> Compiler<'a> {
             ctx.claim_register(reg);
             claimed.push(reg);
 
-            if arr_fields.is_empty() {
-                ctx.push_inst(Instruction::op_setlist(dest, 0, 0));
-            }
-        }
-
-        if !arr_fields.is_empty() {
+            ctx.push_inst(Instruction::op_setlist(dest, 0, 0));
+        } else if !arr_fields.is_empty() {
             ctx.push_inst(Instruction::op_setlist(dest, arr_fields.len() as u8, 0));
         }
 
@@ -2245,7 +2325,7 @@ impl<'a> Visitor for Compiler<'a> {
             StatNode::Return(return_stat) => self.visit_return(ctx, return_stat),
             StatNode::FuncCall(func_call) => self.visit_function_call(ctx, func_call, false),
             StatNode::Do(do_stat) => self.visit_do_stat(ctx, do_stat),
-            StatNode::While(while_stat) => todo!(),
+            StatNode::While(while_stat) => self.visit_while(ctx, while_stat),
             StatNode::Repeat(repeat_stat) => self.visit_repeat_until(ctx, repeat_stat),
             StatNode::If(if_stat) => self.visit_if(ctx, if_stat),
             StatNode::ForRange(for_range_stat) => self.visit_for_range(ctx, for_range_stat),

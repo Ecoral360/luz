@@ -112,6 +112,7 @@ macro_rules! luz_fn {
 
 }
 
+
 #[macro_export]
 macro_rules! luz_table {
     ($($key:ident : $val:expr),* $(,)?) => {{

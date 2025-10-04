@@ -112,7 +112,7 @@ impl Table {
         self.arr.push(item);
     }
 
-    pub fn insert(&mut self, key: LuzObj, item: LuzObj) {
+    pub fn rawset(&mut self, key: LuzObj, item: LuzObj) {
         if key == LuzObj::Numeral(Numeral::Int(self.arr.len() as i64 + 1)) {
             self.arr.push(item);
         } else {
@@ -131,11 +131,25 @@ impl Table {
     pub fn get_or_insert(&mut self, key: &LuzObj, item: LuzObj) -> LuzObj {
         let val = self.rawget(key).clone();
         if val.is_nil() {
-            self.insert(key.clone(), item.clone());
+            self.rawset(key.clone(), item.clone());
             item
         } else {
             val
         }
+    }
+
+    pub fn remove(&mut self, index: &LuzObj) -> LuzObj {
+        if let LuzObj::Numeral(num) = index {
+            if num.is_int_compatible() && Numeral::Int(1) <= *num && *num <= Numeral::Int(self.len() as i64) {
+                return self.arr.remove(num.as_int() as usize - 1);
+            }
+        }
+
+        self.table.insert(index.clone(), LuzObj::Nil).unwrap_or(LuzObj::Nil)
+    }
+
+    pub fn arr_mut(&mut self) -> &mut Vec<LuzObj> {
+        &mut self.arr
     }
 
     pub fn raw_metatable(&self) -> Option<Rc<RefCell<Table>>> {

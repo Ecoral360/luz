@@ -9,6 +9,7 @@ use crate::{
         ctx::Scope,
         opcode::{LuaOpCode, TMcode},
     },
+    runner::err::LuzRuntimeError,
 };
 
 #[allow(non_camel_case_types)]
@@ -200,6 +201,121 @@ impl Instruction {
             Instruction::iAsBx(_) => todo!(),
             Instruction::isJ(is_j) => is_j.j = sj,
             Instruction::iAx(_) => todo!(),
+        }
+    }
+}
+
+impl TryInto<u32> for Instruction {
+    type Error = LuzRuntimeError;
+
+    fn try_into(self) -> Result<u32, Self::Error> {
+        Ok(match self {
+            Instruction::NOP | Instruction::LOG(..) => {
+                Err(LuzRuntimeError::message("cannot convert to u32"))?
+            }
+            Instruction::iABC(i_abc) => i_abc.into(),
+            Instruction::iABx(i_abx) => i_abx.into(),
+            Instruction::iAsBx(i_as_bx) => i_as_bx.into(),
+            Instruction::isJ(is_j) => is_j.into(),
+            Instruction::iAx(i_ax) => i_ax.into(),
+        })
+    }
+}
+
+impl TryFrom<u32> for Instruction {
+    type Error = LuzRuntimeError;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        let op = LuaOpCode::try_from_primitive(get_arg(value, 7, 0) as u8);
+        if let Err(err) = op {
+            return Err(LuzRuntimeError::message(err.to_string()));
+        }
+
+        match op.unwrap() {
+            LuaOpCode::OP_MOVE
+            | LuaOpCode::OP_LOADI
+            | LuaOpCode::OP_LOADF
+            | LuaOpCode::OP_LOADK
+            | LuaOpCode::OP_LOADKX
+            | LuaOpCode::OP_LOADFALSE
+            | LuaOpCode::OP_LFALSESKIP
+            | LuaOpCode::OP_LOADTRUE
+            | LuaOpCode::OP_LOADNIL
+            | LuaOpCode::OP_GETUPVAL
+            | LuaOpCode::OP_SETUPVAL
+            | LuaOpCode::OP_GETTABUP
+            | LuaOpCode::OP_GETTABLE
+            | LuaOpCode::OP_GETI
+            | LuaOpCode::OP_GETFIELD
+            | LuaOpCode::OP_SETTABUP
+            | LuaOpCode::OP_SETTABLE
+            | LuaOpCode::OP_SETI
+            | LuaOpCode::OP_SETFIELD
+            | LuaOpCode::OP_NEWTABLE
+            | LuaOpCode::OP_SELF
+            | LuaOpCode::OP_ADDI
+            | LuaOpCode::OP_ADDK
+            | LuaOpCode::OP_SUBK
+            | LuaOpCode::OP_MULK
+            | LuaOpCode::OP_MODK
+            | LuaOpCode::OP_POWK
+            | LuaOpCode::OP_DIVK
+            | LuaOpCode::OP_IDIVK
+            | LuaOpCode::OP_BANDK
+            | LuaOpCode::OP_BORK
+            | LuaOpCode::OP_BXORK
+            | LuaOpCode::OP_SHRI
+            | LuaOpCode::OP_SHLI
+            | LuaOpCode::OP_ADD
+            | LuaOpCode::OP_SUB
+            | LuaOpCode::OP_MUL
+            | LuaOpCode::OP_MOD
+            | LuaOpCode::OP_POW
+            | LuaOpCode::OP_DIV
+            | LuaOpCode::OP_IDIV
+            | LuaOpCode::OP_BAND
+            | LuaOpCode::OP_BOR
+            | LuaOpCode::OP_BXOR
+            | LuaOpCode::OP_SHL
+            | LuaOpCode::OP_SHR
+            | LuaOpCode::OP_MMBIN
+            | LuaOpCode::OP_MMBINI
+            | LuaOpCode::OP_MMBINK
+            | LuaOpCode::OP_UNM
+            | LuaOpCode::OP_BNOT
+            | LuaOpCode::OP_NOT
+            | LuaOpCode::OP_LEN
+            | LuaOpCode::OP_CONCAT
+            | LuaOpCode::OP_EQ
+            | LuaOpCode::OP_LT
+            | LuaOpCode::OP_LE
+            | LuaOpCode::OP_EQK
+            | LuaOpCode::OP_EQI
+            | LuaOpCode::OP_LTI
+            | LuaOpCode::OP_LEI
+            | LuaOpCode::OP_GTI
+            | LuaOpCode::OP_GEI
+            | LuaOpCode::OP_TEST
+            | LuaOpCode::OP_TESTSET
+            | LuaOpCode::OP_CALL
+            | LuaOpCode::OP_TAILCALL
+            | LuaOpCode::OP_RETURN
+            | LuaOpCode::OP_RETURN0
+            | LuaOpCode::OP_VARARG
+            | LuaOpCode::OP_VARARGPREP
+            | LuaOpCode::OP_RETURN1
+            | LuaOpCode::OP_SETLIST
+            | LuaOpCode::OP_CLOSURE
+            | LuaOpCode::OP_EXTRAARG
+            | LuaOpCode::OP_CLOSE => Ok(Instruction::iABC(iABC::from(value))),
+            LuaOpCode::OP_JMP => Ok(Instruction::isJ(isJ::from(value))),
+            LuaOpCode::OP_FORLOOP => todo!(),
+            LuaOpCode::OP_FORPREP => todo!(),
+            LuaOpCode::OP_TFORPREP => todo!(),
+            LuaOpCode::OP_TFORCALL => todo!(),
+            LuaOpCode::OP_TFORLOOP => todo!(),
+            LuaOpCode::OP_TBC => todo!(),
+            LuaOpCode::OP_debug => todo!(),
         }
     }
 }
@@ -425,7 +541,7 @@ impl Instruction {
         if is_rhs_immidiate {
             LuaOpCode::OP_LEI.to_iabc(lhs, !apply_not, rhs, 0).into()
         } else {
-            LuaOpCode::OP_LE.to_iabc(lhs, apply_not, rhs, 0).into()
+            LuaOpCode::OP_LE.to_iabc(lhs, !apply_not, rhs, 0).into()
         }
     }
 

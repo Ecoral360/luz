@@ -23,6 +23,10 @@ impl Numeral {
     pub fn is_int(&self) -> bool {
         matches!(self, Self::Int(_))
     }
+    /// Returns true if it is an int or a float ending with .0
+    pub fn is_int_compatible(&self) -> bool {
+        self.is_int() || self.as_float().floor() == self.as_float()
+    }
     pub fn is_float(&self) -> bool {
         matches!(self, Self::Float(_))
     }

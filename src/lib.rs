@@ -28,14 +28,14 @@ pub mod runner;
 #[grammar = "./grammar.pest"]
 pub struct LuaParser;
 
-pub fn run(input: &str) -> Result<(), LuzError> {
+pub fn run(input: &str) -> Result<Vec<LuzObj>, LuzError> {
     let mut stmts = LuaParser::parse(Rule::Chunk, &input);
 
     match &mut stmts {
         Ok(stmts) => {
             let stmts = parse_script(stmts)?;
             trace!("{:#?}", &stmts);
-            run_compiler(String::new(), input, stmts)
+            run_compiler(String::new(), input, stmts, false)
         }
         Err(err) => {
             dbg!(err);
@@ -44,7 +44,23 @@ pub fn run(input: &str) -> Result<(), LuzError> {
     }
 }
 
-pub fn run_file(path: &str) -> Result<(), LuzError> {
+pub fn run_baselib_only(input: &str) -> Result<Vec<LuzObj>, LuzError> {
+    let mut stmts = LuaParser::parse(Rule::Chunk, &input);
+
+    match &mut stmts {
+        Ok(stmts) => {
+            let stmts = parse_script(stmts)?;
+            trace!("{:#?}", &stmts);
+            run_compiler(String::new(), input, stmts, true)
+        }
+        Err(err) => {
+            dbg!(err);
+            panic!();
+        }
+    }
+}
+
+pub fn run_file(path: &str) -> Result<Vec<LuzObj>, LuzError> {
     let input = fs::read_to_string(path).map_err(|_| LuzError::LoadFile(path.to_string()))?;
     let start = if input.starts_with("#") {
         input.find("\n").unwrap_or(input.len())
@@ -59,7 +75,7 @@ pub fn run_file(path: &str) -> Result<(), LuzError> {
         Ok(stmts) => {
             let stmts = parse_script(stmts)?;
             trace!("{:#?}", &stmts);
-            run_compiler(path.to_string(), input, stmts)
+            run_compiler(path.to_string(), input, stmts, false)
         }
         Err(err) => {
             dbg!(err);
@@ -68,7 +84,7 @@ pub fn run_file(path: &str) -> Result<(), LuzError> {
     }
 }
 
-fn run_compiler(filename: String, input: &str, stmts: Vec<Stat>) -> Result<(), LuzError> {
+fn run_compiler(filename: String, input: &str, stmts: Vec<Stat>, baselib_only: bool) -> Result<Vec<LuzObj>, LuzError> {
     // let mut compiler = Compiler::new(input);
     let ctx = Compiler::compile(filename.clone(), input, stmts)?;
     // let mut ctx = CompilerCtx::new_main();
@@ -80,11 +96,11 @@ fn run_compiler(filename: String, input: &str, stmts: Vec<Stat>) -> Result<(), L
         filename,
         input,
         ctx.scope_clone(),
-        make_env_table(luz_table!().as_table_or_err()?),
+        make_env_table(luz_table!().as_table_or_err()?, baselib_only),
     );
     let res = runner.run()?;
     info!("{:?}", res);
-    Ok(())
+    Ok(res)
 }
 
 pub fn run_repl() -> Result<(), LuzError> {
@@ -99,7 +115,7 @@ pub fn run_repl() -> Result<(), LuzError> {
         String::from("REPL"),
         &buffer,
         ctx.scope_clone(),
-        make_env_table(luz_table!().as_table_or_err()?),
+        make_env_table(luz_table!().as_table_or_err()?, false),
     );
 
     loop {
@@ -120,7 +136,7 @@ pub fn run_repl() -> Result<(), LuzError> {
         match &mut stmts {
             Ok(stmts) => {
                 let stmts = parse_script(stmts)?;
-                run_compiler("stdin".to_string(), &input, stmts)?;
+                run_compiler("stdin".to_string(), &input, stmts, false)?;
                 line_num += 1;
             }
             Err(err) => {
