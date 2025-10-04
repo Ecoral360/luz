@@ -637,13 +637,13 @@ impl<'a> Compiler<'a> {
 
         let to_be_closed = ctx.get_or_push_free_register();
 
-        self.visit_exp(start, ctx);
+        self.handle_consecutive_exp(ctx, start)?;
         let forloop_test = ctx.claim_next_free_register();
 
-        self.visit_exp(limit, ctx);
+        self.handle_consecutive_exp(ctx, limit)?;
         let forloop_stop = ctx.claim_next_free_register();
 
-        self.visit_exp(step, ctx);
+        self.handle_consecutive_exp(ctx, step)?;
         let forloop_step = ctx.claim_next_free_register();
 
         ctx.push_inst(Instruction::op_forprep(forloop_test, 0));

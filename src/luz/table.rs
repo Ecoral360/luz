@@ -92,11 +92,12 @@ impl Table {
                         t.borrow().get(runner, key)
                     }
                     _ if callable.is_some() => {
-                        let Some(LuzObj::Function(f)) = callable else { unreachable!() };
-                        let result = f.borrow().call(runner, vec![
+                        let Some((LuzObj::Function(f), mut prefix_args)) = callable else { unreachable!() };
+                        prefix_args.push(
                             LuzObj::Table(Rc::new(RefCell::new(self.clone()))), 
-                            key.clone()
-                        ], vec![])?;
+                        );
+                        prefix_args.push(key.clone());
+                        let result = f.borrow().call(runner, prefix_args, vec![])?;
                         Ok(Some(result.get(0).unwrap_or(&LuzObj::Nil).clone()))
                     }
                     _ => Err(LuzRuntimeError::message("the metavalue for __index must be a function, a table or a value with a __index metavalue"))

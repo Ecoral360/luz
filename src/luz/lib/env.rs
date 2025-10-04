@@ -4,7 +4,10 @@ use crate::{
     compiler::ctx::{RegisterBuilder, Scope, Upvalue},
     load,
     luz::{
-        lib::{math::math_lib, require::package_lib, string::string_lib, LuzNativeLib},
+        lib::{
+            math::math_lib, require::package_lib, string::string_lib, table::table_lib,
+            LuzNativeLib,
+        },
         obj::{LuzObj, Numeral, TableRef},
     },
     luz_fn, luz_table,
@@ -147,12 +150,12 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
         }),
 
         pcall: luz_fn!([1, runner](*args) {
-            let Some(LuzObj::Function(f)) = args.pop_front().unwrap().callable() else { unreachable!() };
+            let Some((LuzObj::Function(f), prefix_args)) = args.pop_front().unwrap().callable() else { unreachable!() };
             let f = f.borrow();
 
-            let nb_fixed = f.nb_fixed_params();
+            let nb_fixed = f.nb_fixed_params() + prefix_args.len() as u32;
 
-            let mut args_iter = args.into_iter();
+            let mut args_iter = prefix_args.into_iter().chain(args.into_iter());
             let mut fixed_args = Vec::with_capacity(nb_fixed as usize);
             for _ in 0..nb_fixed {
                 fixed_args.push(args_iter.next().unwrap_or(LuzObj::Nil));
@@ -160,13 +163,6 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
 
             // We collect the rest if there is
             let varargs = args_iter.collect();
-
-            if runner.depth() > 200 {
-                return Ok(vec![
-                    LuzObj::Boolean(false),
-                    LuzObj::str("stack overflow"),
-                ])
-            }
 
             let results = f.call(runner, fixed_args, varargs);
 
@@ -188,12 +184,12 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
         }),
 
         xpcall: luz_fn!([1, runner](f, msgh, *args) {
-            let Some(LuzObj::Function(f)) = f.callable() else { unreachable!() };
+            let Some((LuzObj::Function(f), prefix_args)) = f.callable() else { unreachable!() };
             let f = f.borrow();
 
-            let nb_fixed = f.nb_fixed_params();
+            let nb_fixed = f.nb_fixed_params() + prefix_args.len() as u32;
 
-            let mut args_iter = args.into_iter();
+            let mut args_iter = prefix_args.into_iter().chain(args.into_iter());
             let mut fixed_args = Vec::with_capacity(nb_fixed as usize);
             for _ in 0..nb_fixed {
                 fixed_args.push(args_iter.next().unwrap_or(LuzObj::Nil));
@@ -210,13 +206,14 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
                     results
                 }
                 Err(err) => {
-                    let Some(LuzObj::Function(msgh)) = msgh.callable() else { unreachable!() };
+                    let Some((LuzObj::Function(msgh), mut prefix_args)) = msgh.callable() else { unreachable!() };
                     let msgh = msgh.borrow();
                     let err_obj = match err {
                         LuzRuntimeError::ErrorObj(luz_obj) => luz_obj,
                         LuzRuntimeError::Crashing(c) => LuzObj::String(c)
                     };
-                    let mut results = msgh.call(runner, vec![err_obj], vec![]);
+                    prefix_args.push(err_obj);
+                    let mut results = msgh.call(runner, prefix_args, vec![]);
                     let mut result = None;
                     for _ in 0..100 {
                         match results {
@@ -308,6 +305,7 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
     add_lib(&table, string_lib(Rc::clone(&registry)));
     add_lib(&table, package_lib(Rc::clone(&registry)));
     add_lib(&table, math_lib(Rc::clone(&registry)));
+    add_lib(&table, table_lib(Rc::clone(&registry)));
 
     let global_env = table;
     {

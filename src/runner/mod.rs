@@ -1,6 +1,7 @@
 use std::{
     cell::{Ref, RefCell, RefMut},
     collections::HashMap,
+    path::Prefix,
     rc::Rc,
 };
 
@@ -93,7 +94,7 @@ impl<'a> Runner<'a> {
             registry,
             pc: 1,
             starting_line_info: None,
-            depth: 0
+            depth: 0,
         }
     }
 
@@ -147,6 +148,9 @@ impl<'a> Runner<'a> {
     }
 
     pub fn run(&mut self) -> Result<Vec<LuzObj>, LuzError> {
+        if self.depth > 200 {
+            Err(LuzRuntimeError::message("stack overflow"))?;
+        }
         let mut rets = vec![];
         loop {
             let Some(instruction) = ({
@@ -542,7 +546,7 @@ impl<'a> Runner<'a> {
                     let is_tail_call = *op == LuaOpCode::OP_TAILCALL;
 
                     let func = self.get_reg_val(func_addr)?;
-                    let Some(LuzObj::Function(f)) = func.callable() else {
+                    let Some((LuzObj::Function(f), prefix_args)) = func.callable() else {
                         return Err(LuzError::Type {
                             wrong: func.get_type(),
                             expected: vec![LuzType::Function],
@@ -553,7 +557,7 @@ impl<'a> Runner<'a> {
 
                     let nb_params = f.nb_fixed_params();
 
-                    let mut args = vec![];
+                    let mut args = prefix_args;
                     let mut vararg = vec![];
                     let mut arg_addr = 0;
                     while let Ok(Some(arg_val)) = self.take_reg_val(func_addr + 1 + arg_addr as u8)
@@ -778,16 +782,22 @@ impl<'a> Runner<'a> {
                 }
 
                 LuaOpCode::OP_TFORCALL => {
-                    luz_let!(Some(LuzObj::Function(iter)) = self.get_reg_val(*a)?.callable());
+                    luz_let!(
+                        Some((LuzObj::Function(iter), mut prefix_args)) =
+                            self.get_reg_val(*a)?.callable()
+                    );
                     let state = self.get_reg_val(*a + 1)?;
                     let ctrl = self.get_reg_val(*a + 2)?;
 
-                    let result = iter.borrow().call(self, vec![state, ctrl], vec![])?;
+                    prefix_args.push(state);
+                    prefix_args.push(ctrl);
+                    let result = iter.borrow().call(self, prefix_args, vec![])?;
 
                     let mut result_iter = result.into_iter();
 
                     for addr in *a + 4..=*a + 3 + *c {
                         let val = result_iter.next().unwrap_or(LuzObj::Nil);
+                        dbg!(&val);
                         self.scope_mut().set_reg_val(addr, val);
                     }
 

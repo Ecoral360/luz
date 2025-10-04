@@ -1,6 +1,7 @@
 use core::fmt;
 use std::cell::RefCell;
 use std::char;
+use std::collections::VecDeque;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::mem::transmute;
@@ -78,16 +79,18 @@ impl LuzObj {
             meta = rhs.get_metamethod(runner, tm)?;
         }
 
-        let Some(LuzObj::Function(f)) = meta else {
+        let Some((LuzObj::Function(f), mut prefix_args)) = meta else {
             return Err(LuzRuntimeError::message(format!(
                 "no metamethod '{}' for obj {} and {}",
-                tm, lhs.repr(), rhs.repr()
+                tm,
+                lhs.repr(),
+                rhs.repr()
             )));
         };
 
-        let result = f
-            .borrow()
-            .call(runner, vec![lhs.clone(), rhs.clone()], vec![])?;
+        prefix_args.push(lhs.clone());
+        prefix_args.push(rhs.clone());
+        let result = f.borrow().call(runner, prefix_args, vec![])?;
 
         Ok(result.get(0).unwrap_or(&LuzObj::Nil).clone())
     }
@@ -96,7 +99,7 @@ impl LuzObj {
         &self,
         runner: &mut Runner,
         tm: TMcode,
-    ) -> Result<Option<LuzObj>, LuzRuntimeError> {
+    ) -> Result<Option<(LuzObj, Vec<LuzObj>)>, LuzRuntimeError> {
         match self {
             LuzObj::Table(t) => {
                 let t = t.borrow();
@@ -671,26 +674,43 @@ impl LuzObj {
         }
     }
 
-    pub fn callable(&self) -> Option<LuzObj> {
-        match self {
-            f @ LuzObj::Function(..) => Some(f.clone()),
-            LuzObj::Table(t) => {
-                let t = t.borrow();
-                let metavalue = t.rawget_metatable(&LuzObj::str("__call"));
-                metavalue.callable()
+    pub fn callable(&self) -> Option<(LuzObj, Vec<LuzObj>)> {
+        let mut curr = self.clone();
+        let mut args = vec![];
+        loop {
+            curr = match curr {
+                LuzObj::Function(..) => break,
+                LuzObj::Table(t) => {
+                    let t = t.borrow();
+                    let metavalue = t.rawget_metatable(&LuzObj::str("__call"));
+                    if metavalue.type_is(LuzType::Table) {
+                        args.push(metavalue.clone());
+                    }
+                    metavalue
+                }
+                _ => return None,
             }
-            _ => None,
         }
+
+        args.reverse();
+        Some((curr, args))
     }
 
     pub fn call(
         &self,
         runner: &mut Runner,
-        args: Vec<LuzObj>,
+        mut args: Vec<LuzObj>,
         vararg: Vec<LuzObj>,
     ) -> Result<Vec<LuzObj>, LuzRuntimeError> {
-        match self.callable() {
-            Some(LuzObj::Function(f)) => f.borrow().call(runner, args, vararg),
+        let call_args = self.callable();
+        match call_args {
+            Some((LuzObj::Function(f), mut prefix_args)) => {
+                if !prefix_args.is_empty() {
+                    prefix_args.append(&mut args);
+                    args = prefix_args;
+                }
+                f.borrow().call(runner, args, vararg)
+            }
             _ => Err(LuzRuntimeError::message("not callable")),
         }
     }

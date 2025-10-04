@@ -6,6 +6,7 @@ pub mod env;
 mod math;
 mod require;
 mod string;
+mod table;
 
 #[macro_export]
 macro_rules! luz_fn {
