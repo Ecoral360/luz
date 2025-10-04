@@ -565,15 +565,17 @@ impl<'a> Runner<'a> {
                         if nb_args != 0 && arg_addr as u8 == nb_args - 1 {
                             break;
                         }
-                        if arg_addr >= nb_params {
+                        let args_len = args.len() as u32;
+                        if args_len >= nb_params {
                             vararg.push(arg_val);
                         } else {
                             args.push(arg_val);
                         }
                         arg_addr += 1;
                     }
-                    if arg_addr < nb_params {
-                        for _ in 0..nb_params {
+                    let args_len = args.len() as u32;
+                    if args_len < nb_params {
+                        for _ in args_len..nb_params {
                             args.push(LuzObj::Nil);
                         }
                     }
