@@ -4,7 +4,7 @@ use luz::run_file;
 
 #[derive(Parser)]
 pub struct LuzcArgs {
-    file: String,
+    file: Option<String>,
 
     #[command(flatten)]
     verbosity: clap_verbosity_flag::Verbosity,
@@ -17,8 +17,13 @@ fn main() -> Result<(), LuzError> {
         .filter_level(args.verbosity.into())
         .init();
 
-    if let Err(err) = run_file(&args.file) {
-        println!("{}", err);
+    if let Some(file) = args.file {
+        if let Err(err) = run_file(&file) {
+            println!("{}", err);
+        }
+    } else {
+        // run REPL
+        luz::run_repl()?;
     }
 
     Ok(())

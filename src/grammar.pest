@@ -1,4 +1,4 @@
-WHITESPACE = _{ " " | "\t" | "\x0b" | "\x0c" | NEWLINE }
+WHITESPACE = _{ " " | "\t" | "\x0b" | "\x0c" }
 COMMENT    = _{ "--" ~ (longString | (!NEWLINE ~ ANY)* ~ NEWLINE?) }
 
 Chunk = { SOI ~ block ~ EOI }
@@ -8,11 +8,12 @@ block = { stat* ~ RetStat? }
 blockEnd = { (!("end" | "return") ~ stat)* ~ RetStat? ~ "end" }
 
 RetStat = {
-    "return" ~ explist? ~ ";"?
+    "return" ~ explist? ~ ";"? ~ NEWLINE*
 }
 
 stat = _{
     ";"
+  | NEWLINE
   | AssignStat
   | FunctionCall
   | Label
@@ -101,14 +102,14 @@ varlist = {
 Var = { prefixExp ~ (Call* ~ Access+)+ | Name }
 
 namelist = {
-    Name ~ ("," ~ Name)*
+    Name ~ NEWLINE* ~ (NEWLINE* ~ "," ~ Name ~ NEWLINE*)*
 }
 
 explist = {
     exp ~ ("," ~ exp)*
 }
 
-exp     =  { prefix* ~ primary ~ postfix* ~ (infix ~ prefix* ~ primary ~ postfix*)* }
+exp     =  { prefix* ~ primary ~ postfix* ~ (NEWLINE* ~ infix ~ NEWLINE* ~ prefix* ~ primary ~ postfix*)* }
 prefix  = _{ unop }
 postfix = _{ PostfixExp }
 infix   = _{ binop }
@@ -136,9 +137,9 @@ Args = {
 }
 
 FuncDef  = { "function" ~ FuncBody }
-FuncBody = { "(" ~ parlist? ~ ")" ~ blockEnd }
+FuncBody = { "(" ~ NEWLINE* ~ parlist? ~ NEWLINE* ~ ")" ~ blockEnd }
 parlist  = {
-    namelist ~ ("," ~ Ellipse)?
+    namelist ~ NEWLINE* ~ ("," ~ Ellipse)?
   | Ellipse
 }
 
@@ -146,11 +147,11 @@ TableConstructor = {
     "{" ~ Fieldlist? ~ "}"
 }
 Fieldlist        = {
-    Field ~ (("," | ";") ~ Field)* ~ ("," | ";")?
+    NEWLINE* ~ Field ~ NEWLINE* ~ (("," | ";") ~ NEWLINE* ~ Field ~ NEWLINE*)* ~ ("," | ";")? ~ NEWLINE*
 }
 Field            = {
-    "[" ~ exp ~ "]" ~ "=" ~ exp
-  | Name ~ "=" ~ exp
+    "[" ~ NEWLINE* ~ exp ~ NEWLINE* ~ "]" ~ "=" ~ exp
+  | Name ~ NEWLINE* ~ "=" ~ exp
   | (#value_field = exp)
 }
 

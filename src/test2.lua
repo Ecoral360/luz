@@ -205,84 +205,85 @@ do  -- testing chains of '__call'
   end
   assert(Res[N + 1] == "a" and Res[N + 2] == "b" and Res[N + 3] == "c")
 end
---
---
--- a = nil
--- (function (x) a=x end)(23)
--- assert(a == 23 and (function (x) return x*2 end)(20) == 40)
---
---
--- -- testing closures
---
--- -- fixed-point operator
--- local Z = function (le)
---       local function a (f)
---         return le(function (x) return f(f)(x) end)
---       end
---       return a(a)
---     end
---
---
--- -- non-recursive factorial
---
--- local F = function (f)
---       return function (n)
---                if n == 0 then return 1
---                else return n*f(n-1) end
---              end
---     end
---
--- local fat = Z(F)
---
--- assert(fat(0) == 1 and fat(4) == 24 and Z(F)(5)==5*Z(F)(4))
---
--- local function g (z)
---   local function f (a,b,c,d)
---     return function (x,y) return a+b+c+d+a+x+y+z end
---   end
---   return f(z,z+1,z+2,z+3)
--- end
---
--- local f = g(10)
--- assert(f(9, 16) == 10+11+12+13+10+9+16+10)
---
--- print('+')
---
--- -- testing multiple returns
---
--- local function unlpack (t, i)
---   i = i or 1
---   if (i <= #t) then
---     return t[i], unlpack(t, i+1)
---   end
--- end
---
--- local function equaltab (t1, t2)
---   assert(#t1 == #t2)
---   for i = 1, #t1 do
---     assert(t1[i] == t2[i])
---   end
--- end
---
--- local pack = function (...) return (table.pack(...)) end
---
--- local function f() return 1,2,30,4 end
--- local function ret2 (a,b) return a,b end
---
--- local a,b,c,d = unlpack{1,2,3}
--- assert(a==1 and b==2 and c==3 and d==nil)
--- a = {1,2,3,4,false,10,'alo',false,assert}
--- equaltab(pack(unlpack(a)), a)
--- equaltab(pack(unlpack(a), -1), {1,-1})
--- a,b,c,d = ret2(f()), ret2(f())
--- assert(a==1 and b==1 and c==2 and d==nil)
--- a,b,c,d = unlpack(pack(ret2(f()), ret2(f())))
--- assert(a==1 and b==1 and c==2 and d==nil)
--- a,b,c,d = unlpack(pack(ret2(f()), (ret2(f()))))
--- assert(a==1 and b==1 and c==nil and d==nil)
---
--- a = ret2{ unlpack{1,2,3}, unlpack{3,2,1}, unlpack{"a", "b"}}
--- assert(a[1] == 1 and a[2] == 3 and a[3] == "a" and a[4] == "b")
+
+
+a = nil
+(function (x) a=x end)(23)
+assert(a == 23 and (function (x) return x*2 end)(20) == 40)
+
+
+-- testing closures
+
+-- fixed-point operator
+local Z = function (le)
+      local function a (f)
+        return le(function (x) return f(f)(x) end)
+      end
+      return a(a)
+    end
+
+
+-- non-recursive factorial
+
+local F = function (f)
+      return function (n)
+               if n == 0 then return 1
+               else return n*f(n-1) end
+             end
+    end
+
+local fat = Z(F)
+
+assert(fat(0) == 1 and fat(4) == 24 and Z(F)(5)==5*Z(F)(4))
+
+local function g (z)
+  local function f (a,b,c,d)
+    return function (x,y) return a+b+c+d+a+x+y+z end
+  end
+  return f(z,z+1,z+2,z+3)
+end
+
+local f = g(10)
+print(f(9, 16))
+assert(f(9, 16) == 10+11+12+13+10+9+16+10)
+
+print('+')
+
+-- testing multiple returns
+
+local function unlpack (t, i)
+  i = i or 1
+  if (i <= #t) then
+    return t[i], unlpack(t, i+1)
+  end
+end
+
+local function equaltab (t1, t2)
+  assert(#t1 == #t2)
+  for i = 1, #t1 do
+    assert(t1[i] == t2[i])
+  end
+end
+
+local pack = function (...) return (table.pack(...)) end
+
+local function f() return 1,2,30,4 end
+local function ret2 (a,b) return a,b end
+
+local a,b,c,d = unlpack{1,2,3}
+assert(a==1 and b==2 and c==3 and d==nil)
+a = {1,2,3,4,false,10,'alo',false,assert}
+equaltab(pack(unlpack(a)), a)
+equaltab(pack(unlpack(a), -1), {1,-1})
+a,b,c,d = ret2(f()), ret2(f())
+assert(a==1 and b==1 and c==2 and d==nil)
+a,b,c,d = unlpack(pack(ret2(f()), ret2(f())))
+assert(a==1 and b==1 and c==2 and d==nil)
+a,b,c,d = unlpack(pack(ret2(f()), (ret2(f()))))
+assert(a==1 and b==1 and c==nil and d==nil)
+
+a = ret2{ unlpack{1,2,3}, unlpack{3,2,1}, unlpack{"a", "b"}}
+assert(a[1] == 1 and a[2] == 3 and a[3] == "a" and a[4] == "b")
 --
 --
 -- -- testing calls with 'incorrect' arguments

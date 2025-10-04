@@ -87,6 +87,56 @@ fn run_compiler(filename: String, input: &str, stmts: Vec<Stat>) -> Result<(), L
     Ok(())
 }
 
+pub fn run_repl() -> Result<(), LuzError> {
+    use std::io::{self, Write};
+
+    let mut input = String::new();
+    let mut buffer = String::new();
+    let mut line_num = 1;
+
+    let mut ctx = CompilerCtx::new_main("stdin".to_string());
+    let mut runner = Runner::new(
+        String::from("REPL"),
+        &buffer,
+        ctx.scope_clone(),
+        make_env_table(luz_table!().as_table_or_err()?),
+    );
+
+    loop {
+        print!("{}> ", line_num);
+        io::stdout().flush().unwrap();
+
+        input.clear();
+        io::stdin().read_line(&mut input).unwrap();
+
+        if input.trim().is_empty() {
+            continue;
+        }
+
+        buffer.push_str(&input);
+
+        let mut stmts = LuaParser::parse(Rule::Chunk, &buffer);
+
+        match &mut stmts {
+            Ok(stmts) => {
+                let stmts = parse_script(stmts)?;
+                run_compiler("stdin".to_string(), &input, stmts)?;
+                line_num += 1;
+            }
+            Err(err) => {
+                if err.to_string().contains("end of file") {
+                    line_num += 1;
+                    continue;
+                } else {
+                    println!("Error: {}", err);
+                    buffer.clear();
+                    line_num = 1;
+                }
+            }
+        }
+    }
+}
+
 pub fn load(
     filename: Option<String>,
     input: String,
