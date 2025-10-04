@@ -793,6 +793,8 @@ impl<'a> Compiler<'a> {
             }
         }
 
+        ctx.push_inst(Instruction::op_close(to_be_closed));
+
         Ok(())
     }
 

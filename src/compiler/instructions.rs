@@ -214,7 +214,7 @@ impl Instruction {
     pub fn debug(&self, scope: &Scope, inst_idx: usize) -> String {
         match self {
             Instruction::iABC(i_abc) => i_abc.debug(scope),
-            Instruction::iABx(i_abx) => i_abx.debug(scope),
+            Instruction::iABx(i_abx) => i_abx.debug(scope, inst_idx),
             Instruction::iAsBx(i_asbx) => i_asbx.debug(scope),
             Instruction::isJ(i_sj) => i_sj.debug(scope, inst_idx),
             Instruction::iAx(i_ax) => i_ax.debug(scope),
@@ -913,11 +913,23 @@ impl From<u32> for iABx {
 }
 
 impl iABx {
-    pub fn debug(&self, scope: &Scope) -> String {
+    pub fn debug(&self, scope: &Scope, inst_idx: usize) -> String {
         let s = match self.op {
             LuaOpCode::OP_LOADK => {
                 let local = scope.get_const(self.b as u8);
                 format!("{} ; {}", self, local.repr())
+            }
+            LuaOpCode::OP_FORLOOP => {
+                format!("{} ; to {}", self, inst_idx as i32 - self.b as i32 + 1)
+            }
+            LuaOpCode::OP_FORPREP => {
+                format!("{} ; to {}", self, inst_idx as i32 + self.b as i32 + 2)
+            }
+            LuaOpCode::OP_TFORLOOP => {
+                format!("{} ; to {}", self, inst_idx as i32 - self.b as i32 + 1)
+            }
+            LuaOpCode::OP_TFORPREP => {
+                format!("{} ; to {}", self, inst_idx as i32 + self.b as i32 + 1)
             }
             _ => self.to_string(),
         };

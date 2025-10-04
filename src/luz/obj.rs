@@ -680,12 +680,10 @@ impl LuzObj {
         loop {
             curr = match curr {
                 LuzObj::Function(..) => break,
-                LuzObj::Table(t) => {
-                    let t = t.borrow();
+                LuzObj::Table(tab) => {
+                    let t = tab.borrow();
                     let metavalue = t.rawget_metatable(&LuzObj::str("__call"));
-                    if metavalue.type_is(LuzType::Table) {
-                        args.push(metavalue.clone());
-                    }
+                    args.push(LuzObj::Table(Rc::clone(&tab)));
                     metavalue
                 }
                 _ => return None,

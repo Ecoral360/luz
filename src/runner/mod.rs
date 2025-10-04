@@ -797,7 +797,6 @@ impl<'a> Runner<'a> {
 
                     for addr in *a + 4..=*a + 3 + *c {
                         let val = result_iter.next().unwrap_or(LuzObj::Nil);
-                        dbg!(&val);
                         self.scope_mut().set_reg_val(addr, val);
                     }
 
@@ -920,7 +919,7 @@ impl<'a> Runner<'a> {
 
                     if !val.is_nil() {
                         // self.scope_mut().set_reg_val(a, val);
-                        return Ok(InstructionResult::Jmp(-(b as i32)));
+                        return Ok(InstructionResult::Jmp(-(b as i32) + 1));
                     }
                 }
 
