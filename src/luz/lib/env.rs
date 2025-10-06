@@ -7,9 +7,8 @@ use crate::{
         err::LuzError,
         lib::{
             add_lib, math::math_lib, require::package_lib, string::string_lib, table::table_lib,
-            LuzNativeLib,
         },
-        obj::{LuzFunction, LuzObj, LuzType, Numeral, TableRef},
+        obj::{AsUTF8Unchecked, LuzFunction, LuzObj, LuzType, Numeral, TableRef},
     },
     luz_fn, luz_let, luz_table,
     runner::err::LuzRuntimeError,
@@ -49,7 +48,7 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
                     "bad argument #1 to 'type' (value expected)",
                 ));
             };
-            Ok(vec![LuzObj::String(arg.get_type().to_string())])
+            Ok(vec![LuzObj::str(arg.get_type())])
         }),
 
         error: luz_fn!([1](message) {
@@ -119,7 +118,7 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
                     input
                 },
                 obj @ (LuzObj::Function(..) | LuzObj::Table(..)) => {
-                    let mut input = String::new();
+                    let mut input = vec![];
 
                     loop {
                         let results = obj.call(runner, vec![], vec![])?;
@@ -130,7 +129,7 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
                             if s.len() == 0 {
                                 break input;
                             }
-                            input += s;
+                            input.extend(s);
                         } else {
                             return Ok(vec![LuzObj::Nil,
                                 LuzObj::str("reader function must return a string")]);
@@ -144,11 +143,11 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
 
             luz_let!(LuzObj::String(mode) = mode.or(LuzObj::str("bt")));
 
-            let is_valid_bin = LuzFunction::is_valid_bin(&input.clone().into_bytes());
-            let input = match mode.deref() {
+            let is_valid_bin = LuzFunction::is_valid_bin(&input);
+            let input = match mode.as_utf8_string_unchecked().deref() {
                 "b" | "bt" if is_valid_bin => {
-                    let name = if let LuzObj::String(n) = chunkname { Some(n.clone()) } else { None };
-                    let bin = input.clone().into_bytes();
+                    let name = if let LuzObj::String(n) = chunkname { Some(n.as_utf8_string_unchecked()) } else { None };
+                    let bin = input;
                     let env = env.or(runner.get_val("_ENV").unwrap_or(LuzObj::Nil));
                     let f = LuzFunction::load_bin(&bin, env, name, runner.clone_scope()).map_err(|_| {
                         LuzRuntimeError::message("attempt to load a binary chunk")
@@ -177,9 +176,9 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
 
             // let name = args.pop_front();
 
-            let name = if let LuzObj::String(n) = chunkname { n.clone() } else { input.clone() };
+            let name = if let LuzObj::String(n) = chunkname { n.as_utf8_string_unchecked() } else { input.as_utf8_string_unchecked() };
 
-            let r = load(None, input.clone(), name, None, vec![])
+            let r = load(None, input.as_utf8_string_unchecked(), name, None, vec![])
                 .map_err(|e| {
                     if matches!(e, LuzError::RuntimeError(..)) {
                         LuzRuntimeError::message(e.to_string())
@@ -204,7 +203,7 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
                     };
                     Ok(vararg_iter.skip(idx).collect())
                 }
-                LuzObj::String(s) if s == "#" => {
+                LuzObj::String(s) if s.as_utf8_string_unchecked() == "#" => {
                     Ok(vec![LuzObj::int(vararg.len() as i64)])
                 }
                 _ => Err(LuzRuntimeError::message(format!("bad argument #1 to 'select' (integer or '#' expected)")))
@@ -238,7 +237,7 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
                         LuzObj::Boolean(false),
                         match err {
                             LuzRuntimeError::ErrorObj(luz_obj) => luz_obj,
-                            LuzRuntimeError::Crashing(c) => LuzObj::String(c)
+                            LuzRuntimeError::Crashing(c) => LuzObj::str(c)
                         }
                     ]
                 }
@@ -272,7 +271,7 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
                     let msgh = msgh.borrow();
                     let err_obj = match err {
                         LuzRuntimeError::ErrorObj(luz_obj) => luz_obj,
-                        LuzRuntimeError::Crashing(c) => LuzObj::String(c)
+                        LuzRuntimeError::Crashing(c) => LuzObj::str(c)
                     };
                     prefix_args.push(err_obj);
                     let mut results = msgh.call(runner, prefix_args, vec![]);
@@ -286,7 +285,7 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
                             Err(err) => {
                                 let err_obj = match err {
                                     LuzRuntimeError::ErrorObj(luz_obj) => luz_obj,
-                                    LuzRuntimeError::Crashing(c) => LuzObj::String(c)
+                                    LuzRuntimeError::Crashing(c) => LuzObj::str(c)
                                 };
                                 results = msgh.call(runner, vec![err_obj], vec![]);
                             }
@@ -361,7 +360,7 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
         tonumber: luz_fn!([1](e, base @ (LuzObj::Numeral(Numeral::Int(..)) | LuzObj::Nil)) {
             match e {
                 LuzObj::String(s) => {
-                    let num = Numeral::from_str(&s).map(|num| LuzObj::Numeral(num)).unwrap_or(LuzObj::Nil);
+                    let num = Numeral::from_str(&s.as_utf8_string_unchecked()).map(|num| LuzObj::Numeral(num)).unwrap_or(LuzObj::Nil);
                     Ok(vec![num])
                 }
                 LuzObj::Numeral(..) => Ok(vec![e]),

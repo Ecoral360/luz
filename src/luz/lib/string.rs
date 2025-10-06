@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use crate::{
     luz::{
         lib::LuzNativeLib,
-        obj::{LuzObj, Numeral, TableRef},
+        obj::{AsUTF8Unchecked, LuzObj, Numeral, TableRef},
     },
     luz_fn, luz_let, luz_table,
     runner::err::LuzRuntimeError,
@@ -18,7 +18,7 @@ pub fn string_lib(_registry: TableRef) -> LuzNativeLib {
                     "bad argument #1 to 'string.len' (string value expected)",
                 ));
             };
-            Ok(vec![LuzObj::Numeral(Numeral::Int(s.chars().count() as i64))])
+            Ok(vec![LuzObj::Numeral(Numeral::Int(s.len() as i64))])
         }),
         lower: luz_fn!([1](*args) {
             let mut args = VecDeque::from(args);
@@ -27,7 +27,7 @@ pub fn string_lib(_registry: TableRef) -> LuzNativeLib {
                     "bad argument #1 to 'string.lower' (string value expected)",
                 ));
             };
-            Ok(vec![LuzObj::String(s.to_lowercase())])
+            Ok(vec![LuzObj::str(s.as_utf8_string_unchecked().to_lowercase())])
         }),
         upper: luz_fn!([1](*args) {
             let mut args = VecDeque::from(args);
@@ -36,7 +36,7 @@ pub fn string_lib(_registry: TableRef) -> LuzNativeLib {
                     "bad argument #1 to 'string.upper' (string value expected)",
                 ));
             };
-            Ok(vec![LuzObj::String(s.to_uppercase())])
+            Ok(vec![LuzObj::str(s.as_utf8_string_unchecked().to_uppercase())])
         }),
         find: luz_fn!([2](LuzObj::String(s),
                 LuzObj::String(pattern),
@@ -53,7 +53,10 @@ pub fn string_lib(_registry: TableRef) -> LuzNativeLib {
             if init - 1 < 0 {
                 init = (s.len() - init as usize) as i64;
             }
-            let Some((start, end)) = pattern_match(&pattern, &s[init as usize - 1..]) else {
+            let Some((start, end)) = pattern_match(
+                &pattern.as_utf8_string_unchecked(),
+                &(&s[init as usize - 1..]).as_utf8_string_unchecked()
+            ) else {
                 return Ok(vec![LuzObj::Nil]);
             };
             Ok(vec![LuzObj::int(start as i64), LuzObj::int(end as i64)])
@@ -74,16 +77,16 @@ pub fn string_lib(_registry: TableRef) -> LuzNativeLib {
             }
 
             if i > j {
-                Ok(vec![LuzObj::String(String::new())])
+                Ok(vec![LuzObj::str(String::new())])
             } else {
-                Ok(vec![LuzObj::String(s[(i as usize - 1)..j as usize].to_string())])
+                Ok(vec![LuzObj::String(s[(i as usize - 1)..j as usize].to_vec())])
             }
         }),
         format: luz_fn!([1](LuzObj::String(formatstring), *args) {
-            Ok(vec![LuzObj::String(format(&formatstring, args))])
+            Ok(vec![LuzObj::str(format(&formatstring, args))])
         }),
         pack: luz_fn!([1](LuzObj::String(formatstring), *args) {
-            Ok(vec![LuzObj::String(format(&formatstring, args))])
+            Ok(vec![LuzObj::str(format(&formatstring, args))])
         }),
         packsize: luz_fn!([1](LuzObj::String(formatstring)) {
             Ok(vec![LuzObj::int(packsize_string(&formatstring).unwrap() as i64)])
@@ -107,9 +110,9 @@ fn pattern_match(pattern: &str, s: &str) -> Option<(usize, usize)> {
 }
 
 /// Implements the format function from lua's string library
-fn format(formatstring: &str, mut args: VecDeque<LuzObj>) -> String {
+fn format(formatstring: &[u8], mut args: VecDeque<LuzObj>) -> String {
     let mut final_string = String::new();
-    let mut chars = formatstring.chars().peekable();
+    let mut chars = formatstring.iter().map(|c| *c as char).peekable();
     while let Some(c) = chars.next() {
         if c == '%' {
             if let Some(&next_c) = chars.peek() {
@@ -251,9 +254,9 @@ fn pack_string(fmt: &str, values: VecDeque<LuzObj>) -> Vec<u8> {
     result
 }
 
-fn packsize_string(fmt: &str) -> Option<usize> {
+fn packsize_string(fmt: &[u8]) -> Option<usize> {
     let mut size = 0;
-    let mut chars = fmt.chars().peekable();
+    let mut chars = fmt.iter().map(|c| *c as char).peekable();
 
     while let Some(c) = chars.next() {
         match c {

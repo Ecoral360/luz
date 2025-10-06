@@ -68,9 +68,7 @@ fn parse_prefix_exp(prefix_exp: ExpNode, pair: Pair<Rule>) -> Result<ExpNode, Lu
             if matches!(element.as_rule(), Rule::Name) {
                 Ok(ExpNode::Access(ExpAccess::new(
                     Box::new(prefix_exp),
-                    Box::new(ExpNode::Literal(LuzObj::String(
-                        element.as_str().to_owned(),
-                    ))),
+                    Box::new(ExpNode::Literal(LuzObj::str(element.as_str()))),
                 )))
             } else {
                 Ok(ExpNode::Access(ExpAccess::new(
@@ -266,7 +264,7 @@ fn parse_table_field(
 
     let field_inner_next = field_inner.next().expect("Field key/value");
     let exp = if matches!(field_inner_next.as_rule(), Rule::Name) {
-        ExpNode::Literal(LuzObj::String(field_inner_next.as_str().to_owned()))
+        ExpNode::Literal(LuzObj::str(field_inner_next.as_str()))
     } else {
         parse_top_expr(field_inner_next)?
     };
@@ -559,7 +557,7 @@ pub fn parse_stmt(pair: Pair<Rule>) -> Result<Vec<Stat>, LuzError> {
                     .fold(ExpNode::Name(namelist[0].clone()), |acc, val| {
                         ExpNode::Access(ExpAccess {
                             exp: Box::new(acc),
-                            prop: Box::new(ExpNode::Literal(LuzObj::String(val.clone()))),
+                            prop: Box::new(ExpNode::Literal(LuzObj::str(val))),
                         })
                     })
             } else {

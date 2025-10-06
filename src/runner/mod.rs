@@ -456,7 +456,7 @@ impl<'a> Runner<'a> {
                         str += &obj.to_string();
                     }
 
-                    self.scope_mut().set_reg_val(start, LuzObj::String(str));
+                    self.scope_mut().set_reg_val(start, LuzObj::str(str));
                 }
 
                 LuaOpCode::OP_MOVE => {

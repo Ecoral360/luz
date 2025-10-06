@@ -123,7 +123,7 @@ impl LuzFunction {
         }
     }
 
-    pub fn dump(&self) -> Result<String, LuzRuntimeError> {
+    pub fn dump(&self) -> Result<Vec<u8>, LuzRuntimeError> {
         let Self::User {
             nb_fixed_params,
             scope,
@@ -160,7 +160,7 @@ impl LuzFunction {
                     // then we push the length of the string
                     dump.extend((s.len() as u32).to_be_bytes());
                     // then we push the bytes of the string
-                    dump.extend(s.clone().into_bytes());
+                    dump.extend(s);
                 }
                 LuzObj::Numeral(Numeral::Int(i)) => {
                     // 1 means its an int
@@ -198,7 +198,7 @@ impl LuzFunction {
             dump.extend(inst_code.to_be_bytes());
         }
 
-        Ok(unsafe { String::from_utf8_unchecked(dump) })
+        Ok(dump)
     }
 
     /// Returns if a bin vector is a luz precompiled dump
@@ -228,8 +228,7 @@ impl LuzFunction {
             match code {
                 0 => {
                     let str_len = get_next_u32(&bin, &mut ptr);
-                    let string =
-                        unsafe { String::from_utf8_unchecked(bin[ptr..str_len as usize].to_vec()) };
+                    let string = bin[ptr..ptr + str_len as usize].to_vec();
                     ptr += str_len as usize;
                     constants.push(LuzObj::String(string));
                 }

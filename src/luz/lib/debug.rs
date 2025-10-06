@@ -20,7 +20,7 @@ pub fn debug_lib(_registry: TableRef) -> LuzObj {
 
                     let scope = scope.borrow();
                     luz_table!{
-                        source: LuzObj::String(scope.name().cloned().unwrap_or_default()),
+                        source: LuzObj::str(scope.name().cloned().unwrap_or_default()),
                     }
                 }
                 _ => Err(LuzRuntimeError::message("bad argument #1 for 'debug.getinfo' (function or integer expected)."))?

@@ -13,7 +13,7 @@ pub enum LuzRuntimeError {
 
 impl LuzRuntimeError {
     pub fn message<S: ToString>(s: S) -> Self {
-        Self::ErrorObj(LuzObj::String(s.to_string()))
+        Self::ErrorObj(LuzObj::str(s))
     }
 }
 

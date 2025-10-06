@@ -194,7 +194,7 @@ impl<'a> Compiler<'a> {
                     unreachable!()
                 };
                 if in_table {
-                    let name_k = ctx.get_or_add_const(LuzObj::String(name.to_owned()));
+                    let name_k = ctx.get_or_add_const(LuzObj::str(name));
                     ctx.push_inst(Instruction::op_gettabup(reg, upvalue.addr, name_k as u8));
                 } else {
                     ctx.push_inst(Instruction::op_getupval(reg, upvalue.addr));
@@ -295,7 +295,7 @@ impl<'a> Compiler<'a> {
                     RegOrUpvalue::Upvalue(upvalue) => {
                         let reg = ctx.get_or_push_free_register();
                         if in_table {
-                            let name_k = ctx.get_or_add_const(LuzObj::String(name.to_owned()));
+                            let name_k = ctx.get_or_add_const(LuzObj::str(name));
                             ctx.push_inst(Instruction::op_gettabup(
                                 reg,
                                 upvalue.addr,
@@ -348,7 +348,7 @@ impl<'a> Compiler<'a> {
                     RegOrUpvalue::Upvalue(upvalue) => {
                         let reg = ctx.get_or_push_free_register();
                         if in_table {
-                            let name_k = ctx.get_or_add_const(LuzObj::String(name.to_owned()));
+                            let name_k = ctx.get_or_add_const(LuzObj::str(name));
                             ctx.push_inst(Instruction::op_gettabup(
                                 reg,
                                 upvalue.addr,
@@ -978,7 +978,7 @@ impl<'a> Compiler<'a> {
                         } => {
                             let tabaddr = ctx.get_or_push_free_register();
                             if *in_table {
-                                let name_k = ctx.get_or_add_const(LuzObj::String(name.to_owned()));
+                                let name_k = ctx.get_or_add_const(LuzObj::str(name));
                                 ctx.push_inst(Instruction::op_gettabup(
                                     tabaddr,
                                     upvalue.addr,
@@ -1061,7 +1061,7 @@ impl<'a> Compiler<'a> {
                         }
                         RegOrUpvalue::Upvalue(src) => {
                             if is_intable {
-                                let name_k = ctx.get_or_add_const(LuzObj::String(name.to_owned()));
+                                let name_k = ctx.get_or_add_const(LuzObj::str(name));
 
                                 ctx.push_inst(Instruction::op_settabup(
                                     src.addr,
@@ -1499,7 +1499,7 @@ impl<'a> Compiler<'a> {
                         let prop = self.handle_immidiate(ctx, value, false)?;
                         if let Some(imm) = prop {
                             if in_table {
-                                let name_k = ctx.get_or_add_const(LuzObj::String(name.to_owned()));
+                                let name_k = ctx.get_or_add_const(LuzObj::str(name));
                                 ctx.push_inst(Instruction::op_gettabup(
                                     tabaddr,
                                     upvalue.addr,
@@ -1514,8 +1514,7 @@ impl<'a> Compiler<'a> {
                                 ExpNode::Literal(LuzObj::String(ref n)) => {
                                     let attr = ctx.get_or_add_const(LuzObj::String(n.clone()));
                                     if in_table {
-                                        let name_k =
-                                            ctx.get_or_add_const(LuzObj::String(name.to_owned()));
+                                        let name_k = ctx.get_or_add_const(LuzObj::str(name));
                                         ctx.push_inst(Instruction::op_gettabup(
                                             tabaddr,
                                             upvalue.addr,
@@ -1623,7 +1622,7 @@ impl<'a> Compiler<'a> {
                     RegOrUpvalue::Upvalue(upvalue) => {
                         let reg = ctx.get_or_push_free_register();
                         if in_table {
-                            let name_k = ctx.get_or_add_const(LuzObj::String(name.to_owned()));
+                            let name_k = ctx.get_or_add_const(LuzObj::str(name));
                             ctx.push_inst(Instruction::op_gettabup(
                                 reg,
                                 upvalue.addr,
@@ -1724,7 +1723,7 @@ impl<'a> Compiler<'a> {
                     RegOrUpvalue::Upvalue(upvalue) => {
                         let reg = ctx.get_or_push_free_register();
                         if in_table {
-                            let name_k = ctx.get_or_add_const(LuzObj::String(name.to_owned()));
+                            let name_k = ctx.get_or_add_const(LuzObj::str(name));
                             ctx.push_inst(Instruction::op_gettabup(
                                 reg,
                                 upvalue.addr,
@@ -2071,7 +2070,7 @@ impl<'a> Compiler<'a> {
                 claimed.push(r);
                 r
             };
-            let method_name_const = ctx.get_or_add_const(LuzObj::String(m.clone()));
+            let method_name_const = ctx.get_or_add_const(LuzObj::str(m));
             ctx.push_inst(Instruction::op_self(
                 reg,
                 f_addr,
@@ -2246,7 +2245,7 @@ impl<'a> Compiler<'a> {
             }
             RegOrUpvalue::Upvalue(src) => {
                 if is_intable {
-                    let name_k = ctx.get_or_add_const(LuzObj::String(name.to_owned()));
+                    let name_k = ctx.get_or_add_const(LuzObj::str(name));
                     ctx.push_inst(Instruction::op_gettabup(reg, src.addr, name_k as u8));
                 } else {
                     ctx.push_inst(Instruction::op_getupval(reg, src.addr));

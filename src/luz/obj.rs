@@ -29,12 +29,28 @@ pub type TableRef = Rc<RefCell<Table>>;
 pub enum LuzObj {
     Numeral(Numeral),
     Boolean(bool),
-    String(String),
+    String(Vec<u8>),
     Function(Rc<RefCell<LuzFunction>>),
     Table(TableRef),
     Thread(Arc<Mutex<LuzThread>>),
     Userdata(Arc<Mutex<Userdata>>),
     Nil,
+}
+
+pub trait AsUTF8Unchecked {
+    fn as_utf8_string_unchecked(&self) -> String;
+}
+
+impl AsUTF8Unchecked for Vec<u8> {
+    fn as_utf8_string_unchecked(&self) -> String {
+        unsafe { String::from_utf8_unchecked(self.to_vec()) }
+    }
+}
+
+impl AsUTF8Unchecked for &[u8] {
+    fn as_utf8_string_unchecked(&self) -> String {
+        unsafe { String::from_utf8_unchecked(self.to_vec()) }
+    }
 }
 
 impl Clone for LuzObj {
@@ -57,7 +73,9 @@ impl Display for LuzObj {
         match self {
             LuzObj::Numeral(numeral) => write!(f, "{numeral}"),
             LuzObj::Boolean(b) => write!(f, "{b}"),
-            LuzObj::String(s) => write!(f, "{s}"),
+            LuzObj::String(s) => {
+                write!(f, "{}", unsafe { String::from_utf8_unchecked(s.to_vec()) })
+            }
             LuzObj::Function(ref_cell) => write!(f, "{:?}", ref_cell.borrow()),
             LuzObj::Table(ref_cell) => write!(f, "{:#?}", ref_cell.borrow()),
             LuzObj::Thread(mutex) => todo!(),
@@ -103,7 +121,7 @@ impl LuzObj {
         match self {
             LuzObj::Table(t) => {
                 let t = t.borrow();
-                let method = t.rawget_metatable(&LuzObj::String(tm.to_string()));
+                let method = t.rawget_metatable(&LuzObj::str(tm));
                 if method.is_nil() {
                     Ok(None)
                 } else {
@@ -117,7 +135,7 @@ impl LuzObj {
                     .rawget(&LuzObj::str(":hidden.string.metatable:"))
                     .as_table_or_err()?;
                 let meta = meta.borrow();
-                let method = meta.get(runner, &LuzObj::String(tm.to_string()))?;
+                let method = meta.get(runner, &LuzObj::str(tm))?;
                 Ok(method.map(|met| met.callable()).flatten())
             }
             _ => Err(LuzRuntimeError::message(format!(
@@ -161,8 +179,8 @@ impl LuzObj {
         }
     }
 
-    pub fn str(string: &str) -> Self {
-        Self::String(string.to_owned())
+    pub fn str<T: ToString>(string: T) -> Self {
+        Self::String(string.to_string().into_bytes())
     }
 
     pub fn int(i: i64) -> Self {
@@ -181,7 +199,7 @@ impl LuzObj {
             } else {
                 &s[level..s.len() - level]
             };
-            return Ok(LuzObj::String(string.to_string()));
+            return Ok(LuzObj::str(string));
         }
 
         let s = &s[1..s.len() - 1];
@@ -300,7 +318,7 @@ impl LuzObj {
         string.shrink_to_fit();
         // let s = s.replace("\\\\", to).replace("\\a", "\x07").replace("\\b", "\x08").replace("\\n", "\n").replace("\\r", "\r").replace("\\t", "\t").replace("\\v", "\x0b").replace("", to);
 
-        Ok(Self::String(string))
+        Ok(Self::str(string))
     }
 
     pub fn as_table_or_err(&self) -> Result<Rc<RefCell<Table>>, LuzRuntimeError> {
@@ -372,7 +390,7 @@ impl LuzObj {
             (LuzObj::Numeral(n), LuzType::Integer) => n.to_lossy_int().into(),
             (LuzObj::Numeral(n), LuzType::Float) => n.to_float().into(),
             (this @ LuzObj::Numeral(_), LuzType::Number) => this,
-            (LuzObj::Numeral(n), LuzType::String) => n.to_string().into(),
+            (LuzObj::Numeral(n), LuzType::String) => n.to_string().into_bytes().into(),
             (this @ LuzObj::Numeral(_), to) => {
                 Err(LuzError::InvalidCoersion { obj: this, ty: to })?
             }
@@ -387,9 +405,19 @@ impl LuzObj {
                 Err(LuzError::InvalidCoersion { obj: this, ty: to })?
             }
 
-            (LuzObj::String(s), LuzType::Integer) => s.parse::<Numeral>()?.to_lossy_int().into(),
-            (LuzObj::String(s), LuzType::Float) => s.parse::<Numeral>()?.to_float().into(),
-            (LuzObj::String(s), LuzType::Number) => s.parse::<Numeral>()?.into(),
+            (LuzObj::String(s), LuzType::Integer) => s
+                .as_utf8_string_unchecked()
+                .parse::<Numeral>()?
+                .to_lossy_int()
+                .into(),
+            (LuzObj::String(s), LuzType::Float) => s
+                .as_utf8_string_unchecked()
+                .parse::<Numeral>()?
+                .to_float()
+                .into(),
+            (LuzObj::String(s), LuzType::Number) => {
+                s.as_utf8_string_unchecked().parse::<Numeral>()?.into()
+            }
             (this @ LuzObj::String(_), LuzType::String) => this,
             (this @ LuzObj::String(_), to) => Err(LuzError::InvalidCoersion { obj: this, ty: to })?,
 
@@ -472,7 +500,10 @@ impl LuzObj {
                     unreachable!()
                 };
 
-                (s1 + &s2).into()
+                let mut new_s = s1.to_vec();
+                new_s.extend(&s2);
+
+                new_s.into()
             }
             Binop::Add => {
                 let lhs = self
@@ -669,7 +700,7 @@ impl LuzObj {
 
     pub fn repr(&self) -> String {
         match self {
-            Self::String(s) => format!("{:?}", s),
+            Self::String(s) => format!("{:?}", s.as_utf8_string_unchecked()),
             _ => self.to_string(),
         }
     }

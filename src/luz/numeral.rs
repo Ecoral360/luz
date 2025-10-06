@@ -412,6 +412,6 @@ impl Not for Numeral {
 
 impl From<&str> for LuzObj {
     fn from(value: &str) -> Self {
-        Self::String(String::from(value))
+        Self::str(value)
     }
 }

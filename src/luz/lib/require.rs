@@ -1,11 +1,10 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
-    compiler::ctx::{Scope, Upvalue},
     load,
     luz::{
         lib::{add_lib, debug::debug_lib, LuzNativeLib},
-        obj::{LuzObj, LuzType, TableRef},
+        obj::{AsUTF8Unchecked, LuzObj, LuzType, TableRef},
     },
     luz_fn, luz_let, luz_table,
     runner::err::LuzRuntimeError,
@@ -84,17 +83,18 @@ pub fn package_lib(registry: TableRef) -> LuzNativeLib {
         .rawset(LuzObj::str("package.preload"), preload);
 
     let search_path = luz_fn!([4](LuzObj::String(name), LuzObj::String(path), sep @ (LuzObj::String(..) | LuzObj::Nil), rep @ (LuzObj::String(..) | LuzObj::Nil)) {
+        let path = path.as_utf8_string_unchecked();
         let templates = path.split(';');
         let sep = if sep.is_nil() { "." } else { &sep.to_string() };
         let rep = if rep.is_nil() { "/" } else { &rep.to_string() };
 
-        let name = name.replace(sep, rep);
+        let name = name.as_utf8_string_unchecked().replace(sep, rep);
         let mut tried = vec![];
         for template in templates {
             let path = template.replace('?', &name);
             tried.push(path.clone());
             if std::fs::exists(&path).is_ok_and(|exists| exists) {
-                return Ok(vec![LuzObj::String(path)])
+                return Ok(vec![LuzObj::String(path.into_bytes())])
             }
         }
 
@@ -127,17 +127,17 @@ pub fn package_lib(registry: TableRef) -> LuzNativeLib {
                 // Load the file as a module
                 luz_let!(LuzObj::String(ref fs_path) = result[0]);
 
-                let input = std::fs::read_to_string(fs_path).unwrap();
+                let input = std::fs::read_to_string(fs_path.as_utf8_string_unchecked()).unwrap();
 
                 let r = load(
-                    Some(fs_path.clone()),
+                    Some(fs_path.as_utf8_string_unchecked()),
                     input.clone(),
                     input.clone(),
                     None,
                     vec![],
                 ).map_err(|e| LuzRuntimeError::message(e.to_string()))?;
 
-                Ok(vec![LuzObj::Function(Rc::new(RefCell::new(r))), LuzObj::str(fs_path)])
+                Ok(vec![LuzObj::Function(Rc::new(RefCell::new(r))), LuzObj::String(fs_path.to_vec())])
             } else {
                 Ok(result)
             }
@@ -154,7 +154,7 @@ pub fn package_lib(registry: TableRef) -> LuzNativeLib {
         preload: reg.rawget(&LuzObj::str("package.preload")).clone(),
         searchers: searchers,
         searchpath: search_path,
-        path: LuzObj::String(path),
+        path: LuzObj::str(path),
     };
 
     LuzNativeLib {

@@ -600,7 +600,7 @@ impl Scope {
                 ),
                 RegOrUpvalue::Upvalue(upvalue) => {
                     let in_table = if upvalue.name == "_ENV" {
-                        let obj = LuzObj::String(register_name.to_string());
+                        let obj = LuzObj::str(register_name);
                         if !self.constants.contains(&obj) {
                             self.constants.push(obj);
                         }
