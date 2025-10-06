@@ -1,20 +1,21 @@
-use std::{cell::RefCell, collections::VecDeque, rc::Rc, str::FromStr};
+use std::{cell::RefCell, ops::Deref, rc::Rc, str::FromStr};
 
 use crate::{
-    compiler::ctx::{RegisterBuilder, Scope, Upvalue},
+    compiler::ctx::{RegisterBuilder, Scope},
     load,
     luz::{
+        err::LuzError,
         lib::{
-            math::math_lib, require::package_lib, string::string_lib, table::table_lib,
+            add_lib, math::math_lib, require::package_lib, string::string_lib, table::table_lib,
             LuzNativeLib,
         },
-        obj::{LuzObj, LuzType, Numeral, TableRef},
+        obj::{LuzFunction, LuzObj, LuzType, Numeral, TableRef},
     },
     luz_fn, luz_let, luz_table,
     runner::err::LuzRuntimeError,
 };
 
-pub fn make_env_table(registry: TableRef, baselib_only: bool) -> TableRef {
+pub fn make_env_table(registry: TableRef) -> TableRef {
     // adding the string metatable to the registry
     {
         let mut registry = registry.borrow_mut();
@@ -68,6 +69,11 @@ pub fn make_env_table(registry: TableRef, baselib_only: bool) -> TableRef {
             }
         }),
 
+        collectgarbage: luz_fn!([0, _runner](*_args) {
+            // For now we don't have garbage collection
+            Ok(vec![])
+        }),
+
         setmetatable: luz_fn!([2](LuzObj::Table(table), metatable @ (LuzObj::Table(..) | LuzObj::Nil)) {
             let mut table_obj = table.borrow_mut();
             let existing_meta = table_obj.rawget_metatable(&LuzObj::str("__metatable"));
@@ -110,17 +116,7 @@ pub fn make_env_table(registry: TableRef, baselib_only: bool) -> TableRef {
         load: luz_fn!([1, runner](chunk, chunkname, mode, env, *args) {
             let input = match chunk {
                 LuzObj::String(input) => {
-                    luz_let!(LuzObj::String(mode) = mode.or(LuzObj::str("bt")));
-                    if mode == "b" || mode == "bt" {
-                        // check if b is binary
-                        input
-                    } else if mode == "t" {
-                        input
-                    } else {
-                        Err(LuzRuntimeError::message(
-                            "bad argument #3 to 'load' (mode must be 'b', 't' or 'bt')."
-                        ))?
-                    }
+                    input
                 },
                 obj @ (LuzObj::Function(..) | LuzObj::Table(..)) => {
                     let mut input = String::new();
@@ -131,23 +127,66 @@ pub fn make_env_table(registry: TableRef, baselib_only: bool) -> TableRef {
                         if new_input.is_nil() {
                             break input;
                         } else if let LuzObj::String(s) = new_input {
+                            if s.len() == 0 {
+                                break input;
+                            }
                             input += s;
                         } else {
-                            Err(LuzRuntimeError::message(
-                                "bad argument #1 to 'load' (function must return a string or nil)."
-                            ))?
+                            return Ok(vec![LuzObj::Nil,
+                                LuzObj::str("reader function must return a string")]);
                         }
                     }
                 }
                 _ => Err(LuzRuntimeError::message(
-                    "bad argument #1 to 'load' (string expected).",
+                    "bad argument #1 to 'load' (string or function expected).",
                 ))?,
+            };
+
+            luz_let!(LuzObj::String(mode) = mode.or(LuzObj::str("bt")));
+
+            let is_valid_bin = LuzFunction::is_valid_bin(&input.clone().into_bytes());
+            let input = match mode.deref() {
+                "b" | "bt" if is_valid_bin => {
+                    let name = if let LuzObj::String(n) = chunkname { Some(n.clone()) } else { None };
+                    let bin = input.clone().into_bytes();
+                    let env = env.or(runner.get_val("_ENV").unwrap_or(LuzObj::Nil));
+                    let f = LuzFunction::load_bin(&bin, env, name, runner.clone_scope()).map_err(|_| {
+                        LuzRuntimeError::message("attempt to load a binary chunk")
+                    })?;
+                    return Ok(vec![LuzObj::Function(Rc::new(RefCell::new(f)))]);
+                }
+                "b" => {
+                    return Ok(vec![LuzObj::Nil,
+                        LuzObj::str("attempt to load a text chunk")]);
+                }
+                "t" if is_valid_bin => {
+                    return Ok(vec![LuzObj::Nil,
+                        LuzObj::str("attempt to load a binary chunk")]);
+                }
+                "bt" => {
+                    input
+                }
+                "t" => {
+                    input
+                }
+                _ =>
+                Err(LuzRuntimeError::message(
+                    "bad argument #3 to 'load' (mode must be 'b', 't' or 'bt')."
+                ))?
             };
 
             // let name = args.pop_front();
 
-            let r = load(None, input.clone(), input.clone(), None, vec![])
-                .map_err(|e| LuzRuntimeError::message(e.to_string()))?;
+            let name = if let LuzObj::String(n) = chunkname { n.clone() } else { input.clone() };
+
+            let r = load(None, input.clone(), name, None, vec![])
+                .map_err(|e| {
+                    if matches!(e, LuzError::RuntimeError(..)) {
+                        LuzRuntimeError::message(e.to_string())
+                    } else {
+                        LuzRuntimeError::message("attempt to load a text chunk")
+                    }
+                })?;
 
             Ok(vec![LuzObj::Function(Rc::new(RefCell::new(r)))])
         }),
@@ -333,10 +372,8 @@ pub fn make_env_table(registry: TableRef, baselib_only: bool) -> TableRef {
 
     add_lib(&table, package_lib(Rc::clone(&registry)));
     add_lib(&table, math_lib(Rc::clone(&registry)));
-    if !baselib_only {
-        add_lib(&table, string_lib(Rc::clone(&registry)));
-        add_lib(&table, table_lib(Rc::clone(&registry)));
-    }
+    add_lib(&table, string_lib(Rc::clone(&registry)));
+    add_lib(&table, table_lib(Rc::clone(&registry)));
 
     let global_env = table;
     {
@@ -350,13 +387,6 @@ pub fn make_env_table(registry: TableRef, baselib_only: bool) -> TableRef {
     }
     registry.borrow_mut().rawset(LuzObj::str("_G"), global_env);
     registry
-}
-
-fn add_lib(glob_table: &LuzObj, lib: LuzNativeLib) {
-    let glob_table = glob_table.as_table_or_err().unwrap();
-    for (name, val) in lib.exports {
-        glob_table.borrow_mut().rawset(LuzObj::str(&name), val);
-    }
 }
 
 pub fn get_builtin_scope() -> Rc<RefCell<Scope>> {

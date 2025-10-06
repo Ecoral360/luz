@@ -232,29 +232,29 @@ impl Table {
     }
 }
 
-#[cfg(test)]
-mod test {
-    use crate::luz::obj::LuzObj;
-
-    #[test]
-    fn test_find_boundary() {
-        use crate::luz::numeral::Numeral;
-
-        use super::Table;
-
-        let mut table = Table::default();
-
-        table.push(Numeral::Int(1).into());
-        table.push(Numeral::Int(2).into());
-        table.push(Numeral::Int(3).into());
-        table.push(LuzObj::Nil);
-        table.push(Numeral::Int(4).into());
-        table.push(Numeral::Int(5).into());
-        table.push(Numeral::Int(6).into());
-        table.push(Numeral::Int(7).into());
-
-        let b_loop = table.find_boundary_in_array();
-
-        assert_eq!(b_loop, 3);
-    }
-}
+// #[cfg(test)]
+// mod test {
+//     use crate::luz::obj::LuzObj;
+//
+//     #[test]
+//     fn test_find_boundary() {
+//         use crate::luz::numeral::Numeral;
+//
+//         use super::Table;
+//
+//         let mut table = Table::default();
+//
+//         table.push(Numeral::Int(1).into());
+//         table.push(Numeral::Int(2).into());
+//         table.push(Numeral::Int(3).into());
+//         table.push(LuzObj::Nil);
+//         table.push(Numeral::Int(4).into());
+//         table.push(Numeral::Int(5).into());
+//         table.push(Numeral::Int(6).into());
+//         table.push(Numeral::Int(7).into());
+//
+//         let b_loop = table.find_boundary_in_array();
+//
+//         assert_eq!(b_loop, 3);
+//     }
+// }

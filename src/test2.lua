@@ -3,7 +3,7 @@
 --
 -- print("testing functions and calls")
 --
--- -- local debug = require "debug"
+local debug = require "debug"
 --
 -- -- get the opportunity to test 'type' too ;)
 --
@@ -247,80 +247,81 @@
 --
 -- local f = g(10)
 -- assert(f(9, 16) == 10 + 11 + 12 + 13 + 10 + 9 + 16 + 10)
-
-print('+')
-
--- testing multiple returns
-
-local function unlpack (t, i)
-  i = i or 1
-  if (i <= #t) then
-    return t[i], unlpack(t, i+1)
-  end
-end
-
-local function equaltab (t1, t2)
-  assert(#t1 == #t2)
-  for i = 1, #t1 do
-    assert(t1[i] == t2[i])
-  end
-end
-
-local pack = function (...) return (table.pack(...)) end
-
-local function f() return 1,2,30,4 end
-local function ret2 (a,b) return a,b end
-
-local a,b,c,d = unlpack{1,2,3}
-assert(a==1 and b==2 and c==3 and d==nil)
-a = {1,2,3,4,false,10,'alo',false,assert}
-equaltab(pack(unlpack(a)), a)
-equaltab(pack(unlpack(a), -1), {1,-1})
-a,b,c,d = ret2(f()), ret2(f())
-assert(a==1 and b==1 and c==2 and d==nil)
-a,b,c,d = unlpack(pack(ret2(f()), ret2(f())))
-assert(a==1 and b==1 and c==2 and d==nil)
-a,b,c,d = unlpack(pack(ret2(f()), (ret2(f()))))
-assert(a==1 and b==1 and c==nil and d==nil)
-
-a = ret2{ unlpack{1,2,3}, unlpack{3,2,1}, unlpack{"a", "b"}}
-assert(a[1] == 1 and a[2] == 3 and a[3] == "a" and a[4] == "b")
-
-
--- testing calls with 'incorrect' arguments
-rawget({}, "x", 1)
-rawset({}, "x", 1, 2)
-assert(math.sin(1,2) == math.sin(1))
-table.sort({10,9,8,4,19,23,0,0}, function (a,b) return a<b end, "extra arg")
-
--- -- test for generic load
--- local x = "-- a comment\0\0\0\n  x = 10 + \n23; \
---      local a = function () x = 'hi' end; \
---      return '\0'"
--- local function read1 (x)
---   local i = 0
---   return function ()
---     collectgarbage()
---     i=i+1
---     return string.sub(x, i, i)
+--
+-- print('+')
+--
+-- -- testing multiple returns
+--
+-- local function unlpack (t, i)
+--   i = i or 1
+--   if (i <= #t) then
+--     return t[i], unlpack(t, i+1)
 --   end
 -- end
 --
--- local function cannotload (msg, a,b)
---   assert(not a and string.find(b, msg))
+-- local function equaltab (t1, t2)
+--   assert(#t1 == #t2)
+--   for i = 1, #t1 do
+--     assert(t1[i] == t2[i])
+--   end
 -- end
 --
--- a = assert(load(read1(x), "modname", "t", _G))
--- assert(a() == "\0" and _G.x == 33)
--- assert(debug.getinfo(a).source == "modname")
--- -- cannot read text in binary mode
--- cannotload("attempt to load a text chunk", load(read1(x), "modname", "b", {}))
+-- local pack = function (...) return (table.pack(...)) end
+--
+-- local function f() return 1,2,30,4 end
+-- local function ret2 (a,b) return a,b end
+--
+-- local a,b,c,d = unlpack{1,2,3}
+-- assert(a==1 and b==2 and c==3 and d==nil)
+-- a = {1,2,3,4,false,10,'alo',false,assert}
+-- equaltab(pack(unlpack(a)), a)
+-- equaltab(pack(unlpack(a), -1), {1,-1})
+-- a,b,c,d = ret2(f()), ret2(f())
+-- assert(a==1 and b==1 and c==2 and d==nil)
+-- a,b,c,d = unlpack(pack(ret2(f()), ret2(f())))
+-- assert(a==1 and b==1 and c==2 and d==nil)
+-- a,b,c,d = unlpack(pack(ret2(f()), (ret2(f()))))
+-- assert(a==1 and b==1 and c==nil and d==nil)
+--
+-- a = ret2{ unlpack{1,2,3}, unlpack{3,2,1}, unlpack{"a", "b"}}
+-- assert(a[1] == 1 and a[2] == 3 and a[3] == "a" and a[4] == "b")
+--
+--
+-- -- testing calls with 'incorrect' arguments
+-- rawget({}, "x", 1)
+-- rawset({}, "x", 1, 2)
+-- assert(math.sin(1,2) == math.sin(1))
+-- table.sort({10,9,8,4,19,23,0,0}, function (a,b) return a<b end, "extra arg")
+
+-- test for generic load
+local x = "-- a comment\0\0\0\n  x = 10 + \n23; \
+     local a = function () x = 'hi' end; \
+     return '\0'"
+local function read1 (x)
+  local i = 0
+  return function ()
+    collectgarbage()
+    i=i+1
+    return string.sub(x, i, i)
+  end
+end
+
+local function cannotload (msg, a,b)
+  assert(not a and string.find(b, msg))
+end
+
+a = assert(load(read1(x), "modname", "t", _G))
+assert(a() == "\0" and _G.x == 33)
+assert(debug.getinfo(a).source == "modname")
+
+-- cannot read text in binary mode
+cannotload("attempt to load a text chunk", load(read1(x), "modname", "b", {}))
 -- cannotload("attempt to load a text chunk", load(x, "modname", "b"))
---
--- a = assert(load(function () return nil end))
--- a()  -- empty chunk
---
--- assert(not load(function () return true end))
+
+a = assert(load(function () return nil end))
+a()  -- empty chunk
+
+assert(not load(function () return true end))
 
 
 -- small bug

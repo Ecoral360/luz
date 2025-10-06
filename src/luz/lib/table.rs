@@ -5,7 +5,7 @@ use crate::{
         lib::LuzNativeLib,
         obj::{LuzObj, Table, TableRef},
     },
-    luz_fn, luz_table, run, run_baselib_only,
+    luz_fn, luz_table,
     runner::err::LuzRuntimeError,
 };
 

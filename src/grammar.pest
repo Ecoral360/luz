@@ -31,14 +31,14 @@ stat = _{
 }
 
 AssignStat      = {
-    varlist ~ "=" ~ explist
+    varlist ~ NEWLINE* ~ "=" ~ NEWLINE* ~ explist
 }
 LocalAssignStat = {
-    "local" ~ nameattriblist ~ ("=" ~ explist)?
+    "local" ~ nameattriblist ~ NEWLINE* ~ ("=" ~ NEWLINE* ~ explist)?
 }
 
 nameattriblist = {
-    Name ~ (#attrib = Attrib)? ~ ("," ~ Name ~ (#attrib = Attrib)?)*
+    Name ~ NEWLINE* ~ (#attrib = Attrib)? ~ (NEWLINE* ~ "," ~ NEWLINE* ~ Name ~ NEWLINE* ~ (#attrib = Attrib)?)*
 }
 Attrib         = {
     "<" ~ Name ~ ">"
@@ -106,7 +106,7 @@ namelist = {
 }
 
 explist = {
-    exp ~ ("," ~ exp)*
+    exp ~ NEWLINE* ~ (NEWLINE* ~ "," ~ NEWLINE* ~ exp ~ NEWLINE*)*
 }
 
 exp     =  { prefix* ~ primary ~ postfix* ~ (NEWLINE* ~ infix ~ NEWLINE* ~ prefix* ~ primary ~ postfix*)* }
@@ -132,7 +132,7 @@ FunctionCall = { prefixExp ~ (Access* ~ Call+)+ }
 Call = { (":" ~ #method = Name)? ~ Args }
 Args = {
     LiteralString
-  | "(" ~ explist? ~ ")"
+  | "(" ~ NEWLINE* ~ explist? ~ NEWLINE* ~ ")"
   | TableConstructor
 }
 

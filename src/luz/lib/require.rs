@@ -4,7 +4,7 @@ use crate::{
     compiler::ctx::{Scope, Upvalue},
     load,
     luz::{
-        lib::LuzNativeLib,
+        lib::{add_lib, debug::debug_lib, LuzNativeLib},
         obj::{LuzObj, LuzType, TableRef},
     },
     luz_fn, luz_let, luz_table,
@@ -73,7 +73,11 @@ pub fn package_lib(registry: TableRef) -> LuzNativeLib {
         .borrow_mut()
         .rawset(LuzObj::str("package.loaded"), loaded);
 
-    let preload = luz_table! {};
+    let preload = luz_table! {
+        debug: luz_fn!([0, runner]() {
+            Ok(vec![debug_lib(runner.registry())])
+        })
+    };
 
     registry
         .borrow_mut()
@@ -100,6 +104,7 @@ pub fn package_lib(registry: TableRef) -> LuzNativeLib {
     let searchers = luz_table![
         luz_fn!([1, runner](modname) {
             let preload = runner.registry().borrow().rawget(&LuzObj::str("package.preload")).as_table_or_err()?;
+
 
             let result = preload.borrow().rawget(&modname).clone();
             Ok(vec![result, LuzObj::str(":preload:")])

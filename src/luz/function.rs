@@ -30,12 +30,21 @@ pub enum LuzFunction {
     },
     Native {
         nb_fixed_params: u32,
+        scope: Option<ScopeRef>,
         fn_ptr:
             Rc<RefCell<dyn Fn(&mut Runner, Vec<LuzObj>) -> Result<Vec<LuzObj>, LuzRuntimeError>>>,
     },
 }
 
 impl LuzFunction {
+    pub fn scope(&self) -> Option<ScopeRef> {
+        let scope = match self {
+            LuzFunction::User { scope, .. } => Some(scope),
+            LuzFunction::Native { scope, .. } => scope.as_ref(),
+        };
+        scope.map(|scope| Rc::clone(scope))
+    }
+
     pub fn nb_fixed_params(&self) -> u32 {
         match self {
             LuzFunction::User {
@@ -125,7 +134,8 @@ impl LuzFunction {
                 "error: cannot do a dump of a native function",
             ));
         };
-        let mut dump = vec![];
+        // luz magic number : code(141) LUZ code(141)
+        let mut dump = vec![141, 76, 85, 90, 141];
         // number of parameters
         dump.extend(nb_fixed_params.to_be_bytes());
 
@@ -191,8 +201,21 @@ impl LuzFunction {
         Ok(unsafe { String::from_utf8_unchecked(dump) })
     }
 
-    pub fn load_bin(&self, bin: Vec<u8>, env: LuzObj) -> Result<LuzFunction, LuzRuntimeError> {
-        let mut ptr = 0;
+    /// Returns if a bin vector is a luz precompiled dump
+    pub fn is_valid_bin(bin: &[u8]) -> bool {
+        return !bin.is_empty() && bin[0..5] == [141, 76, 85, 90, 141];
+    }
+
+    pub fn load_bin(
+        bin: &[u8],
+        env: LuzObj,
+        name: Option<String>,
+        parent_scope: ScopeRef,
+    ) -> Result<LuzFunction, LuzRuntimeError> {
+        if !LuzFunction::is_valid_bin(&bin) {
+            return Err(LuzRuntimeError::message("Invaid luz bin format."));
+        }
+        let mut ptr = 5;
         let num_params = get_next_u32(&bin, &mut ptr);
         let num_regs = get_next_u32(&bin, &mut ptr);
         let num_upvals = get_next_u32(&bin, &mut ptr);
@@ -231,7 +254,7 @@ impl LuzFunction {
             }
         }
 
-        let mut scope = Scope::new(None, None);
+        let mut scope = Scope::new(name, Some(parent_scope));
         for _ in 0..num_regs {
             scope.push_reg(&mut RegisterBuilder::default());
         }
@@ -239,6 +262,11 @@ impl LuzFunction {
 
         for i in 0..num_upvals {
             scope.push_upval(Upvalue::new(String::new(), i as u8, 0, true));
+            scope.set_upvalue_value(i as u8, LuzObj::Nil);
+        }
+
+        if num_upvals > 0 {
+            scope.set_upvalue_value(0, env);
         }
 
         let mut instructions = vec![];
@@ -248,6 +276,8 @@ impl LuzFunction {
         }
 
         scope.set_instructions(instructions);
+
+        // println!("{}", scope.instructions_to_string());
 
         let fun = LuzFunction::User {
             nb_fixed_params: num_params,
@@ -259,12 +289,12 @@ impl LuzFunction {
     }
 }
 
-fn get_next_u8(vec: &Vec<u8>, start: &mut usize) -> u8 {
+fn get_next_u8(vec: &[u8], start: &mut usize) -> u8 {
     *start += 1;
     vec[*start - 1]
 }
 
-fn get_next_u32(vec: &Vec<u8>, start: &mut usize) -> u32 {
+fn get_next_u32(vec: &[u8], start: &mut usize) -> u32 {
     *start += 4;
     u32::from_be_bytes([
         vec[*start - 4],
@@ -273,7 +303,7 @@ fn get_next_u32(vec: &Vec<u8>, start: &mut usize) -> u32 {
         vec[*start - 1],
     ])
 }
-fn get_next_8bytes(vec: &Vec<u8>, start: &mut usize) -> [u8; 8] {
+fn get_next_8bytes(vec: &[u8], start: &mut usize) -> [u8; 8] {
     *start += 8;
     [
         vec[*start - 8],

@@ -7,13 +7,15 @@ mod math;
 mod require;
 mod string;
 mod table;
+mod debug;
 
 #[macro_export]
 macro_rules! luz_fn {
     ([$nb_fixed:literal, $runner:ident]($($arg:pat,)* *$args:ident) $body:block ) => {
-        LuzObj::Function(std::rc::Rc::new(std::cell::RefCell::new(
+        $crate::luz::obj::LuzObj::Function(std::rc::Rc::new(std::cell::RefCell::new(
             $crate::luz::obj::LuzFunction::new_native(
                 $nb_fixed,
+                None,
                 std::rc::Rc::new(std::cell::RefCell::new(
                     |$runner: &mut $crate::runner::Runner, $args: Vec<$crate::luz::obj::LuzObj>| {
                         #[allow(unused_mut)]
@@ -36,9 +38,10 @@ macro_rules! luz_fn {
     };
 
     ([$nb_fixed:literal, $runner:ident]($($arg:pat),* $(,)?) $body:block ) => {
-        LuzObj::Function(std::rc::Rc::new(std::cell::RefCell::new(
+        $crate::luz::obj::LuzObj::Function(std::rc::Rc::new(std::cell::RefCell::new(
             $crate::luz::obj::LuzFunction::new_native(
                 $nb_fixed,
+                None,
                 std::rc::Rc::new(std::cell::RefCell::new(
                     |$runner: &mut $crate::runner::Runner, args: Vec<$crate::luz::obj::LuzObj>| {
                         #[allow(unused_mut)]
@@ -61,9 +64,10 @@ macro_rules! luz_fn {
     };
 
     ([$nb_fixed:literal]($($arg:pat,)* *$args:ident) $body:block ) => {
-        LuzObj::Function(std::rc::Rc::new(std::cell::RefCell::new(
+        $crate::luz::obj::LuzObj::Function(std::rc::Rc::new(std::cell::RefCell::new(
             $crate::luz::obj::LuzFunction::new_native(
                 $nb_fixed,
+                None,
                 std::rc::Rc::new(std::cell::RefCell::new(
                     |_: &mut $crate::runner::Runner, $args: Vec<$crate::luz::obj::LuzObj>| {
                         #[allow(unused_mut)]
@@ -86,9 +90,10 @@ macro_rules! luz_fn {
     };
 
     ([$nb_fixed:literal]($($arg:pat),* $(,)?) $body:block ) => {
-        LuzObj::Function(std::rc::Rc::new(std::cell::RefCell::new(
+        $crate::luz::obj::LuzObj::Function(std::rc::Rc::new(std::cell::RefCell::new(
             $crate::luz::obj::LuzFunction::new_native(
                 $nb_fixed,
+                None,
                 std::rc::Rc::new(std::cell::RefCell::new(
                     |_: &mut $crate::runner::Runner, _args: Vec<$crate::luz::obj::LuzObj>| {
                         #[allow(unused_mut)]
@@ -173,4 +178,11 @@ macro_rules! luz_let {
 #[derive(Debug, Clone, new)]
 pub struct LuzNativeLib {
     pub exports: Vec<(String, LuzObj)>,
+}
+
+pub fn add_lib(glob_table: &LuzObj, lib: LuzNativeLib) {
+    let glob_table = glob_table.as_table_or_err().unwrap();
+    for (name, val) in lib.exports {
+        glob_table.borrow_mut().rawset(LuzObj::str(&name), val);
+    }
 }

@@ -233,10 +233,6 @@ impl TryFrom<u32> for Instruction {
 
         match op.unwrap() {
             LuaOpCode::OP_MOVE
-            | LuaOpCode::OP_LOADI
-            | LuaOpCode::OP_LOADF
-            | LuaOpCode::OP_LOADK
-            | LuaOpCode::OP_LOADKX
             | LuaOpCode::OP_LOADFALSE
             | LuaOpCode::OP_LFALSESKIP
             | LuaOpCode::OP_LOADTRUE
@@ -305,15 +301,18 @@ impl TryFrom<u32> for Instruction {
             | LuaOpCode::OP_VARARGPREP
             | LuaOpCode::OP_RETURN1
             | LuaOpCode::OP_SETLIST
-            | LuaOpCode::OP_CLOSURE
-            | LuaOpCode::OP_EXTRAARG
+            | LuaOpCode::OP_TFORCALL
             | LuaOpCode::OP_CLOSE => Ok(Instruction::iABC(iABC::from(value))),
+            LuaOpCode::OP_LOADK
+            | LuaOpCode::OP_CLOSURE
+            | LuaOpCode::OP_LOADKX
+            | LuaOpCode::OP_FORLOOP
+            | LuaOpCode::OP_FORPREP
+            | LuaOpCode::OP_TFORPREP
+            | LuaOpCode::OP_TFORLOOP => Ok(Instruction::iABx(iABx::from(value))),
+            LuaOpCode::OP_LOADI | LuaOpCode::OP_LOADF => Ok(Instruction::iAsBx(iAsBx::from(value))),
+            LuaOpCode::OP_EXTRAARG => Ok(Instruction::iAx(iAx::from(value))),
             LuaOpCode::OP_JMP => Ok(Instruction::isJ(isJ::from(value))),
-            LuaOpCode::OP_FORLOOP => todo!(),
-            LuaOpCode::OP_FORPREP => todo!(),
-            LuaOpCode::OP_TFORPREP => todo!(),
-            LuaOpCode::OP_TFORCALL => todo!(),
-            LuaOpCode::OP_TFORLOOP => todo!(),
             LuaOpCode::OP_TBC => todo!(),
             LuaOpCode::OP_debug => todo!(),
         }
@@ -321,7 +320,7 @@ impl TryFrom<u32> for Instruction {
 }
 
 #[allow(non_upper_case_globals)]
-pub const MAX_HALF_sBx: u32 = 131072;
+pub const MAX_HALF_sBx: u32 = u16::MAX as u32; //131072;
 
 #[allow(non_upper_case_globals)]
 pub const MAX_HALF_sJ: u32 = 16777216;
@@ -579,7 +578,7 @@ impl Instruction {
 
     pub fn op_loadi(reg: u8, imm: u32) -> Instruction {
         LuaOpCode::OP_LOADI
-            .to_iasbx(reg, imm.wrapping_add(MAX_HALF_sBx))
+            .to_iasbx(reg, (imm as i64 + MAX_HALF_sBx as i64) as u32)
             .into()
     }
     pub fn op_loadf(reg: u8, imm: f64) -> Instruction {
@@ -1011,7 +1010,7 @@ impl Into<Instruction> for iABx {
 
 impl Into<u32> for iABx {
     fn into(self) -> u32 {
-        self.op as u32 | (self.a as u32) << 7 | self.b << 16
+        self.op as u32 | (self.a as u32) << 7 | self.b << 15
     }
 }
 
@@ -1084,7 +1083,16 @@ impl Into<Instruction> for iAsBx {
 
 impl Into<u32> for iAsBx {
     fn into(self) -> u32 {
-        self.op as u32 | (self.a as u32) << 7 | self.b << 16
+        let b = self.b << 15;
+        // println!(
+        //     "op  = {:>32}\na   = {:>32}\nb   = {:>32}\nb   = {:>32}",
+        //     format!("|{:7b}", self.op as u32),
+        //     format!("|{:8b}", (self.a as u32) << 7),
+        //     format!("{:<32b}", self.b),
+        //     format!("{:<32b}", self.b << 13),
+        // );
+        let result = self.op as u32 | (self.a as u32) << 7 | b;
+        result
     }
 }
 
@@ -1093,6 +1101,13 @@ impl From<u32> for iAsBx {
         let op = get_arg(val, 7, 0);
         let a = get_arg(val, 8, 7);
         let b = get_arg(val, 17, 15);
+        // println!(
+        //     "val = {:>32b}\nop  = {:>32}\na   = {:>32}\nb   = {:>32}",
+        //     val,
+        //     format!("|{:7b}", op),
+        //     format!("|{:8b}", a << 7),
+        //     format!("{:17b}", b << 15),
+        // );
         Self {
             b: b as u32,
             a: a as u8,
@@ -1141,14 +1156,14 @@ impl Into<Instruction> for isJ {
 
 impl Into<u32> for isJ {
     fn into(self) -> u32 {
-        self.op as u32 | self.j << 16
+        self.op as u32 | self.j << 7
     }
 }
 
 impl From<u32> for isJ {
     fn from(val: u32) -> Self {
         let op = get_arg(val, 7, 0);
-        let b = get_arg(val, 17, 15);
+        let b = get_arg(val, 25, 7);
         Self {
             j: b as u32,
             op: (op as u8).try_into().unwrap(),
@@ -1209,7 +1224,7 @@ impl Into<u32> for iAx {
 impl From<u32> for iAx {
     fn from(val: u32) -> Self {
         let op = get_arg(val, 7, 0);
-        let a = get_arg(val, 8, 7);
+        let a = get_arg(val, 25, 7);
         Self {
             a: a as u32,
             op: (op as u8).try_into().unwrap(),
@@ -1246,8 +1261,12 @@ fn get_arg(val: u32, size: u32, pos: u32) -> u32 {
 }
 
 #[cfg(test)]
+#[allow(non_snake_case)]
 mod test {
-    use crate::compiler::{instructions::iABC, opcode::LuaOpCode};
+    use crate::compiler::{
+        instructions::{iABC, MAX_HALF_sBx},
+        opcode::LuaOpCode,
+    };
 
     #[test]
     fn test_luacode_instructions() {
@@ -1262,5 +1281,86 @@ mod test {
         let i: u32 = instruction.into();
         println!("{:0b}", i);
         assert_eq!(iABC::from(i), instruction);
+    }
+
+    #[test]
+    fn test_iAx() {
+        let instruction = crate::compiler::instructions::iAx {
+            a: 0x3FFFFF,
+            op: LuaOpCode::OP_EXTRAARG,
+        };
+
+        let i: u32 = instruction.into();
+        println!("{:032b}", i);
+        assert_eq!(crate::compiler::instructions::iAx::from(i), instruction);
+    }
+
+    #[test]
+    fn test_isJ() {
+        let instruction = crate::compiler::instructions::isJ {
+            j: 0x1FFFFFF,
+            op: LuaOpCode::OP_JMP,
+        };
+
+        let i: u32 = instruction.into();
+        println!("{:032b}", i);
+        assert_eq!(crate::compiler::instructions::isJ::from(i), instruction);
+    }
+
+    #[test]
+    fn test_iAsBx() {
+        let instruction = crate::compiler::instructions::iAsBx {
+            b: 0x1FFFF,
+            a: 0xFF,
+            op: LuaOpCode::OP_FORLOOP,
+        };
+
+        let i: u32 = instruction.into();
+        println!("{:032b}", i);
+        assert_eq!(crate::compiler::instructions::iAsBx::from(i), instruction);
+
+        // load a negative immediate
+        let instruction = crate::compiler::instructions::iAsBx {
+            // -1
+            b: MAX_HALF_sBx - 1,
+            a: 0xFF,
+            op: LuaOpCode::OP_ADDI,
+        };
+        let i: u32 = instruction.into();
+        println!("{:032b}", i);
+        assert_eq!(crate::compiler::instructions::iAsBx::from(i), instruction);
+
+        // load a positive immediate
+        let instruction = crate::compiler::instructions::iAsBx {
+            // 1
+            b: MAX_HALF_sBx + 1,
+            a: 0xFF,
+            op: LuaOpCode::OP_ADDI,
+        };
+        let i: u32 = instruction.into();
+        println!("{:032b}", i);
+        assert_eq!(crate::compiler::instructions::iAsBx::from(i), instruction);
+    }
+
+    #[test]
+    fn test_iABx() {
+        let instruction = crate::compiler::instructions::iABx {
+            b: 0x1FFFF,
+            a: 0xFF,
+            op: LuaOpCode::OP_CLOSURE,
+        };
+
+        let i: u32 = instruction.into();
+        println!("{:032b}", i);
+        assert_eq!(crate::compiler::instructions::iABx::from(i), instruction);
+
+        let instruction = crate::compiler::instructions::iABx {
+            b: 0x1FFFF,
+            a: 0xFF,
+            op: LuaOpCode::OP_LOADK,
+        };
+        let i: u32 = instruction.into();
+        println!("{:032b}", i);
+        assert_eq!(crate::compiler::instructions::iABx::from(i), instruction);
     }
 }
