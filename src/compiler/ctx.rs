@@ -56,6 +56,8 @@ impl CompilerCtx {
 
         scope.upvalues.append(&mut upvalues);
 
+        scope.instructions.push(Instruction::op_varargprep(0));
+
         Self {
             scope: Rc::new(RefCell::new(scope)),
             nb_expected: 2,

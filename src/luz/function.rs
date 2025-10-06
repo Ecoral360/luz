@@ -9,7 +9,10 @@ use crate::{
         ctx::{RegisterBuilder, Scope, ScopeRef, Upvalue},
         instructions::{self, Instruction},
     },
-    luz::{lib::env::get_builtin_scope, obj::{LuzObj, Numeral}},
+    luz::{
+        lib::env::get_builtin_scope,
+        obj::{LuzObj, Numeral},
+    },
     runner::{err::LuzRuntimeError, Runner},
 };
 
@@ -263,9 +266,13 @@ impl LuzFunction {
             scope.set_upvalue_value(i as u8, LuzObj::Nil);
         }
 
-        if num_upvals > 0 {
-            scope.set_upvalue_value(0, env);
-        }
+        scope.push_upval(Upvalue::new(
+            String::from("_ENV"),
+            num_upvals as u8,
+            0,
+            true,
+        ));
+        scope.set_upvalue_value(num_upvals as u8, env);
 
         let mut instructions = vec![];
         for _ in 0..num_instructions {
