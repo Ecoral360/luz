@@ -1,7 +1,7 @@
 use std::{cell::RefCell, ops::Deref, rc::Rc, str::FromStr};
 
 use crate::{
-    compiler::ctx::{RegisterBuilder, Scope},
+    compiler::ctx::{RegisterBuilder, Scope, Upvalue},
     load,
     luz::{
         err::LuzError,
@@ -112,7 +112,7 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
             }
         }),
 
-        load: luz_fn!([1, runner](chunk, chunkname, mode, env, *args) {
+        load: luz_fn!([1, runner](chunk, chunkname, mode, *args) {
             let input = match chunk {
                 LuzObj::String(input) => {
                     input
@@ -121,7 +121,13 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
                     let mut input = vec![];
 
                     loop {
-                        let results = obj.call(runner, vec![], vec![])?;
+                        let results = obj.call(runner, vec![], vec![]);
+                        let results = match results {
+                            Ok(results) => results,
+                            Err(err) => return Ok(vec![LuzObj::Nil,
+                                LuzObj::str(err.to_string())]),
+
+                        };
                         let new_input = results.get(0).unwrap_or(&LuzObj::Nil);
                         if new_input.is_nil() {
                             break input;
@@ -143,12 +149,13 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
 
             luz_let!(LuzObj::String(mode) = mode.or(LuzObj::str("bt")));
 
+            let env = args.pop_front().unwrap_or_else(|| runner.registry().borrow().rawget(&LuzObj::str("_G")).clone());
+
             let is_valid_bin = LuzFunction::is_valid_bin(&input);
             let input = match mode.as_utf8_string_unchecked().deref() {
                 "b" | "bt" if is_valid_bin => {
                     let name = if let LuzObj::String(n) = chunkname { Some(n.as_utf8_string_unchecked()) } else { None };
                     let bin = input;
-                    let env = env.or(runner.get_val("_ENV").unwrap_or(LuzObj::Nil));
                     let f = LuzFunction::load_bin(&bin, env, name, runner.clone_scope()).map_err(|_| {
                         LuzRuntimeError::message("attempt to load a binary chunk")
                     })?;
@@ -178,16 +185,22 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
 
             let name = if let LuzObj::String(n) = chunkname { n.as_utf8_string_unchecked() } else { input.as_utf8_string_unchecked() };
 
-            let r = load(None, input.as_utf8_string_unchecked(), name, None, vec![])
-                .map_err(|e| {
-                    if matches!(e, LuzError::RuntimeError(..)) {
-                        LuzRuntimeError::message(e.to_string())
-                    } else {
-                        LuzRuntimeError::message("attempt to load a text chunk")
-                    }
-                })?;
+            let r = load(None, input.as_utf8_string_unchecked(), name, env);
 
-            Ok(vec![LuzObj::Function(Rc::new(RefCell::new(r)))])
+            match r {
+                Ok(r) => Ok(vec![LuzObj::Function(Rc::new(RefCell::new(r)))]),
+                Err(err) => {
+                    if matches!(err, LuzError::Syntax(..)) {
+                        Ok(vec![LuzObj::Nil,
+                            LuzObj::str("unexpected symbol")])
+                    } else {
+                        Ok(vec![LuzObj::Nil,
+                            LuzObj::str(err.to_string())])
+                    }
+                }
+            }
+
+
         }),
 
         select: luz_fn!([1](*args) {

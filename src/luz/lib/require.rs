@@ -104,15 +104,16 @@ pub fn package_lib(registry: TableRef) -> LuzNativeLib {
     let searchers = luz_table![
         luz_fn!([1, runner](modname) {
             let preload = runner.registry().borrow().rawget(&LuzObj::str("package.preload")).as_table_or_err()?;
-
-
             let result = preload.borrow().rawget(&modname).clone();
+
             Ok(vec![result, LuzObj::str(":preload:")])
         }),
         luz_fn!([1, runner](modname) {
             let package = runner.get_val("package").ok_or(LuzRuntimeError::message(
                 "Variable named 'package' not found",
             ))?.as_table_or_err()?;
+
+            let env = runner.registry().borrow().rawget(&LuzObj::str("_G")).clone();
 
             let package = package.borrow();
 
@@ -133,8 +134,7 @@ pub fn package_lib(registry: TableRef) -> LuzNativeLib {
                     Some(fs_path.as_utf8_string_unchecked()),
                     input.clone(),
                     input.clone(),
-                    None,
-                    vec![],
+                    env,
                 ).map_err(|e| LuzRuntimeError::message(e.to_string()))?;
 
                 Ok(vec![LuzObj::Function(Rc::new(RefCell::new(r))), LuzObj::String(fs_path.to_vec())])

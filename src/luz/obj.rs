@@ -179,6 +179,15 @@ impl LuzObj {
         }
     }
 
+    /// Returns `None` if self is nil, else `Some(self)`
+    pub fn to_option(self) -> Option<Self> {
+        if self.is_nil() {
+            None
+        } else {
+            Some(self)
+        }
+    }
+
     pub fn str<T: ToString>(string: T) -> Self {
         Self::String(string.to_string().into_bytes())
     }

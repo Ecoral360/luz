@@ -14,7 +14,7 @@ use crate::{
     },
     luz::{
         lib::env::make_env_table,
-        obj::{LuzFunction, LuzObj},
+        obj::{LuzFunction, LuzObj, LuzType, TableRef},
     },
     runner::{err::LuzRuntimeError, Runner},
 };
@@ -164,8 +164,7 @@ pub fn load(
     filename: Option<String>,
     input: String,
     name: String,
-    parent_scope: Option<ScopeRef>,
-    upvalues: Vec<Upvalue>,
+    env: LuzObj,
 ) -> Result<LuzFunction, LuzError> {
     let mut stmts = LuaParser::parse(Rule::Chunk, &input)?;
 
@@ -175,35 +174,41 @@ pub fn load(
     let mut compiler = Compiler::new(&input);
     let mut ctx = CompilerCtx::new_chunk(
         filename.as_ref().unwrap_or(&String::new()).clone(),
-        name.clone(),
-        parent_scope.as_ref().map(|scope| Rc::clone(scope)),
-        upvalues,
+        name,
+        None,
+        vec![],
     );
+
     for stmt in stmts {
         compiler.visit_stat(&stmt, &mut ctx)?;
     }
 
-    debug!("{}", ctx.instructions_to_string());
+    compiler.finish(&mut ctx);
 
-    let parent_scope = parent_scope.unwrap_or_else(move || Scope::new_ref(name, None));
+    ctx.scope_mut().set_upvalue_value(0, env);
 
-    // let res = runner.run()?;
-    // info!("{:?}", res);
-    // Ok(())
-    let filename = filename.unwrap_or_default();
-    Ok(LuzFunction::new_native(
+    // debug!("{}", ctx.instructions_to_string());
+
+    Ok(LuzFunction::new_user(
         0,
-        Some(parent_scope),
-        Rc::new(RefCell::new(move |run: &mut Runner, _args: Vec<LuzObj>| {
-            let mut runner = runner::Runner::new_chunk(
-                filename.clone(),
-                &input,
-                ctx.scope_clone(),
-                run.registry(),
-            );
-            runner
-                .run()
-                .map_err(|e| LuzRuntimeError::message(e.to_string()))
-        })),
+        ctx.scope_clone(),
+        filename.unwrap_or_default(),
     ))
+
+    // let filename = filename.unwrap_or_default();
+    // Ok(LuzFunction::new_native(
+    //     0,
+    //     Some(parent_scope),
+    //     Rc::new(RefCell::new(move |run: &mut Runner, _args: Vec<LuzObj>| {
+    //         let mut runner = runner::Runner::new_chunk(
+    //             filename.clone(),
+    //             &input,
+    //             ctx.scope_clone(),
+    //             run.registry(),
+    //         );
+    //         runner
+    //             .run()
+    //             .map_err(|e| LuzRuntimeError::message(e.to_string()))
+    //     })),
+    // ))
 }

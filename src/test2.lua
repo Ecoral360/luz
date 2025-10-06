@@ -342,59 +342,59 @@ do   -- another bug (in 5.4.0)
   f = load(read1(f))
   assert(f() == '01234567890123456789012345678901234567890123456789')
 end
---
---
--- x = string.dump(load("x = 1; return x"))
--- a = assert(load(read1(x), nil, "b"))
--- assert(a() == 1 and _G.x == 1)
--- cannotload("attempt to load a binary chunk", load(read1(x), nil, "t"))
--- cannotload("attempt to load a binary chunk", load(x, nil, "t"))
--- _G.x = nil
---
--- assert(not pcall(string.dump, print))  -- no dump of C functions
---
--- cannotload("unexpected symbol", load(read1("*a = 123")))
--- cannotload("unexpected symbol", load("*a = 123"))
--- cannotload("hhi", load(function () error("hhi") end))
---
--- -- any value is valid for _ENV
--- assert(load("return _ENV", nil, nil, 123)() == 123)
---
---
--- -- load when _ENV is not first upvalue
--- local x; XX = 123
--- local function h ()
---   local y=x   -- use 'x', so that it becomes 1st upvalue
---   return XX   -- global name
--- end
--- local d = string.dump(h)
--- x = load(d, "", "b")
--- assert(debug.getupvalue(x, 2) == '_ENV')
--- debug.setupvalue(x, 2, _G)
--- assert(x() == 123)
---
--- assert(assert(load("return XX + ...", nil, nil, {XX = 13}))(4) == 17)
--- XX = nil
---
--- -- test generic load with nested functions
--- x = [[
---   return function (x)
---     return function (y)
---      return function (z)
---        return x+y+z
---      end
---    end
---   end
--- ]]
--- a = assert(load(read1(x), "read", "t"))
--- assert(a()(2)(3)(10) == 15)
---
--- -- repeat the test loading a binary chunk
--- x = string.dump(a)
--- a = assert(load(read1(x), "read", "b"))
--- assert(a()(2)(3)(10) == 15)
---
---
+
+
+x = string.dump(load("x = 1; return x"))
+a = assert(load(read1(x), nil, "b"))
+assert(a() == 1 and _G.x == 1)
+cannotload("attempt to load a binary chunk", load(read1(x), nil, "t"))
+cannotload("attempt to load a binary chunk", load(x, nil, "t"))
+_G.x = nil
+
+assert(not pcall(string.dump, print))  -- no dump of C functions
+
+cannotload("unexpected symbol", load(read1("*a = 123")))
+cannotload("unexpected symbol", load("*a = 123"))
+cannotload("hhi", load(function () error("hhi") end))
+
+-- any value is valid for _ENV
+assert(load("return _ENV", nil, nil, 123)() == 123)
+
+
+-- load when _ENV is not first upvalue
+local x; XX = 123
+local function h ()
+  local y=x   -- use 'x', so that it becomes 1st upvalue
+  return XX   -- global name
+end
+local d = string.dump(h)
+x = load(d, "", "b")
+assert(debug.getupvalue(x, 2) == '_ENV')
+debug.setupvalue(x, 2, _G)
+assert(x() == 123)
+
+assert(assert(load("return XX + ...", nil, nil, {XX = 13}))(4) == 17)
+XX = nil
+
+-- test generic load with nested functions
+x = [[
+  return function (x)
+    return function (y)
+     return function (z)
+       return x+y+z
+     end
+   end
+  end
+]]
+a = assert(load(read1(x), "read", "t"))
+assert(a()(2)(3)(10) == 15)
+
+-- repeat the test loading a binary chunk
+x = string.dump(a)
+a = assert(load(read1(x), "read", "b"))
+assert(a()(2)(3)(10) == 15)
+
+
 -- -- test for dump/undump with upvalues
 -- local a, b = 20, 30
 -- x = load(string.dump(function (x)

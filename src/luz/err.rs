@@ -13,7 +13,7 @@ pub enum LuzError {
     #[error("Invalid attribute {0:?}. Expected 'const' or 'close'")]
     InvalidAttribute(String),
 
-    #[error("Invalid type {wrong:?}. Expected {expected:?}")]
+    #[error("Invalid type {wrong}. Expected {}", expected.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(", or "))]
     Type {
         wrong: LuzType,
         expected: Vec<LuzType>,

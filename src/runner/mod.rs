@@ -59,8 +59,12 @@ impl<'a> Runner<'a> {
     ) -> Self {
         let env = Scope::get_global(Rc::clone(&scope)).unwrap();
         let global = registry.borrow().rawget(&LuzObj::str("_G")).clone();
-
-        env.borrow_mut().set_reg_with_name("_ENV", global);
+        let mut env = env.borrow_mut();
+        let env_value = env.get_reg_with_name("_ENV");
+        // Only set _ENV if it has no value yet
+        if env_value.is_some_and(|v| v.val.is_none()) {
+            env.set_reg_with_name("_ENV", global);
+        }
 
         Self {
             filename,
@@ -83,7 +87,12 @@ impl<'a> Runner<'a> {
     ) -> Self {
         let env = Scope::get_global(Rc::clone(&scope)).unwrap();
         let global = registry.borrow().rawget(&LuzObj::str("_G")).clone();
-        env.borrow_mut().set_reg_with_name("_ENV", global);
+        let mut env = env.borrow_mut();
+        let env_value = env.get_reg_with_name("_ENV");
+        // Only set _ENV if it has no value yet
+        if env_value.is_some_and(|v| v.val.is_none()) {
+            env.set_reg_with_name("_ENV", global);
+        }
 
         Self {
             filename,
@@ -593,11 +602,14 @@ impl<'a> Runner<'a> {
                     if nb_expected_results == 0 {
                         // TODO: check we have enough registers
                         for (i, result) in results.into_iter().enumerate() {
-                            self.scope_mut().set_or_push_reg_val(func_addr + i as u8, result);
+                            self.scope_mut()
+                                .set_or_push_reg_val(func_addr + i as u8, result);
                         }
                         let mut extra = 0;
                         // The rest of the stack is set to nil
-                        while let Some(val) = self.scope_mut().take_reg_val(func_addr + nb_results + extra)
+                        while let Some(val) = self
+                            .scope_mut()
+                            .take_reg_val(func_addr + nb_results + extra)
                         {
                             extra += 1;
                         }
