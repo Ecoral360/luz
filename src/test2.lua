@@ -348,6 +348,7 @@ end
 x = string.dump(load("x = 1; return x"))
 print(debug)
 a = assert(load(read1(x), nil, "b"))
+print(debug)
 assert(a() == 1 and _G.x == 1)
 cannotload("attempt to load a binary chunk", load(read1(x), nil, "t"))
 cannotload("attempt to load a binary chunk", load(x, nil, "t"))

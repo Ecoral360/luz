@@ -156,7 +156,7 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
                 "b" | "bt" if is_valid_bin => {
                     let name = if let LuzObj::String(n) = chunkname { Some(n.as_utf8_string_unchecked()) } else { None };
                     let bin = input;
-                    let f = LuzFunction::load_bin(&bin, env, name, runner.clone_scope()).map_err(|_| {
+                    let f = LuzFunction::load_bin(&bin, env, name).map_err(|_| {
                         LuzRuntimeError::message("attempt to load a binary chunk")
                     })?;
                     return Ok(vec![LuzObj::Function(Rc::new(RefCell::new(f)))]);

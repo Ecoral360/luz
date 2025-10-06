@@ -9,7 +9,7 @@ use crate::{
         ctx::{RegisterBuilder, Scope, ScopeRef, Upvalue},
         instructions::{self, Instruction},
     },
-    luz::obj::{LuzObj, Numeral},
+    luz::{lib::env::get_builtin_scope, obj::{LuzObj, Numeral}},
     runner::{err::LuzRuntimeError, Runner},
 };
 
@@ -210,7 +210,6 @@ impl LuzFunction {
         bin: &[u8],
         env: LuzObj,
         name: Option<String>,
-        parent_scope: ScopeRef,
     ) -> Result<LuzFunction, LuzRuntimeError> {
         if !LuzFunction::is_valid_bin(&bin) {
             return Err(LuzRuntimeError::message("Invaid luz bin format."));
@@ -253,7 +252,7 @@ impl LuzFunction {
             }
         }
 
-        let mut scope = Scope::new(name, Some(parent_scope));
+        let mut scope = Scope::new(name, Some(get_builtin_scope()));
         for _ in 0..num_regs {
             scope.push_reg(&mut RegisterBuilder::default());
         }
