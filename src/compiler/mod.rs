@@ -1885,8 +1885,12 @@ impl<'a> Compiler<'a> {
         let (lhs_dirty, mut lhs_addr) = match lhs_addr {
             ExpEval::InImmediate(i) => (None, i),
             ExpEval::InRegister(i) => {
-                ctx.claim_register(lhs_result);
-                (Some(lhs_result), i)
+                if i == lhs_result {
+                    ctx.claim_register(lhs_result);
+                    (Some(lhs_result), i)
+                } else {
+                    (None, i)
+                }
             }
             // ExpEval::InConstant(c) => (None, c),
             ExpEval::InUpvalue {
@@ -1922,8 +1926,8 @@ impl<'a> Compiler<'a> {
             ExpEval::InUpvalue {
                 in_table, upvalue, ..
             } => {
-                let reg = ctx.claim_next_free_register();
                 self.visit_exp(rhs, ctx)?;
+                let reg = ctx.claim_next_free_register();
                 (Some(reg), reg)
             }
             _ => {

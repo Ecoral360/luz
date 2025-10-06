@@ -18,7 +18,7 @@ pub struct Table {
 
 impl PartialEq for Table {
     fn eq(&self, other: &Self) -> bool {
-        self.table == other.table
+        self.len() == other.len() && self.table == other.table
     }
 }
 
@@ -36,7 +36,7 @@ impl Table {
         let t1 = table1.borrow();
         let t2 = table2.borrow();
 
-        *t1 == *t2
+        Rc::ptr_eq(&table1, &table2) || *t1 == *t2
     }
 
     pub fn rawget(&self, key: &LuzObj) -> &LuzObj {

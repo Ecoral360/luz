@@ -1,7 +1,7 @@
 use core::fmt;
 use std::cell::RefCell;
 use std::char;
-use std::collections::VecDeque;
+use std::fmt::Debug;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::mem::transmute;
@@ -25,7 +25,7 @@ use crate::runner::Runner;
 
 pub type TableRef = Rc<RefCell<Table>>;
 
-#[derive(Debug, From)]
+#[derive(From, Default)]
 pub enum LuzObj {
     Numeral(Numeral),
     Boolean(bool),
@@ -34,7 +34,12 @@ pub enum LuzObj {
     Table(TableRef),
     Thread(Arc<Mutex<LuzThread>>),
     Userdata(Arc<Mutex<Userdata>>),
+    #[default]
     Nil,
+}
+
+pub const fn fail_value() -> LuzObj {
+    LuzObj::Nil
 }
 
 pub trait AsUTF8Unchecked {
@@ -64,6 +69,24 @@ impl Clone for LuzObj {
             Self::Thread(arg0) => Self::Thread(Arc::clone(arg0)),
             Self::Userdata(arg0) => Self::Userdata(arg0.clone()),
             Self::Nil => Self::Nil,
+        }
+    }
+}
+
+impl Debug for LuzObj {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Numeral(arg0) => f.debug_tuple("Numeral").field(arg0).finish(),
+            Self::Boolean(arg0) => f.debug_tuple("Boolean").field(arg0).finish(),
+            Self::String(arg0) => f
+                .debug_tuple("String")
+                .field(&arg0.as_utf8_string_unchecked())
+                .finish(),
+            Self::Function(arg0) => f.debug_tuple("Function").field(arg0).finish(),
+            Self::Table(arg0) => f.debug_tuple("Table").field(arg0).finish(),
+            Self::Thread(arg0) => f.debug_tuple("Thread").field(arg0).finish(),
+            Self::Userdata(arg0) => f.debug_tuple("Userdata").field(arg0).finish(),
+            Self::Nil => write!(f, "Nil"),
         }
     }
 }

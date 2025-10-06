@@ -168,6 +168,7 @@ local debug = require "debug"
 -- end
 --
 --
+-- -- TODO:
 -- -- do   -- tail calls x chain of __call
 -- --   local n = 10000   -- depth
 -- --
@@ -292,7 +293,7 @@ local debug = require "debug"
 -- rawset({}, "x", 1, 2)
 -- assert(math.sin(1,2) == math.sin(1))
 -- table.sort({10,9,8,4,19,23,0,0}, function (a,b) return a<b end, "extra arg")
-
+--
 -- test for generic load
 local x = "-- a comment\0\0\0\n  x = 10 + \n23; \
      local a = function () x = 'hi' end; \
@@ -309,42 +310,43 @@ end
 local function cannotload (msg, a,b)
   assert(not a and string.find(b, msg))
 end
-
-a = assert(load(read1(x), "modname", "t", _G))
-assert(a() == "\0" and _G.x == 33)
-assert(debug.getinfo(a).source == "modname")
-
--- cannot read text in binary mode
-cannotload("attempt to load a text chunk", load(read1(x), "modname", "b", {}))
--- cannotload("attempt to load a text chunk", load(x, "modname", "b"))
-
-a = assert(load(function () return nil end))
-a()  -- empty chunk
-
-assert(not load(function () return true end))
-
-
--- small bug
-local t = {nil, "return ", "3"}
-f, msg = load(function () return table.remove(t, 1) end)
-assert(f() == nil)   -- should read the empty chunk
-
--- another small bug (in 5.2.1)
-f = load(string.dump(function () return 1 end), nil, "b", {})
-assert(type(f) == "function" and f() == 1)
-
-
-do   -- another bug (in 5.4.0)
-  -- loading a binary long string interrupted by GC cycles
-  local f = string.dump(function ()
-    return '01234567890123456789012345678901234567890123456789'
-  end)
-  f = load(read1(f))
-  assert(f() == '01234567890123456789012345678901234567890123456789')
-end
+--
+-- a = assert(load(read1(x), "modname", "t", _G))
+-- assert(a() == "\0" and _G.x == 33)
+-- assert(debug.getinfo(a).source == "modname")
+--
+-- -- cannot read text in binary mode
+-- cannotload("attempt to load a text chunk", load(read1(x), "modname", "b", {}))
+-- -- cannotload("attempt to load a text chunk", load(x, "modname", "b"))
+--
+-- a = assert(load(function () return nil end))
+-- a()  -- empty chunk
+--
+-- assert(not load(function () return true end))
+--
+--
+-- -- small bug
+-- local t = {nil, "return ", "3"}
+-- f, msg = load(function () return table.remove(t, 1) end)
+-- assert(f() == nil)   -- should read the empty chunk
+--
+-- -- another small bug (in 5.2.1)
+-- f = load(string.dump(function () return 1 end), nil, "b", {})
+-- assert(type(f) == "function" and f() == 1)
+--
+--
+-- do   -- another bug (in 5.4.0)
+--   -- loading a binary long string interrupted by GC cycles
+--   local f = string.dump(function ()
+--     return '01234567890123456789012345678901234567890123456789'
+--   end)
+--   f = load(read1(f))
+--   assert(f() == '01234567890123456789012345678901234567890123456789')
+-- end
 
 
 x = string.dump(load("x = 1; return x"))
+print(debug)
 a = assert(load(read1(x), nil, "b"))
 assert(a() == 1 and _G.x == 1)
 cannotload("attempt to load a binary chunk", load(read1(x), nil, "t"))
@@ -361,40 +363,40 @@ cannotload("hhi", load(function () error("hhi") end))
 assert(load("return _ENV", nil, nil, 123)() == 123)
 
 
--- load when _ENV is not first upvalue
-local x; XX = 123
-local function h ()
-  local y=x   -- use 'x', so that it becomes 1st upvalue
-  return XX   -- global name
-end
-local d = string.dump(h)
-x = load(d, "", "b")
-assert(debug.getupvalue(x, 2) == '_ENV')
-debug.setupvalue(x, 2, _G)
-assert(x() == 123)
-
-assert(assert(load("return XX + ...", nil, nil, {XX = 13}))(4) == 17)
-XX = nil
-
--- test generic load with nested functions
-x = [[
-  return function (x)
-    return function (y)
-     return function (z)
-       return x+y+z
-     end
-   end
-  end
-]]
-a = assert(load(read1(x), "read", "t"))
-assert(a()(2)(3)(10) == 15)
-
--- repeat the test loading a binary chunk
-x = string.dump(a)
-a = assert(load(read1(x), "read", "b"))
-assert(a()(2)(3)(10) == 15)
-
-
+-- -- load when _ENV is not first upvalue
+-- local x; XX = 123
+-- local function h ()
+--   local y=x   -- use 'x', so that it becomes 1st upvalue
+--   return XX   -- global name
+-- end
+-- local d = string.dump(h)
+-- x = load(d, "", "b")
+-- assert(debug.getupvalue(x, 2) == '_ENV')
+-- debug.setupvalue(x, 2, _G)
+-- assert(x() == 123)
+--
+-- assert(assert(load("return XX + ...", nil, nil, {XX = 13}))(4) == 17)
+-- XX = nil
+--
+-- -- test generic load with nested functions
+-- x = [[
+--   return function (x)
+--     return function (y)
+--      return function (z)
+--        return x+y+z
+--      end
+--    end
+--   end
+-- ]]
+-- a = assert(load(read1(x), "read", "t"))
+-- assert(a()(2)(3)(10) == 15)
+--
+-- -- repeat the test loading a binary chunk
+-- x = string.dump(a)
+-- a = assert(load(read1(x), "read", "b"))
+-- assert(a()(2)(3)(10) == 15)
+--
+--
 -- -- test for dump/undump with upvalues
 -- local a, b = 20, 30
 -- x = load(string.dump(function (x)

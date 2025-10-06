@@ -175,6 +175,16 @@ macro_rules! luz_let {
     };
 }
 
+#[macro_export]
+macro_rules! borrowed {
+    ($var:ident) => {
+        let $var = $var.borrow();
+    };
+    (mut $var:ident) => {
+        let mut $var = $var.borrow_mut();
+    };
+}
+
 #[derive(Debug, Clone, new)]
 pub struct LuzNativeLib {
     pub exports: Vec<(String, LuzObj)>,

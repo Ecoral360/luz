@@ -704,6 +704,10 @@ impl Scope {
         &self.regs[addr as usize]
     }
 
+    pub fn get_opt_upvalue(&self, addr: u8) -> Option<&Upvalue> {
+        self.upvalues.get(addr as usize)
+    }
+
     pub fn get_upvalue(&self, addr: u8) -> &Upvalue {
         &self.upvalues[addr as usize]
     }
