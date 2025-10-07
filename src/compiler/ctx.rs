@@ -815,6 +815,10 @@ impl Scope {
         &self.sub_scopes
     }
 
+    pub fn push_sub_scope(&mut self, scope: ScopeRef) {
+        self.sub_scopes.push(scope);
+    }
+
     pub fn set_nb_params(&mut self, nb_params: u32) {
         self.nb_params = nb_params;
     }

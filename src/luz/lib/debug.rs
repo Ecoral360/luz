@@ -40,7 +40,7 @@ pub fn debug_lib(_registry: TableRef) -> LuzObj {
 
             borrowed!(scope);
 
-            let upvalue = scope.get_opt_upvalue(up as u8);
+            let upvalue = scope.get_opt_upvalue(up as u8 - 1);
             match upvalue {
                 Some(upvalue) => {
                     let value = scope.get_upvalue_value(upvalue.addr);
@@ -60,7 +60,7 @@ pub fn debug_lib(_registry: TableRef) -> LuzObj {
 
             borrowed!(mut scope);
 
-            let upvalue = scope.get_opt_upvalue(up as u8).cloned();
+            let upvalue = scope.get_opt_upvalue(up as u8 - 1).cloned();
             match upvalue {
                 Some(upvalue) => {
                     scope.set_upvalue_value(upvalue.addr, val);

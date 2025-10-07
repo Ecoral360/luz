@@ -3,6 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use derive_builder::Builder;
 use derive_new::new;
+use log::{debug, trace};
 
 use crate::{
     compiler::{
@@ -10,6 +11,7 @@ use crate::{
         instructions::{self, Instruction},
     },
     luz::{
+        function,
         lib::env::get_builtin_scope,
         obj::{LuzObj, Numeral},
     },
@@ -128,7 +130,7 @@ impl LuzFunction {
 
     pub fn dump(&self) -> Result<Vec<u8>, LuzRuntimeError> {
         let Self::User {
-            nb_fixed_params,
+            // nb_fixed_params,
             scope,
             ..
         } = self
@@ -139,16 +141,24 @@ impl LuzFunction {
         };
         // luz magic number : code(141) LUZ code(141)
         let mut dump = vec![141, 76, 85, 90, 141];
-        // number of parameters
-        dump.extend(nb_fixed_params.to_be_bytes());
 
-        let scope = scope.borrow();
+        LuzFunction::dump_scope(&mut dump, &scope.borrow(), 0)?;
+
+        Ok(dump)
+    }
+
+    fn dump_scope(dump: &mut Vec<u8>, scope: &Scope, depth: usize) -> Result<(), LuzRuntimeError> {
+        // number of parameters
+        dump.extend(scope.nb_params().to_be_bytes());
 
         // number of registers
         dump.extend((scope.regs().len() as u32).to_be_bytes());
 
         // number of upvalues
         dump.extend((scope.upvalues().len() as u32).to_be_bytes());
+
+        // number of subscopes
+        dump.extend((scope.sub_scopes().len() as u32).to_be_bytes());
 
         // number of instructions
         dump.extend((scope.instructions().len() as u32).to_be_bytes());
@@ -195,13 +205,31 @@ impl LuzFunction {
             }
         }
 
+        for upvalue in scope.upvalues() {
+            if depth == 0 {
+                dump.push(0);
+            } else {
+                dump.push(upvalue.parent_addr);
+            }
+            // flag for in_stack
+            if upvalue.name == "_ENV" && depth == 0 {
+                dump.push(2); // 2 means is_env
+            } else {
+                dump.push(upvalue.in_stack as u8);
+            }
+        }
+
         for instruction in scope.instructions() {
             let inst_code: u32 = instruction.clone().try_into()?;
             // push the instruction
             dump.extend(inst_code.to_be_bytes());
         }
 
-        Ok(dump)
+        for sub_scope in scope.sub_scopes() {
+            LuzFunction::dump_scope(dump, &sub_scope.borrow(), depth + 1)?;
+        }
+
+        Ok(())
     }
 
     /// Returns if a bin vector is a luz precompiled dump
@@ -218,28 +246,54 @@ impl LuzFunction {
             return Err(LuzRuntimeError::message("Invaid luz bin format."));
         }
         let mut ptr = 5;
-        let num_params = get_next_u32(&bin, &mut ptr);
-        let num_regs = get_next_u32(&bin, &mut ptr);
-        let num_upvals = get_next_u32(&bin, &mut ptr);
-        let num_instructions = get_next_u32(&bin, &mut ptr);
-        let num_contants = get_next_u32(&bin, &mut ptr);
+
+        let scope = get_builtin_scope();
+        scope.borrow_mut().set_reg_val(0, env);
+        let scope = LuzFunction::load_scope_bin(&bin, name, &mut ptr, scope)?;
+        let num_params = scope.borrow().nb_params();
+
+        trace!("{:#?}", LuzFunctionDump::from(&scope));
+
+        debug!("\n{}", scope.borrow().instructions_to_string());
+
+        let fun = LuzFunction::User {
+            nb_fixed_params: num_params,
+            scope: scope,
+            filename: String::new(),
+        };
+
+        Ok(fun)
+    }
+
+    fn load_scope_bin(
+        bin: &[u8],
+        name: Option<String>,
+        ptr: &mut usize,
+        parent_scope: ScopeRef,
+    ) -> Result<ScopeRef, LuzRuntimeError> {
+        let num_params = get_next_u32(&bin, ptr);
+        let num_regs = get_next_u32(&bin, ptr);
+        let num_upvals = get_next_u32(&bin, ptr);
+        let num_sub_scopes = get_next_u32(&bin, ptr);
+        let num_instructions = get_next_u32(&bin, ptr);
+        let num_constants = get_next_u32(&bin, ptr);
         let mut constants = vec![];
 
-        for _ in 0..num_contants {
-            let code = get_next_u8(&bin, &mut ptr);
+        for _ in 0..num_constants {
+            let code = get_next_u8(&bin, ptr);
             match code {
                 0 => {
-                    let str_len = get_next_u32(&bin, &mut ptr);
-                    let string = bin[ptr..ptr + str_len as usize].to_vec();
-                    ptr += str_len as usize;
+                    let str_len = get_next_u32(&bin, ptr);
+                    let string = bin[*ptr..*ptr + str_len as usize].to_vec();
+                    *ptr += str_len as usize;
                     constants.push(LuzObj::String(string));
                 }
                 1 => {
-                    let i = i64::from_be_bytes(get_next_8bytes(&bin, &mut ptr));
+                    let i = i64::from_be_bytes(get_next_8bytes(&bin, ptr));
                     constants.push(LuzObj::int(i));
                 }
                 2 => {
-                    let f = f64::from_be_bytes(get_next_8bytes(&bin, &mut ptr));
+                    let f = f64::from_be_bytes(get_next_8bytes(&bin, ptr));
                     constants.push(LuzObj::float(f));
                 }
                 3 => {
@@ -255,42 +309,49 @@ impl LuzFunction {
             }
         }
 
-        let mut scope = Scope::new(name, Some(get_builtin_scope()));
+        let mut scope = Scope::new(name, Some(parent_scope));
         for _ in 0..num_regs {
             scope.push_reg(&mut RegisterBuilder::default());
         }
         scope.set_constants(constants);
 
-        for i in 0..num_upvals {
-            scope.push_upval(Upvalue::new(String::new(), i as u8, 0, true));
-            scope.set_upvalue_value(i as u8, LuzObj::Nil);
-        }
+        scope.set_nb_params(num_params);
 
-        scope.push_upval(Upvalue::new(
-            String::from("_ENV"),
-            num_upvals as u8,
-            0,
-            true,
-        ));
-        scope.set_upvalue_value(num_upvals as u8, env);
+        for i in 0..num_upvals {
+            let parent_addr = get_next_u8(&bin, ptr);
+            let flag = get_next_u8(&bin, ptr);
+            let in_stack = flag != 0;
+            let is_env = flag == 2;
+
+            scope.push_upval(Upvalue::new(
+                if is_env {
+                    String::from("_ENV")
+                } else {
+                    String::new()
+                },
+                i as u8,
+                parent_addr,
+                in_stack,
+            ));
+
+            // scope.set_upvalue_value(i as u8, LuzObj::Nil);
+        }
 
         let mut instructions = vec![];
         for _ in 0..num_instructions {
-            let next_inst = get_next_u32(&bin, &mut ptr);
+            let next_inst = get_next_u32(&bin, ptr);
             instructions.push(Instruction::try_from(next_inst)?);
         }
 
         scope.set_instructions(instructions);
 
-        // println!("{}", scope.instructions_to_string());
+        let scope = Rc::new(RefCell::new(scope));
+        for _ in 0..num_sub_scopes {
+            let sub_scope = LuzFunction::load_scope_bin(&bin, None, ptr, Rc::clone(&scope))?;
+            scope.borrow_mut().push_sub_scope(sub_scope);
+        }
 
-        let fun = LuzFunction::User {
-            nb_fixed_params: num_params,
-            scope: Rc::new(RefCell::new(scope)),
-            filename: String::new(),
-        };
-
-        Ok(fun)
+        Ok(scope)
     }
 }
 
@@ -327,6 +388,37 @@ impl fmt::Debug for LuzFunction {
         match self {
             Self::User { .. } => write!(f, "user function()"),
             Self::Native { .. } => write!(f, "native function()"),
+        }
+    }
+}
+
+#[allow(unused)]
+#[derive(Debug)]
+pub struct LuzFunctionDump {
+    num_params: u32,
+    num_regs: u32,
+    num_upvalues: u32,
+    num_sub_scopes: u32,
+    num_instructions: u32,
+    num_constants: u32,
+    sub_scopes: Vec<LuzFunctionDump>,
+}
+
+impl From<&ScopeRef> for LuzFunctionDump {
+    fn from(value: &ScopeRef) -> Self {
+        let scope = value.borrow();
+        Self {
+            num_params: scope.nb_params(),
+            num_regs: scope.regs().len() as u32,
+            num_upvalues: scope.upvalues().len() as u32,
+            num_sub_scopes: scope.sub_scopes().len() as u32,
+            num_instructions: scope.instructions().len() as u32,
+            num_constants: scope.constants().len() as u32,
+            sub_scopes: scope
+                .sub_scopes()
+                .iter()
+                .map(|ss| LuzFunctionDump::from(ss))
+                .collect(),
         }
     }
 }

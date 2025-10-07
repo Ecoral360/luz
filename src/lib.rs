@@ -98,7 +98,7 @@ fn run_compiler(filename: String, input: &str, stmts: Vec<Stat>) -> Result<Vec<L
     // for stmt in stmts {
     //     compiler.visit_stat(&stmt, &mut ctx)?;
     // }
-    debug!("{}", ctx.instructions_to_string());
+    debug!("\n{}", ctx.instructions_to_string());
     let mut runner = runner::Runner::new(
         filename,
         input,

@@ -389,11 +389,11 @@ x = [[
 ]]
 a = assert(load(read1(x), "read", "t"))
 assert(a()(2)(3)(10) == 15)
---
--- -- repeat the test loading a binary chunk
--- x = string.dump(a)
--- a = assert(load(read1(x), "read", "b"))
--- assert(a()(2)(3)(10) == 15)
+
+-- repeat the test loading a binary chunk
+x = string.dump(a)
+a = assert(load(read1(x), "read", "b"))
+assert(a()(2)(3)(10) == 15)
 --
 --
 -- -- test for dump/undump with upvalues
