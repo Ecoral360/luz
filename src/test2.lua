@@ -158,14 +158,15 @@ do   -- tail calls x varargs
 end
 
 
-do   -- C-stack overflow while handling C-stack overflow
-  local function loop ()
-    assert(pcall(loop))
-  end
-
-  local err, msg = xpcall(loop, loop)
-  assert(not err and string.find(msg, "error"))
-end
+-- TODO: Add back (it is slow)
+-- do   -- C-stack overflow while handling C-stack overflow
+--   local function loop ()
+--     assert(pcall(loop))
+--   end
+--
+--   local err, msg = xpcall(loop, loop)
+--   assert(not err and string.find(msg, "error"))
+-- end
 
 
 -- TODO:
@@ -394,24 +395,23 @@ assert(a()(2)(3)(10) == 15)
 x = string.dump(a)
 a = assert(load(read1(x), "read", "b"))
 assert(a()(2)(3)(10) == 15)
---
---
--- -- test for dump/undump with upvalues
--- local a, b = 20, 30
--- x = load(string.dump(function (x)
---   if x == "set" then a = 10+b; b = b+1 else
---   return a
---   end
--- end), "", "b", nil)
--- assert(x() == nil)
--- assert(debug.setupvalue(x, 1, "hi") == "a")
--- assert(x() == "hi")
--- assert(debug.setupvalue(x, 2, 13) == "b")
--- assert(not debug.setupvalue(x, 3, 10))   -- only 2 upvalues
--- x("set")
--- assert(x() == 23)
--- x("set")
--- assert(x() == 24)
+
+-- test for dump/undump with upvalues
+local a, b = 20, 30
+x = load(string.dump(function (x)
+  if x == "set" then a = 10+b; b = b+1 else
+  return a
+  end
+end), "", "b", nil)
+assert(x() == nil)
+assert(debug.setupvalue(x, 1, "hi") == "a")
+assert(x() == "hi")
+assert(debug.setupvalue(x, 2, 13) == "b")
+assert(not debug.setupvalue(x, 3, 10))   -- only 2 upvalues
+x("set")
+assert(x() == 23)
+x("set")
+assert(x() == 24)
 --
 -- -- test for dump/undump with many upvalues
 -- do

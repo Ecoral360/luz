@@ -13,7 +13,7 @@ use crate::{
     luz::{
         function,
         lib::env::get_builtin_scope,
-        obj::{LuzObj, Numeral},
+        obj::{AsUTF8Unchecked, LuzObj, Numeral},
     },
     runner::{err::LuzRuntimeError, Runner},
 };
@@ -205,18 +205,31 @@ impl LuzFunction {
             }
         }
 
-        for upvalue in scope.upvalues() {
+        let has_env = scope.upvalues().iter().any(|up| up.name == "_ENV");
+        for (i, upvalue) in scope.upvalues().iter().enumerate() {
+            let is_env = upvalue.name == "_ENV";
             if depth == 0 {
-                dump.push(0);
+                if is_env {
+                    dump.push(0);
+                } else if has_env {
+                    dump.push(i as u8 + 1);
+                } else {
+                    dump.push(i as u8);
+                }
             } else {
                 dump.push(upvalue.parent_addr);
             }
             // flag for in_stack
-            if upvalue.name == "_ENV" && depth == 0 {
+            if is_env && depth == 0 {
                 dump.push(2); // 2 means is_env
             } else {
                 dump.push(upvalue.in_stack as u8);
             }
+
+            // we push the len of the name of the upvalue
+            dump.extend((upvalue.name.len() as u32).to_be_bytes());
+            // we push the name of the upvalue
+            dump.extend(upvalue.name.clone().into_bytes());
         }
 
         for instruction in scope.instructions() {
@@ -319,22 +332,27 @@ impl LuzFunction {
 
         for i in 0..num_upvals {
             let parent_addr = get_next_u8(&bin, ptr);
-            let flag = get_next_u8(&bin, ptr);
-            let in_stack = flag != 0;
-            let is_env = flag == 2;
+            let flags = get_next_u8(&bin, ptr);
+            let in_stack = flags != 0;
+            let is_env = flags == 2;
+
+            let upvalue_name_len = get_next_u32(&bin, ptr);
+            let upvalue_name = bin[*ptr..*ptr + upvalue_name_len as usize].to_vec();
+            *ptr += upvalue_name_len as usize;
 
             scope.push_upval(Upvalue::new(
-                if is_env {
-                    String::from("_ENV")
-                } else {
-                    String::new()
-                },
+                upvalue_name.as_utf8_string_unchecked(),
                 i as u8,
                 parent_addr,
                 in_stack,
             ));
 
-            // scope.set_upvalue_value(i as u8, LuzObj::Nil);
+            if !is_env && in_stack {
+                {
+                    let mut parent = scope.parent().unwrap().borrow_mut();
+                    parent.set_or_push_reg_val(parent_addr, LuzObj::Nil);
+                }
+            }
         }
 
         let mut instructions = vec![];

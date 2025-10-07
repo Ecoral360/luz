@@ -2055,7 +2055,8 @@ impl<'a> Compiler<'a> {
             args,
             variadic,
         } = f_call;
-        let mut one_exp_ctx = ctx.new_with(CompilerCtxBuilder::default().nb_expected(2));
+        let mut one_exp_ctx =
+            ctx.new_with(CompilerCtxBuilder::default().nb_expected(2).dest_addr(None));
         let mut f_addr = self.load_exp(&mut one_exp_ctx, func)?;
         let is_f_addr_next_free = f_addr == ctx.get_or_push_free_register();
 
@@ -2102,17 +2103,16 @@ impl<'a> Compiler<'a> {
 
         if !args.is_empty() {
             for arg in &args[..args.len() - 1] {
-                let mut one_exp_ctx = ctx.new_with(CompilerCtxBuilder::default().nb_expected(2));
+                let mut one_exp_ctx =
+                    ctx.new_with(CompilerCtxBuilder::default().nb_expected(2).dest_addr(None));
                 let reg = self.handle_consecutive_exp(&mut one_exp_ctx, arg)?;
                 ctx.claim_register(reg);
                 claimed.push(reg);
             }
             let mut all_out_ctx = ctx.new_with(
-                CompilerCtxBuilder::default().nb_expected(if ExpNode::is_multires(args) {
-                    0
-                } else {
-                    2
-                }),
+                CompilerCtxBuilder::default()
+                    .nb_expected(if ExpNode::is_multires(args) { 0 } else { 2 })
+                    .dest_addr(None),
             );
             let reg = self.handle_consecutive_exp(&mut all_out_ctx, &args[args.len() - 1])?;
             ctx.claim_register(reg);
