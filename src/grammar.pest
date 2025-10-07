@@ -8,7 +8,7 @@ block = { stat* ~ RetStat? }
 blockEnd = { (!("end" | "return") ~ stat)* ~ RetStat? ~ "end" }
 
 RetStat = {
-    "return" ~ explist? ~ ";"? ~ NEWLINE*
+    "return" ~ (!"end" ~ explist)? ~ ";"? ~ NEWLINE*
 }
 
 stat = _{

@@ -805,6 +805,8 @@ impl<'a> Compiler<'a> {
 
         let then_instrs = self.collect_insts_and_rollback_stat(ctx, block)?;
 
+        let breaks = ctx.take_breaks();
+
         let before_inst = ctx.instructions_len();
 
         let to_end_jmp = cond.0.len() + then_instrs.len() + 1;
@@ -854,6 +856,14 @@ impl<'a> Compiler<'a> {
             };
         }
 
+        let len = insts.len() - 1;
+        for break_pos in breaks {
+            let Instruction::isJ(isJ { j, .. }) = &mut insts[break_pos - before_inst] else {
+                unreachable!()
+            };
+            *j = len as u32 - (break_pos as u32 - before_inst as u32) + MAX_HALF_sJ;
+        }
+
         let len = insts.len();
         for inst in insts {
             ctx.push_inst(inst);
@@ -861,6 +871,14 @@ impl<'a> Compiler<'a> {
 
         ctx.push_inst(Instruction::op_jmp(-(len as i32)));
 
+        Ok(())
+    }
+
+    fn visit_break(&mut self, ctx: &mut CompilerCtx) -> Result<(), LuzError> {
+        let break_pos = ctx.instructions().len();
+        ctx.push_inst(Instruction::op_jmp(1));
+
+        ctx.push_break(break_pos);
         Ok(())
     }
 
@@ -976,7 +994,17 @@ impl<'a> Compiler<'a> {
                             upvalue,
                             name,
                         } => {
-                            let tabaddr = ctx.get_or_push_free_register();
+                            let tabaddr = ctx.claim_next_free_register();
+                            let prop = match **prop {
+                                ExpNode::Literal(ref lit) => {
+                                    (ctx.get_or_add_const(lit.clone()) as u8, true)
+                                }
+                                _ => {
+                                    self.visit_exp(&prop, &mut one_exp_ctx)?;
+                                    (ctx.claim_next_free_register(), false)
+                                }
+                            };
+
                             if *in_table {
                                 let name_k = ctx.get_or_add_const(LuzObj::str(name));
                                 ctx.push_inst(Instruction::op_gettabup(
@@ -984,17 +1012,26 @@ impl<'a> Compiler<'a> {
                                     upvalue.addr,
                                     name_k as u8,
                                 ));
-                                var_claimed.push(ctx.claim_next_free_register());
-                                var_exp_accesses.push(ExpEval::InRegister(tabaddr));
+                                var_claimed.push(tabaddr);
+                                var_exp_accesses.push((ExpEval::InRegister(tabaddr), prop));
                             } else {
                                 ctx.push_inst(Instruction::op_getupval(tabaddr, upvalue.addr));
-                                var_claimed.push(ctx.claim_next_free_register());
-                                var_exp_accesses.push(res);
+                                var_claimed.push(tabaddr);
+                                var_exp_accesses.push((ExpEval::InRegister(tabaddr), prop));
                             }
                         }
                         _ => {
+                            let prop = match **prop {
+                                ExpNode::Literal(LuzObj::String(ref n)) => {
+                                    (ctx.get_or_add_const(LuzObj::String(n.clone())) as u8, true)
+                                }
+                                _ => {
+                                    // let reg = ctx.get_or_push_free_register();
+                                    (self.load_exp(&mut one_exp_ctx, &prop)?, false)
+                                }
+                            };
                             var_claimed.push(ctx.claim_next_free_register());
-                            var_exp_accesses.push(res);
+                            var_exp_accesses.push((res, prop));
                         }
                     }
                 }
@@ -1079,51 +1116,36 @@ impl<'a> Compiler<'a> {
                     let ExpAccess { exp: obj, prop } = exp_access;
 
                     let tabaddr = ctx.get_or_push_free_register();
-                    let res = var_exp_accesses_iter.next().unwrap(); //self.handle_exp(&mut one_exp_ctx, &obj, false, true, false)?;
-
                     let prop_imm = self.handle_immidiate(&mut one_exp_ctx, &prop, true)?;
+
                     if let Some(imm) = prop_imm {
                         ctx.push_inst(Instruction::op_seti(tabaddr, imm, dest, is_const));
                     } else {
+                        let (res, prop) = var_exp_accesses_iter.next().unwrap(); //self.handle_exp(&mut one_exp_ctx, &obj, false, true, false)?;
+
                         match res {
                             ExpEval::InUpvalue {
                                 in_table, upvalue, ..
                             } => {
-                                let prop = match **prop {
-                                    ExpNode::Literal(LuzObj::String(ref n)) => {
-                                        ctx.get_or_add_const(LuzObj::String(n.clone())) as u8
-                                    }
-                                    _ => {
-                                        self.visit_exp(&prop, &mut one_exp_ctx)?;
-                                        ctx.get_or_push_free_register()
-                                    }
-                                };
-
                                 ctx.push_inst(Instruction::op_settabup(
                                     upvalue.addr,
-                                    prop,
+                                    prop.0,
                                     dest,
                                     is_const,
                                 ));
-                                return Ok(());
+                                // return Ok(());
                             }
 
                             ExpEval::InRegister(r) => {
-                                match **prop {
-                                    ExpNode::Literal(LuzObj::String(ref n)) => {
-                                        let attr = ctx.get_or_add_const(LuzObj::String(n.clone()));
-                                        ctx.push_inst(Instruction::op_setfield(
-                                            *r, attr as u8, dest, is_const,
-                                        ));
-                                    }
-                                    _ => {
-                                        // let reg = ctx.get_or_push_free_register();
-                                        let reg = self.load_exp(&mut one_exp_ctx, &prop)?;
-                                        ctx.push_inst(Instruction::op_settable(
-                                            *r, reg, dest, is_const,
-                                        ));
-                                    }
-                                };
+                                if prop.1 {
+                                    ctx.push_inst(Instruction::op_setfield(
+                                        *r, prop.0, dest, is_const,
+                                    ));
+                                } else {
+                                    ctx.push_inst(Instruction::op_settable(
+                                        *r, prop.0, dest, is_const,
+                                    ));
+                                }
                             }
                             ExpEval::InConstant(_) => todo!(),
                             ExpEval::InImmediate(_) => todo!(),
@@ -2333,7 +2355,7 @@ impl<'a> Visitor for Compiler<'a> {
             StatNode::If(if_stat) => self.visit_if(ctx, if_stat),
             StatNode::ForRange(for_range_stat) => self.visit_for_range(ctx, for_range_stat),
             StatNode::ForIn(for_in_stat) => self.visit_for_in(ctx, for_in_stat),
-            StatNode::Break => todo!(),
+            StatNode::Break => self.visit_break(ctx),
             StatNode::Goto(goto_stat) => todo!(),
             StatNode::Label(label_stat) => todo!(),
         }

@@ -25,6 +25,8 @@ pub struct CompilerCtx {
     /// The expression is a child of a "not" expression
     in_not: bool,
 
+    breaks: Vec<usize>,
+
     /// specify a destination register for the current expression
     dest_addr: Option<u8>,
 }
@@ -42,6 +44,7 @@ impl CompilerCtx {
             nb_expected: 2,
             dest_addr: None,
             in_not: false,
+            breaks: vec![],
         }
     }
     pub fn new_chunk(
@@ -65,6 +68,7 @@ impl CompilerCtx {
             dest_addr: None,
             in_not: false,
             filename,
+            breaks: vec![],
         }
     }
 
@@ -75,6 +79,7 @@ impl CompilerCtx {
             in_not: builder.in_not.unwrap_or(self.in_not),
             dest_addr: builder.dest_addr.unwrap_or(self.dest_addr),
             filename: builder.filename.as_ref().unwrap_or(&self.filename).clone(),
+            breaks: builder.breaks.as_ref().unwrap_or(&self.breaks).clone(),
         }
     }
 
@@ -92,6 +97,16 @@ impl CompilerCtx {
 
     pub fn filename(&self) -> &str {
         &self.filename
+    }
+
+    pub fn push_break(&mut self, break_pos: usize) {
+        self.breaks.push(break_pos);
+    }
+
+    pub fn take_breaks(&mut self) -> Vec<usize> {
+        let breaks = self.breaks.to_vec();
+        self.breaks.clear();
+        breaks
     }
 }
 
@@ -613,7 +628,7 @@ impl Scope {
                     };
                     (
                         in_table,
-                        Upvalue::new(upvalue.name, addr, upvalue.parent_addr, false),
+                        Upvalue::new(upvalue.name, addr, upvalue.addr, false),
                     )
                 }
             };
