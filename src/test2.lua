@@ -412,89 +412,89 @@ x("set")
 assert(x() == 23)
 x("set")
 assert(x() == 24)
---
--- -- test for dump/undump with many upvalues
--- do
---   local nup = 200    -- maximum number of local variables
---   local prog = {"local a1"}
---   for i = 2, nup do prog[#prog + 1] = ", a" .. i end
---   prog[#prog + 1] = " = 1"
---   for i = 2, nup do prog[#prog + 1] = ", " .. i end
---   local sum = 1
---   prog[#prog + 1] = "; return function () return a1"
---   for i = 2, nup do prog[#prog + 1] = " + a" .. i; sum = sum + i end
---   prog[#prog + 1] = " end"
---   prog = table.concat(prog)
---   local f = assert(load(prog))()
---   assert(f() == sum)
---
---   f = load(string.dump(f))   -- main chunk now has many upvalues
---   local a = 10
---   local h = function () return a end
---   for i = 1, nup do
---     debug.upvaluejoin(f, i, h, 1)
---   end
---   assert(f() == 10 * nup)
--- end
---
--- -- test for long method names
--- do
---   local t = {x = 1}
---   function t:_012345678901234567890123456789012345678901234567890123456789 ()
---     return self.x
---   end
---   assert(t:_012345678901234567890123456789012345678901234567890123456789() == 1)
--- end
---
---
--- -- test for bug in parameter adjustment
--- assert((function () return nil end)(4) == nil)
--- assert((function () local a; return a end)(4) == nil)
--- assert((function (a) return a end)() == nil)
---
---
--- print("testing binary chunks")
--- do
---   local header = string.pack("c4BBc6BBB",
---     "\27Lua",                                  -- signature
---     0x54,                                      -- version 5.4 (0x54)
---     0,                                         -- format
---     "\x19\x93\r\n\x1a\n",                      -- data
---     4,                                         -- size of instruction
---     string.packsize("j"),                      -- sizeof(lua integer)
---     string.packsize("n")                       -- sizeof(lua number)
---   )
---   local c = string.dump(function ()
---     local a = 1; local b = 3;
---     local f = function () return a + b + _ENV.c; end    -- upvalues
---     local s1 = "a constant"
---     local s2 = "another constant"
---     return a + b * 3
---   end)
---
---   assert(assert(load(c))() == 10)
---
---   -- check header
---   assert(string.sub(c, 1, #header) == header)
---   -- check LUAC_INT and LUAC_NUM
---   local ci, cn = string.unpack("jn", c, #header + 1)
---   assert(ci == 0x5678 and cn == 370.5)
---
---   -- corrupted header
---   for i = 1, #header do
---     local s = string.sub(c, 1, i - 1) ..
---               string.char(string.byte(string.sub(c, i, i)) + 1) ..
---               string.sub(c, i + 1, -1)
---     assert(#s == #c)
---     assert(not load(s))
---   end
---
---   -- loading truncated binary chunks
---   for i = 1, #c - 1 do
---     local st, msg = load(string.sub(c, 1, i))
---     assert(not st and string.find(msg, "truncated"))
---   end
--- end
---
--- print('OK')
--- return deep
+
+-- test for dump/undump with many upvalues
+do
+  local nup = 200    -- maximum number of local variables
+  local prog = {"local a1"}
+  for i = 2, nup do prog[#prog + 1] = ", a" .. i end
+  prog[#prog + 1] = " = 1"
+  for i = 2, nup do prog[#prog + 1] = ", " .. i end
+  local sum = 1
+  prog[#prog + 1] = "; return function () return a1"
+  for i = 2, nup do prog[#prog + 1] = " + a" .. i; sum = sum + i end
+  prog[#prog + 1] = " end"
+  prog = table.concat(prog)
+  local f = assert(load(prog))()
+  assert(f() == sum)
+
+  f = load(string.dump(f))   -- main chunk now has many upvalues
+  local a = 10
+  local h = function () return a end
+  for i = 1, nup do
+    debug.upvaluejoin(f, i, h, 1)
+  end
+  assert(f() == 10 * nup)
+end
+
+-- test for long method names
+do
+  local t = {x = 1}
+  function t:_012345678901234567890123456789012345678901234567890123456789 ()
+    return self.x
+  end
+  assert(t:_012345678901234567890123456789012345678901234567890123456789() == 1)
+end
+
+
+-- test for bug in parameter adjustment
+assert((function () return nil end)(4) == nil)
+assert((function () local a; return a end)(4) == nil)
+assert((function (a) return a end)() == nil)
+
+
+print("testing binary chunks")
+do
+  local header = string.pack("c4BBc6BBB",
+    "\27Lua",                                  -- signature
+    0x54,                                      -- version 5.4 (0x54)
+    0,                                         -- format
+    "\x19\x93\r\n\x1a\n",                      -- data
+    4,                                         -- size of instruction
+    string.packsize("j"),                      -- sizeof(lua integer)
+    string.packsize("n")                       -- sizeof(lua number)
+  )
+  local c = string.dump(function ()
+    local a = 1; local b = 3;
+    local f = function () return a + b + _ENV.c; end    -- upvalues
+    local s1 = "a constant"
+    local s2 = "another constant"
+    return a + b * 3
+  end)
+
+  assert(assert(load(c))() == 10)
+
+  -- check header
+  assert(string.sub(c, 1, #header) == header)
+  -- check LUAC_INT and LUAC_NUM
+  local ci, cn = string.unpack("jn", c, #header + 1)
+  assert(ci == 0x5678 and cn == 370.5)
+
+  -- corrupted header
+  for i = 1, #header do
+    local s = string.sub(c, 1, i - 1) ..
+              string.char(string.byte(string.sub(c, i, i)) + 1) ..
+              string.sub(c, i + 1, -1)
+    assert(#s == #c)
+    assert(not load(s))
+  end
+
+  -- loading truncated binary chunks
+  for i = 1, #c - 1 do
+    local st, msg = load(string.sub(c, 1, i))
+    assert(not st and string.find(msg, "truncated"))
+  end
+end
+
+print('OK')
+return deep

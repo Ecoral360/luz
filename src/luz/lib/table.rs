@@ -1,11 +1,12 @@
 use std::{cell::RefCell, cmp::Ordering, collections::HashMap, rc::Rc};
 
 use crate::{
+    borrowed,
     luz::{
         lib::LuzNativeLib,
-        obj::{LuzObj, Table, TableRef},
+        obj::{LuzObj, Numeral, Table, TableRef},
     },
-    luz_fn, luz_table,
+    luz_fn, luz_let, luz_table,
     runner::err::LuzRuntimeError,
 };
 
@@ -26,6 +27,37 @@ pub fn table_lib(_registry: TableRef) -> LuzNativeLib {
             let pos = args.pop_front().unwrap_or(LuzObj::int(list.len() as i64));
 
             Ok(vec![list.remove(&pos)])
+        }),
+
+        concat: luz_fn!([1, runner](LuzObj::Table(list), sep, i, j) {
+            borrowed!(list);
+
+            luz_let!(LuzObj::String(sep) = sep.or(LuzObj::str("")));
+            luz_let!(LuzObj::Numeral(Numeral::Int(i)) = i.or(LuzObj::int(1)));
+            luz_let!(LuzObj::Numeral(Numeral::Int(j)) = j.or(LuzObj::int(list.len() as i64)));
+
+            let mut final_str = vec![];
+            for idx in i..=j {
+                let obj = list.get(runner, &LuzObj::int(idx as i64))?.unwrap_or(LuzObj::Nil);
+                match obj {
+                    LuzObj::String(s) => {
+                        final_str.extend(s);
+                    }
+                    LuzObj::Numeral(n) => {
+                        final_str.extend(n.to_string().into_bytes());
+                    }
+                    _ => return Err(LuzRuntimeError::message(
+                        format!("invalid value ({}) at index {} in table for 'concat'", obj.get_type(), idx)
+                    ))
+                }
+
+                if idx < j - 1 {
+                    final_str.extend(&sep);
+                }
+
+            }
+
+            Ok(vec![LuzObj::String(final_str)])
         }),
 
         sort: luz_fn!([1, runner](LuzObj::Table(list), *args) {

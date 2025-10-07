@@ -10,6 +10,7 @@ use derive_new::new;
 
 use crate::{
     ast::LineInfo,
+    borrowed,
     compiler::instructions::{self, Instruction},
     luz::{err::LuzError, lib::env::get_builtin_scope, obj::LuzObj},
 };
@@ -710,6 +711,10 @@ impl Scope {
         self.upvalues.get(addr as usize)
     }
 
+    pub fn get_mut_opt_upvalue(&mut self, addr: u8) -> Option<&mut Upvalue> {
+        self.upvalues.get_mut(addr as usize)
+    }
+
     pub fn get_upvalue(&self, addr: u8) -> &Upvalue {
         &self.upvalues[addr as usize]
     }
@@ -729,6 +734,19 @@ impl Scope {
 
     pub fn get_upvalue_value(&self, upvalue_addr: u8) -> Option<LuzObj> {
         let upvalue = &self.upvalues[upvalue_addr as usize];
+        if let Some(link) = &upvalue.link {
+            borrowed!(link);
+            let p = link
+                .parent
+                .as_ref()
+                .expect("Needs parent to have upvalue")
+                .borrow();
+            if upvalue.in_stack {
+                return p.regs[upvalue.parent_addr as usize].val.clone();
+            } else {
+                return p.get_upvalue_value(upvalue.parent_addr);
+            }
+        }
         let p = self
             .parent
             .as_ref()
@@ -743,6 +761,20 @@ impl Scope {
 
     pub fn set_upvalue_value(&mut self, upvalue_addr: u8, value: LuzObj) {
         let upvalue = &self.upvalues[upvalue_addr as usize];
+        if let Some(link) = &upvalue.link {
+            borrowed!(link);
+            let mut p = link
+                .parent
+                .as_ref()
+                .expect("Needs parent to have upvalue")
+                .borrow_mut();
+            if upvalue.in_stack {
+                p.regs[upvalue.parent_addr as usize].val.replace(value);
+            } else {
+                p.set_upvalue_value(upvalue.parent_addr, value);
+            }
+            return;
+        }
         let mut p = self
             .parent
             .as_ref()
@@ -798,8 +830,12 @@ impl Scope {
         result += "---- Upvalues:\n";
         for (i, inst) in self.upvalues.iter().enumerate() {
             result += &format!(
-                "{} {} {} {}\n",
-                i, inst.name, inst.in_stack, inst.parent_addr
+                "{} {} {} {} {}\n",
+                i,
+                inst.name,
+                inst.in_stack,
+                inst.parent_addr,
+                if inst.link.is_some() { "linked" } else { "" }
             );
         }
 
@@ -911,4 +947,6 @@ pub struct Upvalue {
     pub addr: u8,
     pub parent_addr: u8,
     pub in_stack: bool,
+    #[new(default)]
+    pub link: Option<ScopeRef>,
 }

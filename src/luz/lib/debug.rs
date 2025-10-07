@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use crate::{
     borrowed,
     luz::obj::{fail_value, LuzObj, Numeral, TableRef},
@@ -69,6 +71,42 @@ pub fn debug_lib(_registry: TableRef) -> LuzObj {
                 None => Ok(vec![fail_value()]),
             }
         }),
+
+        upvaluejoin: luz_fn!([4](LuzObj::Function(f1), LuzObj::Numeral(Numeral::Int(n1)), LuzObj::Function(f2), LuzObj::Numeral(Numeral::Int(n2))) {
+            borrowed!(f1);
+            let Some(scope1) = f1.scope() else {
+                return Err(LuzRuntimeError::message(
+                    "bad argument #1 for 'debug.getupvalue' (native function cannot be debugged)."
+                ));
+            };
+
+            borrowed!(mut scope1);
+
+            let Some(upvalue1) = scope1.get_mut_opt_upvalue(n1 as u8 - 1) else {
+                return Ok(vec![fail_value()]);
+            };
+
+            borrowed!(f2);
+            let Some(scope2) = f2.scope() else {
+                return Err(LuzRuntimeError::message(
+                    "bad argument #3 for 'debug.getupvalue' (native function cannot be debugged)."
+                ));
+            };
+
+            upvalue1.link = Some(Rc::clone(&scope2));
+
+            borrowed!(mut scope2);
+
+            let Some(upvalue2) = scope2.get_mut_opt_upvalue(n2 as u8 - 1) else {
+                return Ok(vec![fail_value()]);
+            };
+
+            upvalue1.parent_addr = upvalue2.parent_addr;
+            upvalue1.in_stack = upvalue2.in_stack;
+
+            Ok(vec![])
+        }),
+
     };
 
     table

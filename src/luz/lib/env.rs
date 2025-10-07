@@ -92,7 +92,7 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
         }),
 
         assert: luz_fn!([0](*args) {
-            let mut args = args;
+            let args = args;
             let Some(condition) = args.get(0) else {
                 return Err(LuzRuntimeError::message(
                     "bad argument #1 to 'assert' (value expected)",
@@ -107,7 +107,7 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
                     // Here we use swap_remove instead of just 'remove'
                     // because it's O(1) and we don't care about the vararg
                     // vector afterward
-                    Err(LuzRuntimeError::ErrorObj(args.pop_front().unwrap()))
+                    Err(LuzRuntimeError::ErrorObj(args.get(1).unwrap().clone()))
                 }
             }
         }),
@@ -190,6 +190,7 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
             match r {
                 Ok(r) => Ok(vec![LuzObj::Function(Rc::new(RefCell::new(r)))]),
                 Err(err) => {
+                    dbg!(&err);
                     if matches!(err, LuzError::Syntax(..)) {
                         Ok(vec![LuzObj::Nil,
                             LuzObj::str("unexpected symbol")])
