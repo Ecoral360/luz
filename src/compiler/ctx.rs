@@ -947,6 +947,8 @@ pub struct Upvalue {
     pub addr: u8,
     pub parent_addr: u8,
     pub in_stack: bool,
+    /// Only use is to make debug.upvaluejoin possible
+    /// when defined, it will use this to look up the value instead of the scope parent
     #[new(default)]
     pub link: Option<ScopeRef>,
 }

@@ -2,8 +2,7 @@ use std::collections::VecDeque;
 
 use crate::{
     luz::{
-        lib::LuzNativeLib,
-        obj::{AsUTF8Unchecked, LuzObj, Numeral, TableRef},
+        fn_dump, lib::LuzNativeLib, obj::{AsUTF8Unchecked, LuzObj, Numeral, TableRef}
     },
     luz_fn, luz_let, luz_table,
     runner::err::LuzRuntimeError,
@@ -95,7 +94,7 @@ pub fn string_lib(_registry: TableRef) -> LuzNativeLib {
 
         dump: luz_fn!([1](LuzObj::Function(f)) {
             let f = f.borrow();
-            Ok(vec![LuzObj::String(f.dump()?)])
+            Ok(vec![LuzObj::String(fn_dump::dump(&f)?)])
         }),
     };
 

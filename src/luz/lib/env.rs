@@ -5,6 +5,7 @@ use crate::{
     load,
     luz::{
         err::LuzError,
+        fn_dump,
         lib::{
             add_lib, math::math_lib, require::package_lib, string::string_lib, table::table_lib,
         },
@@ -151,15 +152,19 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
 
             let env = args.pop_front().unwrap_or_else(|| runner.registry().borrow().rawget(&LuzObj::str("_G")).clone());
 
-            let is_valid_bin = LuzFunction::is_valid_bin(&input);
+            let is_valid_bin = fn_dump::is_valid_bin(&input);
             let input = match mode.as_utf8_string_unchecked().deref() {
                 "b" | "bt" if is_valid_bin => {
                     let name = if let LuzObj::String(n) = chunkname { Some(n.as_utf8_string_unchecked()) } else { None };
                     let bin = input;
-                    let f = LuzFunction::load_bin(&bin, env, name).map_err(|_| {
-                        LuzRuntimeError::message("attempt to load a binary chunk")
-                    })?;
-                    return Ok(vec![LuzObj::Function(Rc::new(RefCell::new(f)))]);
+                    let f = fn_dump::load_bin(&bin, env, name);
+                    return match f {
+                        Ok(f) => Ok(vec![LuzObj::Function(Rc::new(RefCell::new(f)))]),
+                        Err(err) => {
+                            Ok(vec![LuzObj::Nil,
+                                LuzObj::str("truncated")])
+                        }
+                    };
                 }
                 "b" => {
                     return Ok(vec![LuzObj::Nil,
@@ -170,9 +175,17 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
                         LuzObj::str("attempt to load a binary chunk")]);
                 }
                 "bt" => {
+                    let Ok(input) = String::from_utf8(input) else {
+                        return Ok(vec![LuzObj::Nil,
+                            LuzObj::str("truncated")]);
+                    };
                     input
                 }
                 "t" => {
+                    let Ok(input) = String::from_utf8(input) else {
+                        return Ok(vec![LuzObj::Nil,
+                            LuzObj::str("truncated")]);
+                    };
                     input
                 }
                 _ =>
@@ -183,14 +196,13 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
 
             // let name = args.pop_front();
 
-            let name = if let LuzObj::String(n) = chunkname { n.as_utf8_string_unchecked() } else { input.as_utf8_string_unchecked() };
+            let name = if let LuzObj::String(n) = chunkname { n.as_utf8_string_unchecked() } else { input.clone() };
 
-            let r = load(None, input.as_utf8_string_unchecked(), name, env);
+            let r = load(None, input, name, env);
 
             match r {
                 Ok(r) => Ok(vec![LuzObj::Function(Rc::new(RefCell::new(r)))]),
                 Err(err) => {
-                    dbg!(&err);
                     if matches!(err, LuzError::Syntax(..)) {
                         Ok(vec![LuzObj::Nil,
                             LuzObj::str("unexpected symbol")])

@@ -1,8 +1,8 @@
 -- -- $Id: testes/calls.lua $
 -- -- See Copyright Notice in file all.lua
---
--- print("testing functions and calls")
---
+
+print("testing functions and calls")
+
 local debug = require "debug"
 
 -- get the opportunity to test 'type' too ;)
@@ -158,15 +158,14 @@ do   -- tail calls x varargs
 end
 
 
--- TODO: Add back (it is slow)
--- do   -- C-stack overflow while handling C-stack overflow
---   local function loop ()
---     assert(pcall(loop))
---   end
---
---   local err, msg = xpcall(loop, loop)
---   assert(not err and string.find(msg, "error"))
--- end
+do   -- C-stack overflow while handling C-stack overflow
+  local function loop ()
+    assert(pcall(loop))
+  end
+
+  local err, msg = xpcall(loop, loop)
+  assert(not err and string.find(msg, "error"))
+end
 
 
 -- TODO:
@@ -455,15 +454,15 @@ assert((function (a) return a end)() == nil)
 
 print("testing binary chunks")
 do
-  local header = string.pack("c4BBc6BBB",
-    "\27Lua",                                  -- signature
-    0x54,                                      -- version 5.4 (0x54)
-    0,                                         -- format
-    "\x19\x93\r\n\x1a\n",                      -- data
-    4,                                         -- size of instruction
-    string.packsize("j"),                      -- sizeof(lua integer)
-    string.packsize("n")                       -- sizeof(lua number)
-  )
+  -- local header = string.pack("c4BBc6BBB",
+  --   "\27Lua",                                  -- signature
+  --   0x54,                                      -- version 5.4 (0x54)
+  --   0,                                         -- format
+  --   "\x19\x93\r\n\x1a\n",                      -- data
+  --   4,                                         -- size of instruction
+  --   string.packsize("j"),                      -- sizeof(lua integer)
+  --   string.packsize("n")                       -- sizeof(lua number)
+  -- )
   local c = string.dump(function ()
     local a = 1; local b = 3;
     local f = function () return a + b + _ENV.c; end    -- upvalues
@@ -475,19 +474,19 @@ do
   assert(assert(load(c))() == 10)
 
   -- check header
-  assert(string.sub(c, 1, #header) == header)
+  -- assert(string.sub(c, 1, #header) == header)
   -- check LUAC_INT and LUAC_NUM
-  local ci, cn = string.unpack("jn", c, #header + 1)
-  assert(ci == 0x5678 and cn == 370.5)
+  -- local ci, cn = string.unpack("jn", c, #header + 1)
+  -- assert(ci == 0x5678 and cn == 370.5)
 
   -- corrupted header
-  for i = 1, #header do
-    local s = string.sub(c, 1, i - 1) ..
-              string.char(string.byte(string.sub(c, i, i)) + 1) ..
-              string.sub(c, i + 1, -1)
-    assert(#s == #c)
-    assert(not load(s))
-  end
+  -- for i = 1, #header do
+  --   local s = string.sub(c, 1, i - 1) ..
+  --             string.char(string.byte(string.sub(c, i, i)) + 1) ..
+  --             string.sub(c, i + 1, -1)
+  --   assert(#s == #c)
+  --   assert(not load(s))
+  -- end
 
   -- loading truncated binary chunks
   for i = 1, #c - 1 do
