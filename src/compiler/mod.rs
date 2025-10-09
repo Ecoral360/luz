@@ -422,7 +422,20 @@ impl<'a> Compiler<'a> {
         let (is_val_const, val_reg) = match value {
             ExpEval::InRegister(reg) => (false, reg),
             ExpEval::InConstant(kreg) => (true, kreg),
-            ExpEval::InUpvalue { .. } => todo!(),
+            ExpEval::InUpvalue {
+                in_table,
+                upvalue,
+                name,
+            } => {
+                let reg = ctx.get_or_push_free_register();
+                if in_table {
+                    let name_k = ctx.get_or_add_const(LuzObj::str(name));
+                    ctx.push_inst(Instruction::op_gettabup(reg, upvalue.addr, name_k as u8));
+                } else {
+                    ctx.push_inst(Instruction::op_getupval(reg, upvalue.addr));
+                }
+                (false, reg)
+            }
             _ => unreachable!("Not supported by op_settabup {:?}", value),
         };
 
@@ -1171,7 +1184,17 @@ impl<'a> Compiler<'a> {
                         RegOrUpvalue::Register(src) => {
                             ctx.claim_register(src.addr);
                             if src.addr != dest {
-                                ctx.push_inst(Instruction::op_move(src.addr, dest));
+                                if is_intable {
+                                    let name_k = ctx.get_or_add_const(LuzObj::str(name));
+                                    ctx.push_inst(Instruction::op_setfield(
+                                        src.addr,
+                                        name_k as u8,
+                                        dest,
+                                        is_const,
+                                    ));
+                                } else {
+                                    ctx.push_inst(Instruction::op_move(src.addr, dest));
+                                }
                             }
                         }
                         RegOrUpvalue::Upvalue(src) => {
