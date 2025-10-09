@@ -3,8 +3,8 @@ use derive_new::new;
 use crate::{
     ast::{
         AssignStat, Binop, CmpOp, DoStat, ExpAccess, ExpNode, ExpTableConstructor,
-        ExpTableConstructorField, ForInStat, ForRangeStat, FuncCall, FuncDef, IfStat, LogicCmpOp,
-        RepeaStat, ReturnStat, Stat, StatNode, Unop, WhileStat,
+        ExpTableConstructorField, ForInStat, ForRangeStat, FuncCall, FuncDef, GotoStat, IfStat,
+        LabelStat, LogicCmpOp, RepeaStat, ReturnStat, Stat, StatNode, Unop, WhileStat,
     },
     compiler::{
         ctx::{CompilerCtx, CompilerCtxBuilder, RegOrUpvalue, Upvalue},
@@ -16,6 +16,7 @@ use crate::{
         err::LuzError,
         obj::{LuzObj, Numeral},
     },
+    runner::err::LuzRuntimeError,
 };
 
 pub mod ctx;
@@ -28,6 +29,7 @@ pub struct Compiler<'a> {
     input: &'a str,
 }
 
+#[allow(unused_variables)]
 impl<'a> Compiler<'a> {
     pub fn compile(
         filename: String,
@@ -99,7 +101,7 @@ impl<'a> Compiler<'a> {
         let mut jmps = vec![];
         let reg = match exp.normalize() {
             ExpNode::LogicCmpOp { .. } => {
-                jmps = self.visit_inner_logicop(ctx, exp, 1)?;
+                jmps = self.visit_inner_logicop(ctx, exp.normalize(), 1)?;
                 ctx.get_or_push_free_register()
             }
             _ => self.load_exp(ctx, exp)?,
@@ -270,7 +272,20 @@ impl<'a> Compiler<'a> {
             ExpNode::Name(name) => {
                 let (in_table, src) = ctx.scope_mut().get_reg_or_upvalue(name)?;
                 match src {
-                    RegOrUpvalue::Register(register) => Ok(ExpEval::InRegister(register.addr)),
+                    RegOrUpvalue::Register(register) => {
+                        if in_table {
+                            let name_k = ctx.get_or_add_const(LuzObj::str(name));
+                            let reg = ctx.get_or_push_free_register();
+                            ctx.push_inst(Instruction::op_getfield(
+                                reg,
+                                register.addr,
+                                name_k as u8,
+                            ));
+                            Ok(ExpEval::InRegister(reg))
+                        } else {
+                            Ok(ExpEval::InRegister(register.addr))
+                        }
+                    }
                     RegOrUpvalue::Upvalue(upvalue) => Ok(ExpEval::InUpvalue {
                         in_table,
                         upvalue,
@@ -291,7 +306,20 @@ impl<'a> Compiler<'a> {
             ExpNode::Name(name) => {
                 let (in_table, src) = ctx.scope_mut().get_reg_or_upvalue(name)?;
                 match src {
-                    RegOrUpvalue::Register(register) => Ok(register.addr),
+                    RegOrUpvalue::Register(register) => {
+                        if in_table {
+                            let name_k = ctx.get_or_add_const(LuzObj::str(name));
+                            let reg = ctx.get_or_push_free_register();
+                            ctx.push_inst(Instruction::op_getfield(
+                                reg,
+                                register.addr,
+                                name_k as u8,
+                            ));
+                            Ok(reg)
+                        } else {
+                            Ok(register.addr)
+                        }
+                    }
                     RegOrUpvalue::Upvalue(upvalue) => {
                         let reg = ctx.get_or_push_free_register();
                         if in_table {
@@ -344,7 +372,21 @@ impl<'a> Compiler<'a> {
             ExpNode::Name(name) => {
                 let (in_table, src) = ctx.scope_mut().get_reg_or_upvalue(name)?;
                 match src {
-                    RegOrUpvalue::Register(register) => Ok((false, register.addr)),
+                    RegOrUpvalue::Register(register) => {
+                        if in_table {
+                            let name_k = ctx.get_or_add_const(LuzObj::str(name));
+                            let reg = ctx.get_or_push_free_register();
+                            ctx.push_inst(Instruction::op_getfield(
+                                reg,
+                                register.addr,
+                                name_k as u8,
+                            ));
+                            Ok((false, register.addr))
+                        } else {
+                            Ok((false, register.addr))
+                        }
+                    }
+
                     RegOrUpvalue::Upvalue(upvalue) => {
                         let reg = ctx.get_or_push_free_register();
                         if in_table {
@@ -478,16 +520,19 @@ enum ExpEval {
     },
 }
 
-#[allow(unused)]
+#[allow(unused_variables)]
 impl<'a> Compiler<'a> {
     fn visit_do_stat(&mut self, ctx: &mut CompilerCtx, do_stat: &DoStat) -> Result<(), LuzError> {
         let DoStat { block } = do_stat;
+        let labels = ctx.scope().labels().clone();
         let to_be_closed = ctx.get_or_push_free_register();
         for stmt in block {
-            self.visit_stat(stmt, ctx);
+            self.visit_stat(stmt, ctx)?;
         }
 
         ctx.push_inst(Instruction::op_close(to_be_closed));
+
+        ctx.scope_mut().remove_new_labels(labels);
 
         let mut scope = ctx.scope_mut();
         let regs = scope.regs()[to_be_closed as usize..]
@@ -508,7 +553,7 @@ impl<'a> Compiler<'a> {
     ) -> Result<(), LuzError> {
         let to_be_closed = ctx.get_or_push_free_register();
         for stmt in block {
-            self.visit_stat(stmt, ctx);
+            self.visit_stat(stmt, ctx)?;
         }
         let mut scope = ctx.scope_mut();
         let regs = scope.regs()[to_be_closed as usize..]
@@ -670,7 +715,7 @@ impl<'a> Compiler<'a> {
         // Exec the block
 
         for stmt in block {
-            self.visit_stat(stmt, ctx);
+            self.visit_stat(stmt, ctx)?;
         }
 
         {
@@ -745,7 +790,7 @@ impl<'a> Compiler<'a> {
         }
 
         for stmt in block {
-            self.visit_stat(stmt, ctx);
+            self.visit_stat(stmt, ctx)?;
         }
 
         let loop_body_len = ctx.instructions_len() - nb_inst_before;
@@ -882,6 +927,39 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    fn visit_label(&mut self, ctx: &mut CompilerCtx, stat: &LabelStat) -> Result<(), LuzError> {
+        let LabelStat(label) = stat;
+
+        let label_pos = ctx.instructions().len();
+        if !ctx.scope_mut().insert_label(label.to_string(), label_pos) {
+            // println!("{}", ctx.instructions_to_string());
+            Err(LuzError::CompileError(format!(
+                "label {} already defined in the scope",
+                label,
+            )))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn visit_goto(&mut self, ctx: &mut CompilerCtx, stat: &GotoStat) -> Result<(), LuzError> {
+        let GotoStat(label) = stat;
+
+        let Some(label_pos) = ctx.scope().get_label(label) else {
+            // println!("{}", ctx.instructions_to_string());
+            return Err(LuzError::CompileError(format!(
+                "label {} doesn't exist in the scope",
+                label,
+            )));
+        };
+
+        let curr_pos = ctx.instructions().len();
+
+        ctx.push_inst(Instruction::op_jmp((curr_pos - label_pos) as i32));
+
+        Ok(())
+    }
+
     fn visit_repeat_until(
         &mut self,
         ctx: &mut CompilerCtx,
@@ -892,10 +970,10 @@ impl<'a> Compiler<'a> {
         let nb_inst_before = ctx.scope().instructions().len();
 
         for stmt in block {
-            self.visit_stat(stmt, ctx);
+            self.visit_stat(stmt, ctx)?;
         }
 
-        self.visit_exp(cond, ctx);
+        self.visit_exp(cond, ctx)?;
 
         match **cond {
             ExpNode::CmpOp { .. } | ExpNode::LogicCmpOp { .. } => {
@@ -939,7 +1017,7 @@ impl<'a> Compiler<'a> {
         let AssignStat::Normal { varlist, explist } = assign else {
             unreachable!()
         };
-        let mut varlist_iter = varlist.iter();
+        let varlist_iter = varlist.iter();
 
         let mut claimed = vec![];
         let mut to_clean_up = vec![];
@@ -1075,7 +1153,7 @@ impl<'a> Compiler<'a> {
 
         let mut var_exp_accesses_iter = var_exp_accesses.iter();
 
-        for (var_exp, (is_const, mut dest)) in varlist.iter().rev().zip(claimed.into_iter().rev()) {
+        for (var_exp, (is_const, dest)) in varlist.iter().rev().zip(claimed.into_iter().rev()) {
             // let is_const = false;
             // if !is_const {
             //     dest = ctx.claim_next_free_register();
@@ -1312,7 +1390,7 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
 
-        let mut result_reg = ctx
+        let result_reg = ctx
             .dest_addr()
             .unwrap_or_else(|| ctx.get_or_push_free_register());
 
@@ -1608,6 +1686,7 @@ impl<'a> Compiler<'a> {
         depth: usize,
     ) -> Result<Vec<(u32, Option<bool>, LogicCmpOp)>, LuzError> {
         let ExpNode::LogicCmpOp { op, lhs, rhs } = exp else {
+            Err(LuzRuntimeError::message(ctx.instructions_to_string()))?;
             unreachable!()
         };
 
@@ -2303,7 +2382,7 @@ impl<'a> Compiler<'a> {
             self.visit_exp(
                 exp,
                 &mut ctx.new_with(CompilerCtxBuilder::default().in_not(!ctx.in_not())),
-            );
+            )?;
         } else {
             let dest = ctx.get_or_push_free_register();
             let val_addr = self.load_exp(ctx, exp)?;
@@ -2356,8 +2435,8 @@ impl<'a> Visitor for Compiler<'a> {
             StatNode::ForRange(for_range_stat) => self.visit_for_range(ctx, for_range_stat),
             StatNode::ForIn(for_in_stat) => self.visit_for_in(ctx, for_in_stat),
             StatNode::Break => self.visit_break(ctx),
-            StatNode::Goto(goto_stat) => todo!(),
-            StatNode::Label(label_stat) => todo!(),
+            StatNode::Goto(goto_stat) => self.visit_goto(ctx, goto_stat),
+            StatNode::Label(label_stat) => self.visit_label(ctx, label_stat),
         }
     }
 }

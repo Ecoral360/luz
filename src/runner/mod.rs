@@ -838,6 +838,8 @@ impl<'a> Runner<'a> {
                 }
                 LuaOpCode::OP_CLOSURE => {
                     let iABx { b, a, .. } = *i_abx;
+                    // 1. get les variables locales qui ont une fin et qui sont encore vivantes
+                    // 2. close ces variables
                     let sub_scope = Rc::clone(&self.scope().sub_scopes()[b as usize]);
                     let nb_params = sub_scope.borrow().nb_params();
                     self.scope.borrow_mut().set_reg_val(

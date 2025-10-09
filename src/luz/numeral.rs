@@ -343,13 +343,13 @@ impl FromStr for Numeral {
         } else if let Ok(float) = string.parse::<f64>() {
             Ok(Numeral::Float(sign as f64 * float).into())
         } else if string.to_lowercase().starts_with("0x") {
+            let power = string.find(['p', 'P']);
+            let power_part = power.map(|p_idx| &string[p_idx..]);
+
             if let Some(dot_pos) = string.find(&['.', ',']) {
                 // Decimal hex number
                 let int_part = &string[2..dot_pos];
-                let power = string.find(['p', 'P']);
                 let frac_part = &string[dot_pos + 1..power.unwrap_or(string.len())];
-
-                let power_part = power.map(|p_idx| &string[p_idx..]);
 
                 let int = if int_part.is_empty() {
                     0
@@ -367,17 +367,37 @@ impl FromStr for Numeral {
                 };
                 let mut num = sign as f64 * (int as f64 + frac);
                 if let Some(power_part) = power_part {
-                    num *= (1
-                        >> power_part[1..]
-                            .parse::<i64>()
-                            .map_err(|_| LuzError::NumberParsing(string.to_string()))?)
-                        as f64;
+                    let shr_val = power_part[1..]
+                        .parse::<i64>()
+                        .map_err(|_| LuzError::NumberParsing(string.to_string()))?;
+
+                    if shr_val < 0 {
+                        num *= (1 << -shr_val) as f64;
+                    } else {
+                        num *= (1 >> shr_val) as f64;
+                    }
                 }
 
                 Ok(Numeral::Float(num).into())
             } else {
-                if let Ok(hex) = i128::from_str_radix(&string[2..], 16) {
-                    Ok(Numeral::Int(sign * hex as i64).into())
+                if let Ok(hex) = i128::from_str_radix(&string[2..power.unwrap_or(string.len())], 16)
+                {
+                    let num = sign * hex as i64;
+                    if let Some(power_part) = power_part {
+                        let mut num = num as f64;
+                        let shr_val = power_part[1..]
+                            .parse::<i64>()
+                            .map_err(|_| LuzError::NumberParsing(string.to_string()))?;
+
+                        if shr_val < 0 {
+                            num *= (1 << -shr_val) as f64;
+                        } else {
+                            num *= (1 >> shr_val) as f64;
+                        }
+                        return Ok(Numeral::Float(num).into());
+                    }
+
+                    Ok(Numeral::Int(num).into())
                 } else {
                     Err(LuzError::NumberParsing(string.to_string()))?
                 }

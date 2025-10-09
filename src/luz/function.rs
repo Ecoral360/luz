@@ -61,7 +61,7 @@ impl LuzFunction {
     ) -> Result<Option<Vec<LuzObj>>, LuzRuntimeError> {
         match self {
             LuzFunction::User { ref scope, .. } => {
-                let fc_scope = scope.borrow().make_closure();
+                let fc_scope = scope.borrow().make_tailcall_closure();
                 for (i, arg) in args.into_iter().enumerate() {
                     fc_scope.borrow_mut().set_or_push_reg_val(i as u8, arg);
                 }

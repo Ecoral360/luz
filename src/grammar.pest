@@ -163,7 +163,7 @@ Numeral = @{
 }
 
 hexNumeral     = {
-    ("-" | "+")? ~ ^"0x" ~ ASCII_HEX_DIGIT+ ~ ("." ~ ASCII_HEX_DIGIT+)? ~ (^"p" ~ ("-" | "+")? ~ ASCII_DIGIT+)?
+    ("-" | "+")? ~ ^"0x" ~ ((ASCII_HEX_DIGIT+ ~ ("." ~ ASCII_HEX_DIGIT+)?) | ("." ~ ASCII_HEX_DIGIT+)) ~ (^"p" ~ ("-" | "+")? ~ ASCII_DIGIT+)?
 }
 decimalNumeral = {
     ("-" | "+")? ~ ((ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT*)?) | ("." ~ ASCII_DIGIT+)) ~ (^"e" ~ ("-" | "+")? ~ ASCII_DIGIT+)?

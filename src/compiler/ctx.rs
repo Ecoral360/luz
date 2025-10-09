@@ -1,5 +1,6 @@
 use std::{
     cell::{Ref, RefCell, RefMut},
+    collections::HashMap,
     fmt::Debug,
     rc::Rc,
     usize,
@@ -415,9 +416,38 @@ pub struct Scope {
 
     #[new(default)]
     locals: Vec<Register>,
+
+    #[new(default)]
+    labels: HashMap<String, usize>,
 }
 
 impl Scope {
+    pub fn make_tailcall_closure(&self) -> Rc<RefCell<Self>> {
+        let scope = Rc::new(RefCell::new(Self {
+            name: self.name.clone(),
+            parent: self.parent.as_ref().map(|p| Rc::clone(p)),
+            instructions: self.instructions.clone(),
+            line_infos: self.line_infos.clone(),
+            constants: self.constants.clone(),
+            regs: self.regs.clone(),
+            upvalues: self.upvalues.clone(),
+            sub_scopes: self.sub_scopes.clone(),
+            nb_params: self.nb_params.clone(),
+            vararg: self.vararg.clone(),
+            locals: self.locals.clone(),
+            labels: self.labels.clone(),
+        }));
+
+        // Put the new current scope as the parent scope for its subscopes
+        {
+            for sub_scope in scope.borrow_mut().sub_scopes.iter_mut() {
+                sub_scope.borrow_mut().parent = Some(Rc::clone(&scope));
+            }
+        }
+
+        scope
+    }
+
     pub fn make_closure(&self) -> Rc<RefCell<Self>> {
         let scope = Rc::new(RefCell::new(Self {
             name: self.name.clone(),
@@ -431,14 +461,75 @@ impl Scope {
             nb_params: self.nb_params.clone(),
             vararg: self.vararg.clone(),
             locals: self.locals.clone(),
+            labels: self.labels.clone(),
         }));
 
         // Put the new current scope as the parent scope for its subscopes
-        for sub_scope in scope.borrow_mut().sub_scopes.iter_mut() {
-            sub_scope.borrow_mut().parent = Some(Rc::clone(&scope));
+        {
+            for sub_scope in scope.borrow_mut().sub_scopes.iter_mut() {
+                sub_scope.borrow_mut().parent = Some(Rc::clone(&scope));
+            }
         }
 
         scope
+    }
+
+    fn close(scope: &ScopeRef, pc: usize) -> Rc<RefCell<Self>> {
+        let mut close_scope = {
+            let scope_b = scope.borrow();
+            let parent = scope_b.parent.as_ref().map(|p| Rc::clone(p));
+
+            Self {
+                name: None,
+                parent: parent.as_ref().map(|p| Rc::clone(p)),
+                instructions: vec![],
+                line_infos: vec![],
+                constants: vec![],
+                regs: vec![],
+                upvalues: vec![],
+                sub_scopes: vec![Rc::clone(scope)],
+                nb_params: 0,
+                vararg: vec![],
+                locals: vec![],
+                labels: HashMap::new(),
+            }
+        };
+
+        if let Some(ref parent) = close_scope.parent {
+            let live_locals = parent.borrow().live_locals(pc);
+            for local in live_locals {
+                close_scope.push_reg(RegisterBuilder::default().name(local.name));
+            }
+        }
+
+        let mut scope_b = scope.borrow_mut();
+
+        for upvalue in scope_b.upvalues.iter_mut() {}
+
+        let close_scope = Rc::new(RefCell::new(close_scope));
+
+        scope_b.parent = Some(close_scope);
+
+        // let mut upvalues = vec![];
+        // for upvalue in scope_b.upvalues {}
+
+        // let scope = scope.borrow();
+        //
+        // let scope = Rc::new(RefCell::new(Self {
+        //     name: scope.name.clone(),
+        //     parent: scope.parent.as_ref().map(|p| Scope::close(p)),
+        //     instructions: scope.instructions.clone(),
+        //     line_infos: scope.line_infos.clone(),
+        //     constants: scope.constants.clone(),
+        //     regs: scope.regs.clone(),
+        //     upvalues: scope.upvalues.clone(),
+        //     sub_scopes: scope.sub_scopes.clone(),
+        //     nb_params: scope.nb_params.clone(),
+        //     vararg: scope.vararg.clone(),
+        //     locals: scope.locals.clone(),
+        // }));
+
+        Rc::clone(scope)
     }
 
     pub fn set_name(&mut self, name: Option<String>) {
@@ -451,6 +542,24 @@ impl Scope {
 
     pub fn set_instructions(&mut self, instructions: Vec<Instruction>) {
         self.instructions = instructions;
+    }
+
+    pub fn locals(&self) -> &[Register] {
+        &self.locals
+    }
+
+    pub fn live_locals(&self, pc: usize) -> Vec<Register> {
+        self.locals
+            .iter()
+            .filter(|local| {
+                if let Some(range) = &local.range {
+                    range.end.is_some() && range.contains(pc)
+                } else {
+                    false
+                }
+            })
+            .cloned()
+            .collect::<Vec<Register>>()
     }
 }
 
@@ -594,6 +703,10 @@ impl Scope {
 
         if let Some(up_addr) = self.get_upvalue_with_name(register_name) {
             return Ok((false, RegOrUpvalue::Upvalue(up_addr.clone())));
+        }
+
+        if let Some(env_addr) = self.get_reg_with_name("_ENV") {
+            return Ok((true, RegOrUpvalue::Register(env_addr.clone())));
         }
 
         if let Some(p) = &self.parent {
@@ -904,6 +1017,39 @@ impl Scope {
 
     pub fn push_line_infos(&mut self, line_info: LineInfo) {
         self.line_infos.push((self.instructions().len(), line_info));
+    }
+
+    pub fn insert_label(&mut self, label: String, pos: usize) -> bool {
+        if self.labels.contains_key(&label) {
+            false
+        } else {
+            self.labels.insert(label, pos);
+            true
+        }
+    }
+
+    pub fn get_label(&self, label: &str) -> Option<usize> {
+        self.labels.get(label).cloned()
+    }
+
+    pub fn labels(&self) -> &HashMap<String, usize> {
+        &self.labels
+    }
+
+    pub fn set_labels(&mut self, labels: HashMap<String, usize>) {
+        self.labels = labels;
+    }
+
+    pub fn remove_new_labels(&mut self, old_labels: HashMap<String, usize>) {
+        let mut to_remove = vec![];
+        for key in self.labels.keys() {
+            if !old_labels.contains_key(key) {
+                to_remove.push(key.clone());
+            }
+        }
+        for key in to_remove {
+            self.labels.remove(&key);
+        }
     }
 }
 
