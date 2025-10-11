@@ -341,10 +341,15 @@ impl<'a> Runner<'a> {
                     }
                 }
                 LuaOpCode::OP_CLOSE => {
+                    let pc = self.pc;
                     let reg_len = self.scope().regs().len();
                     for addr in *a..reg_len as u8 {
-                        self.scope_mut().set_reg_val(addr, LuzObj::Nil);
+                        self.scope_mut().close(addr, pc);
                     }
+
+                    // for addr in *a..reg_len as u8 {
+                    //     self.scope_mut().set_reg_val(addr, LuzObj::Nil);
+                    // }
                 }
                 LuaOpCode::OP_LOADTRUE => {
                     self.scope_mut().set_reg_val(*a, LuzObj::Boolean(true));
@@ -840,7 +845,7 @@ impl<'a> Runner<'a> {
                     let iABx { b, a, .. } = *i_abx;
                     // 1. get les variables locales qui ont une fin et qui sont encore vivantes
                     // 2. close ces variables
-                    let sub_scope = Rc::clone(&self.scope().sub_scopes()[b as usize]);
+                    let sub_scope = self.scope_mut().make_closure(b as usize);
                     let nb_params = sub_scope.borrow().nb_params();
                     self.scope.borrow_mut().set_reg_val(
                         a,

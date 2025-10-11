@@ -543,7 +543,9 @@ impl<'a> Compiler<'a> {
             self.visit_stat(stmt, ctx)?;
         }
 
-        ctx.push_inst(Instruction::op_close(to_be_closed));
+        if to_be_closed != ctx.get_or_push_free_register() {
+            ctx.push_inst(Instruction::op_close(to_be_closed));
+        }
 
         ctx.scope_mut().remove_new_labels(labels);
 
@@ -729,6 +731,10 @@ impl<'a> Compiler<'a> {
 
         for stmt in block {
             self.visit_stat(stmt, ctx)?;
+        }
+
+        if to_be_closed + 3 != ctx.get_or_push_free_register() {
+            ctx.push_inst(Instruction::op_close(to_be_closed + 3));
         }
 
         {
@@ -2471,12 +2477,12 @@ fn final_jmp_target(insts: &Vec<Instruction>, mut pc: usize) -> usize {
         if inst.op() != LuaOpCode::OP_JMP {
             break;
         }
-        pc += inst.sj().unwrap() as usize - MAX_HALF_sJ as usize + 1;
+        pc = (pc as i32 + inst.sj().unwrap() as i32 + 1 - MAX_HALF_sJ as i32) as usize;
     }
     pc
 }
 
 fn fix_jmp(jmp_inst: &mut Instruction, pc: usize, dest: usize) {
-    let offset = dest - (pc + 1);
-    jmp_inst.set_sj(offset as u32 + MAX_HALF_sJ);
+    let offset = dest as i32 - (pc as i32 + 1);
+    jmp_inst.set_sj((offset + MAX_HALF_sJ as i32) as u32);
 }

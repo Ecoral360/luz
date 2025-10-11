@@ -65,6 +65,15 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
                     let meta = registry.rawget(&LuzObj::str(":hidden.string.metatable:"));
                     Ok(vec![meta.clone()])
                 }
+                LuzObj::Table(table) => {
+                    let table_obj = table.borrow();
+                    let existing_meta = table_obj.rawget_metatable(&LuzObj::str("__metatable"));
+                    if !existing_meta.is_nil() {
+                        Ok(vec![existing_meta])
+                    } else {
+                        Ok(vec![table_obj.metatable()])
+                    }
+                }
                 _ => Ok(vec![LuzObj::Nil])
             }
         }),

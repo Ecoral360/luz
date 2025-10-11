@@ -307,6 +307,7 @@ local function read1 (x)
   end
 end
 
+
 local function cannotload (msg, a,b)
   assert(not a and string.find(b, msg))
 end

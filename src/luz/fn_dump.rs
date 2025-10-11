@@ -250,12 +250,16 @@ fn load_scope_bin(
         let upvalue_name = bin[*ptr..*ptr + upvalue_name_len as usize].to_vec();
         *ptr += upvalue_name_len as usize;
 
-        scope.push_upval(Upvalue::new(
+        let mut upval = Upvalue::new(
             upvalue_name.as_utf8_string_unchecked(),
             i as u8,
             parent_addr,
             in_stack,
-        ));
+        );
+        // if !is_env && in_stack {
+        //     upval.val = Some(LuzObj::Nil);
+        // }
+        scope.push_upval(upval);
 
         if !is_env && in_stack {
             {

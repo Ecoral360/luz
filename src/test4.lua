@@ -1,13 +1,16 @@
 local function test(_ENV)
-  print(a)
+  assert(a == 12)
   a = 333
-  print(a)
+  assert(a == 333)
 end
 
 
 a = 12
 local print = print
 test(setmetatable({}, {__index = _ENV}))
-print(a)
+assert(a == 12)
 test(_ENV)
-print(a)
+assert(a == 333)
+
+print "Ok"
+

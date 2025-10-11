@@ -95,22 +95,27 @@ impl LuzFunction {
                 filename,
                 ..
             } => {
-                let fc_scope = scope.borrow().make_closure();
+                let fc_scope = { scope.borrow().make_instance() };
                 for (i, arg) in args.into_iter().enumerate() {
                     fc_scope.borrow_mut().set_reg_val(i as u8, arg);
                 }
                 let mut fc_runner = Runner::new(
                     filename.clone(),
                     runner.input(),
-                    fc_scope,
+                    Rc::clone(&fc_scope),
                     runner.registry(),
                 );
                 fc_runner.set_depth(runner.depth() + 1);
                 fc_runner.set_vararg(Some(vararg));
 
-                fc_runner
+                let results = fc_runner
                     .run()
-                    .map_err(|err| LuzRuntimeError::ErrorObj(LuzObj::str(&err.to_string())))
+                    .map_err(|err| LuzRuntimeError::ErrorObj(LuzObj::str(&err.to_string())));
+
+                scope.borrow_mut().update_upval_from_instance(fc_scope);
+                // update the closed upvalues of the original scope
+
+                results
             }
             LuzFunction::Native { ref fn_ptr, .. } => {
                 let fn_ptr = fn_ptr.borrow();

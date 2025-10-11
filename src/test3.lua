@@ -3,24 +3,26 @@
 
 print "testing closures"
 
-do  -- bug in 5.4.7
+do -- bug in 5.4.7
   _ENV[1 < 2] = 10
-  local function aux () return _ENV[1 < 2] end
+  local function aux() return _ENV[1 < 2] end
   assert(aux() == 10)
   _ENV[true] = nil
 end
 
 
-local A,B = 0,{g=10}
+local A, B = 0, { g = 10 }
 local function f(x)
   local a = {}
-  for i=1,1000 do
+  for i = 1, 1000 do
     local y = 0
     do
-      a[i] = function () B.g = B.g+1; y = y+x; return y+A end
+      a[i] = function()
+        B.g = B.g + 1; y = y + x; return y + A
+      end
     end
   end
-  local dummy = function () return a[A] end
+  local dummy = function() return a[A] end
   collectgarbage()
   A = 1; assert(dummy() == a[1]); A = 0;
   assert(a[1]() == x)
@@ -31,24 +33,23 @@ local function f(x)
 end
 
 local a = f(10)
-print()
 -- force a GC in this level
--- local x = {[1] = {}}   -- to detect a GC
--- setmetatable(x, {__mode = 'kv'})
--- while x[1] do   -- repeat until GC
---   local a = A..A..A..A  -- create garbage
---   A = A+1
--- end
--- assert(a[1]() == 20+A)
--- assert(a[1]() == 30+A)
--- assert(a[2]() == 10+A)
--- collectgarbage()
--- assert(a[2]() == 20+A)
--- assert(a[2]() == 30+A)
--- assert(a[3]() == 20+A)
--- assert(a[8]() == 10+A)
--- assert(getmetatable(x).__mode == 'kv')
--- assert(B.g == 19)
+local x = { [1] = {} } -- to detect a GC
+setmetatable(x, { __mode = 'kv' })
+while x[1] do          -- repeat until GC
+  local a = A .. A .. A .. A -- create garbage
+  A = A + 1
+end
+assert(a[1]() == 20 + A)
+assert(a[1]() == 30 + A)
+assert(a[2]() == 10 + A)
+collectgarbage()
+assert(a[2]() == 20 + A)
+assert(a[2]() == 30 + A)
+assert(a[3]() == 20 + A)
+assert(a[8]() == 10 + A)
+assert(getmetatable(x).__mode == 'kv')
+assert(B.g == 19)
 
 --
 -- -- testing equality
@@ -172,7 +173,7 @@ print()
 --     X = function () return b end   -- closure with upvalue
 --     if a then break end
 --   end
---   
+--
 --   do
 --     local b = 20
 --     Y = function () return b end   -- closure with upvalue
@@ -182,7 +183,7 @@ print()
 --   assert(X() == 10 and Y() == 20)
 -- end
 --
---   
+--
 -- -- testing closures x repeat-until
 --
 -- local a = {}
