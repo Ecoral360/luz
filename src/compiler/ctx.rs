@@ -12,7 +12,10 @@ use derive_new::new;
 use crate::{
     ast::LineInfo,
     borrowed,
-    compiler::instructions::{self, Instruction},
+    compiler::{
+        instructions::{self, Instruction},
+        opcode::LuaOpCode,
+    },
     luz::{err::LuzError, lib::env::get_builtin_scope, obj::LuzObj},
 };
 
@@ -25,8 +28,6 @@ pub struct CompilerCtx {
     scope: ScopeRef,
     /// The expression is a child of a "not" expression
     in_not: bool,
-
-    breaks: Vec<usize>,
 
     /// specify a destination register for the current expression
     dest_addr: Option<u8>,
@@ -45,7 +46,6 @@ impl CompilerCtx {
             nb_expected: 2,
             dest_addr: None,
             in_not: false,
-            breaks: vec![],
         }
     }
     pub fn new_chunk(
@@ -69,7 +69,6 @@ impl CompilerCtx {
             dest_addr: None,
             in_not: false,
             filename,
-            breaks: vec![],
         }
     }
 
@@ -80,7 +79,6 @@ impl CompilerCtx {
             in_not: builder.in_not.unwrap_or(self.in_not),
             dest_addr: builder.dest_addr.unwrap_or(self.dest_addr),
             filename: builder.filename.as_ref().unwrap_or(&self.filename).clone(),
-            breaks: builder.breaks.as_ref().unwrap_or(&self.breaks).clone(),
         }
     }
 
@@ -98,16 +96,6 @@ impl CompilerCtx {
 
     pub fn filename(&self) -> &str {
         &self.filename
-    }
-
-    pub fn push_break(&mut self, break_pos: usize) {
-        self.breaks.push(break_pos);
-    }
-
-    pub fn take_breaks(&mut self) -> Vec<usize> {
-        let breaks = self.breaks.to_vec();
-        self.breaks.clear();
-        breaks
     }
 }
 
@@ -384,6 +372,14 @@ impl CompilerCtx {
     pub fn instructions_to_string(&self) -> String {
         self.scope.borrow().instructions_to_string()
     }
+
+    pub fn needs_to_be_closed(&self) -> bool {
+        self.scope
+            .borrow()
+            .instructions
+            .iter()
+            .any(|inst| inst.op() == LuaOpCode::OP_CLOSURE)
+    }
 }
 
 #[derive(Debug, new, Clone)]
@@ -510,7 +506,7 @@ impl Scope {
 
     /// closes a subscope
     pub fn make_closure(&mut self, sub_scope_idx: usize) -> Rc<RefCell<Self>> {
-        let mut scope = {
+        let scope = {
             let sub_scope = self.sub_scopes[sub_scope_idx].borrow();
             Self {
                 start_pc: sub_scope.start_pc.clone(),
@@ -530,12 +526,6 @@ impl Scope {
             }
         };
 
-        // for upval in scope.upvalues.iter_mut() {
-        //     if upval.in_stack && upval.val.is_none() {
-        //         upval.val = Some(self.get_upvalue_value(upval.addr).unwrap_or(LuzObj::Nil));
-        //     }
-        // }
-
         let scope = Rc::new(RefCell::new(scope));
 
         self.scopes_tbc.push(Rc::clone(&scope));
@@ -550,26 +540,48 @@ impl Scope {
         scope
     }
 
-    pub fn close(&mut self, addr: u8, pc: usize) {
-        let reg = self.get_reg(addr);
-        // if reg.name.is_none() {
-        //     return;
-        // }
-        for sub_scope in &self.scopes_tbc {
+    fn make_instance2(&self) -> Rc<RefCell<Self>> {
+        let scope = Self {
+            start_pc: self.start_pc.clone(),
+            name: self.name.clone(),
+            parent: self.parent.as_ref().map(|p| Rc::clone(p)),
+            instructions: self.instructions.clone(),
+            line_infos: self.line_infos.clone(),
+            constants: self.constants.clone(),
+            regs: self.regs.clone(),
+            upvalues: self.upvalues.clone(),
+            sub_scopes: self.sub_scopes.clone(),
+            nb_params: self.nb_params.clone(),
+            vararg: self.vararg.clone(),
+            locals: self.locals.clone(),
+            labels: self.labels.clone(),
+            scopes_tbc: vec![],
+        };
+
+        Rc::new(RefCell::new(scope))
+    }
+    pub fn close(scope: ScopeRef, reg: u8) {
+        let new_parent = scope.borrow().make_instance2();
+        // new_parent.borrow_mut().parent = Some(Rc::clone(&scope));
+        for sub_scope in &scope.borrow().scopes_tbc {
             let mut sub_scope = sub_scope.borrow_mut();
-            if sub_scope.start_pc > pc {
-                return;
-            }
-            for upval in sub_scope.upvalues.iter_mut() {
-                if upval.in_stack
-                    // && upval.name == *reg.name.as_ref().unwrap()
-                    && upval.val.is_none()
-                    && upval.parent_addr == addr
-                {
-                    upval.val = Some(reg.val.clone().unwrap_or(LuzObj::Nil));
-                }
-            }
+            // for upval in sub_scope.upvalues.iter_mut() {
+            //     if upval.in_stack && upval.parent_addr >= reg {
+            //         let upval_addr = new_parent.borrow().upvalues.len();
+            //         upval.in_stack = false;
+            //         upval.parent_addr = upval_addr as u8;
+            //
+            //         new_parent.borrow_mut().push_upval(Upvalue::new(
+            //             upval.name.clone(),
+            //             upval_addr as u8,
+            //             upval.parent_addr,
+            //             true,
+            //         ));
+            //     }
+            // }
+            sub_scope.parent = Some(Rc::clone(&new_parent));
         }
+        scope.borrow_mut().scopes_tbc.clear()
     }
 
     pub fn set_name(&mut self, name: Option<String>) {

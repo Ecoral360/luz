@@ -784,6 +784,7 @@ impl PartialEq for LuzObj {
             (Self::Boolean(l0), Self::Boolean(r0)) => l0 == r0,
             (Self::String(l0), Self::String(r0)) => l0 == r0,
             (Self::Table(l0), Self::Table(r0)) => Table::table_eq(Rc::clone(l0), Rc::clone(r0)),
+            (Self::Function(f1), Self::Function(f2)) => Rc::ptr_eq(f1, f2),
             _ => core::mem::discriminant(self) == core::mem::discriminant(other),
         }
     }

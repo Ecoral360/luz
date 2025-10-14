@@ -23,6 +23,8 @@ pub enum Instruction {
     iAsBx(iAsBx),
     isJ(isJ),
     iAx(iAx),
+    /// Placeholder instruction that will be replaced with a JMP
+    BREAK,
 }
 
 impl Instruction {
@@ -50,7 +52,8 @@ impl Instruction {
             Instruction::iAsBx(i_as_bx) => i_as_bx.op,
             Instruction::isJ(is_j) => is_j.op,
             Instruction::iAx(i_ax) => i_ax.op,
-            _ => LuaOpCode::OP_debug,
+            Instruction::BREAK => LuaOpCode::Break,
+            _ => LuaOpCode::Debug,
         }
     }
 
@@ -129,6 +132,7 @@ impl Instruction {
             Instruction::iAsBx(i_as_bx) => i_as_bx.op = op,
             Instruction::isJ(is_j) => is_j.op = op,
             Instruction::iAx(i_ax) => i_ax.op = op,
+            _ => todo!(),
         }
     }
 
@@ -141,6 +145,7 @@ impl Instruction {
             Instruction::iAsBx(i_as_bx) => i_as_bx.a = a,
             Instruction::isJ(_) => todo!(),
             Instruction::iAx(_) => todo!(),
+            _ => todo!(),
         }
     }
 
@@ -153,6 +158,7 @@ impl Instruction {
             Instruction::iAsBx(i_as_bx) => i_as_bx.b = b as u32,
             Instruction::isJ(_) => todo!(),
             Instruction::iAx(_) => todo!(),
+            _ => todo!(),
         }
     }
 
@@ -165,6 +171,7 @@ impl Instruction {
             Instruction::iAsBx(_) => todo!(),
             Instruction::isJ(_) => todo!(),
             Instruction::iAx(_) => todo!(),
+            _ => todo!(),
         }
     }
 
@@ -177,6 +184,7 @@ impl Instruction {
             Instruction::iAsBx(_) => todo!(),
             Instruction::isJ(_) => todo!(),
             Instruction::iAx(_) => todo!(),
+            _ => todo!(),
         }
     }
 
@@ -189,6 +197,7 @@ impl Instruction {
             Instruction::iAsBx(_) => todo!(),
             Instruction::isJ(_) => todo!(),
             Instruction::iAx(_) => todo!(),
+            _ => todo!(),
         }
     }
 
@@ -201,6 +210,7 @@ impl Instruction {
             Instruction::iAsBx(_) => todo!(),
             Instruction::isJ(is_j) => is_j.j = sj,
             Instruction::iAx(_) => todo!(),
+            _ => todo!(),
         }
     }
 }
@@ -218,6 +228,7 @@ impl TryInto<u32> for Instruction {
             Instruction::iAsBx(i_as_bx) => i_as_bx.into(),
             Instruction::isJ(is_j) => is_j.into(),
             Instruction::iAx(i_ax) => i_ax.into(),
+            _ => todo!(),
         })
     }
 }
@@ -314,7 +325,8 @@ impl TryFrom<u32> for Instruction {
             LuaOpCode::OP_EXTRAARG => Ok(Instruction::iAx(iAx::from(value))),
             LuaOpCode::OP_JMP => Ok(Instruction::isJ(isJ::from(value))),
             LuaOpCode::OP_TBC => todo!(),
-            LuaOpCode::OP_debug => todo!(),
+            LuaOpCode::Debug => todo!(),
+            LuaOpCode::Break => todo!(),
         }
     }
 }
@@ -560,13 +572,11 @@ impl Instruction {
         }
     }
 
-    pub fn op_return(reg: u8, is_const: bool, nb_exps: u8) -> Instruction {
-        LuaOpCode::OP_RETURN
-            .to_iabc(reg, is_const, nb_exps, 0)
-            .into()
+    pub fn op_return(reg: u8, tbc: bool, nb_exps: u8) -> Instruction {
+        LuaOpCode::OP_RETURN.to_iabc(reg, tbc, nb_exps, 0).into()
     }
-    pub fn op_return0() -> Instruction {
-        LuaOpCode::OP_RETURN0.to_iabc(0, false, 0, 0).into()
+    pub fn op_return0(reg: u8) -> Instruction {
+        LuaOpCode::OP_RETURN0.to_iabc(reg, false, 0, 0).into()
     }
     pub fn op_return1(reg: u8) -> Instruction {
         LuaOpCode::OP_RETURN1.to_iabc(reg, false, 0, 0).into()
@@ -872,7 +882,10 @@ impl Display for iABC {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let showk = matches!(
             self.op,
-            LuaOpCode::OP_SETFIELD | LuaOpCode::OP_SELF | LuaOpCode::OP_SETTABUP
+            LuaOpCode::OP_SETFIELD
+                | LuaOpCode::OP_SELF
+                | LuaOpCode::OP_SETTABUP
+                | LuaOpCode::OP_RETURN
         );
 
         let b = match self.op {
@@ -915,6 +928,7 @@ impl Display for iABC {
             | LuaOpCode::OP_NOT
             | LuaOpCode::OP_UNM
             | LuaOpCode::OP_GETUPVAL
+            | LuaOpCode::OP_SETUPVAL
             | LuaOpCode::OP_VARARG => {
                 format!(
                     "{:<INSTS_COL_WIDTH$} {} {}",
@@ -987,9 +1001,8 @@ impl Display for iABC {
 
         write!(
             f,
-            "{:<INST_ARG_COL_WIDTH$}{}",
-            s,
-            if showk && self.k { "k" } else { "" }
+            "{:<INST_ARG_COL_WIDTH$}",
+            format!("{}{}", s, if showk && self.k { "k" } else { "" })
         )
     }
 }

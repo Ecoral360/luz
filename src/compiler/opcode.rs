@@ -139,7 +139,8 @@ pub enum LuaOpCode {
 
     OP_EXTRAARG, /*	Ax	extra (larger) argument for previous opcode	*/
 
-    OP_debug,
+    Debug,
+    Break,
 }
 
 impl Display for LuaOpCode {

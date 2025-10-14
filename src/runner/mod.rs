@@ -186,7 +186,7 @@ impl<'a> Runner<'a> {
                         ))?;
                     }
                     if n < 0 {
-                        self.pc -= n.abs() as usize;
+                        self.pc -= n.abs() as usize - 1;
                     } else {
                         self.pc += n as usize + 1;
                     }
@@ -341,12 +341,7 @@ impl<'a> Runner<'a> {
                     }
                 }
                 LuaOpCode::OP_CLOSE => {
-                    let pc = self.pc;
-                    let reg_len = self.scope().regs().len();
-                    for addr in *a..reg_len as u8 {
-                        self.scope_mut().close(addr, pc);
-                    }
-
+                    Scope::close(Rc::clone(&self.scope), *a);
                     // for addr in *a..reg_len as u8 {
                     //     self.scope_mut().set_reg_val(addr, LuzObj::Nil);
                     // }
@@ -491,6 +486,9 @@ impl<'a> Runner<'a> {
                         for i in 0..*b - 1 {
                             rets.push(self.get_reg_val(*a + i)?);
                         }
+                    }
+                    if *k {
+                        Scope::close(Rc::clone(&self.scope), *a);
                     }
                     return Ok(InstructionResult::Return(rets));
                 }
@@ -637,7 +635,7 @@ impl<'a> Runner<'a> {
                     let val = self
                         .scope()
                         .get_upvalue_value(b)
-                        .ok_or(LuzError::CompileError("Upvalue missing".to_owned()))?;
+                        .ok_or(LuzError::CompileError(format!("Upvalue missing ({})", b)))?;
 
                     self.scope.borrow_mut().set_reg_val(a, val);
                 }
@@ -972,8 +970,8 @@ impl<'a> Runner<'a> {
             Instruction::isJ(is_j) => match is_j.op {
                 LuaOpCode::OP_JMP => {
                     let isJ { j: b, .. } = *is_j;
-                    let offset = b - MAX_HALF_sJ;
-                    return Ok(InstructionResult::Jmp(offset as i32));
+                    let offset = b as i32 - MAX_HALF_sJ as i32;
+                    return Ok(InstructionResult::Jmp(offset));
                 }
                 op => todo!("isJ {:?}", op),
             },
@@ -984,6 +982,7 @@ impl<'a> Runner<'a> {
             Instruction::NOP => unimplemented!(),
             // IGNORE those
             Instruction::LOG(_) => {}
+            Instruction::BREAK => unreachable!("This should not get to runtime"),
         }
         Ok(InstructionResult::Continue)
     }

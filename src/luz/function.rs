@@ -5,7 +5,7 @@ use derive_builder::Builder;
 use derive_new::new;
 
 use crate::{
-    compiler::ctx::ScopeRef,
+    compiler::ctx::{ScopeRef, Upvalue},
     luz::obj::LuzObj,
     runner::{err::LuzRuntimeError, Runner},
 };
@@ -24,6 +24,8 @@ pub enum LuzFunction {
         nb_fixed_params: u32,
         scope: ScopeRef,
         filename: String,
+        #[new(default)]
+        upvalues: Vec<Upvalue>,
     },
     Native {
         nb_fixed_params: u32,

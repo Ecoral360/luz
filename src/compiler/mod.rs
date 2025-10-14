@@ -47,6 +47,7 @@ impl<'a> Compiler<'a> {
 
     /// Final optimizations + fixing jumps
     pub fn finish(&mut self, ctx: &mut CompilerCtx) {
+        let needs_to_be_close = ctx.needs_to_be_closed();
         let mut scope = ctx.scope_mut();
         let insts = scope.instructions_mut();
         let insts_len = insts.len();
@@ -56,6 +57,15 @@ impl<'a> Compiler<'a> {
                 LuaOpCode::OP_JMP => {
                     let target = final_jmp_target(&insts, pc);
                     fix_jmp(&mut insts[pc], pc, target);
+                }
+                LuaOpCode::OP_RETURN0 if needs_to_be_close => {
+                    insts[pc] = Instruction::op_return(inst.a().unwrap(), true, 1);
+                }
+                LuaOpCode::OP_RETURN1 if needs_to_be_close => {
+                    insts[pc] = Instruction::op_return(inst.a().unwrap(), true, 2);
+                }
+                LuaOpCode::OP_RETURN if needs_to_be_close => {
+                    insts[pc] = Instruction::op_return(inst.a().unwrap(), true, inst.b().unwrap());
                 }
                 _ => {}
             }
@@ -135,7 +145,7 @@ impl<'a> Compiler<'a> {
             ExpNode::LogicCmpOp { .. } => {}
             _ => {
                 let in_not = matches!(exp, ExpNode::Unop(op, ..) if *op == Unop::Not);
-                ctx.push_inst(Instruction::op_test(reg, in_not));
+                insts.push(Instruction::op_test(reg, in_not));
             }
         }
 
@@ -612,38 +622,50 @@ impl<'a> Compiler<'a> {
             vec![]
         };
 
-        let to_else_jmp = branches.iter().fold(0, |acc, ((cond, _jmps), br)| {
+        let if_len = branches.iter().fold(0, |acc, ((cond, _jmps), br)| {
             acc + cond.len() + br.len() + 1
         });
 
-        let to_end_jmp = to_else_jmp + else_instrs.len();
+        let to_end_jmp = if_len + else_instrs.len();
 
-        let mut insts = branches
-            .into_iter()
-            .rfold(vec![], |mut insts, ((cond, jmps), branch)| {
+        let else_len = else_instrs.len();
+
+        let nb_branches = branches.len();
+
+        let (insts, chunks) = branches.into_iter().rfold(
+            (vec![], vec![]),
+            |(mut insts, mut chunks), ((cond, jmps), branch)| {
+                let len_before = insts.len();
                 for inst in cond {
                     insts.push(inst);
                 }
-                let offset = insts.len() as i32 + if else_instrs.len() == 0 { 1 } else { 0 };
-                if jmps.is_empty() {
-                    insts.push(Instruction::op_jmp(to_else_jmp as i32 - offset));
+
+                let first_jmp = jmps.is_empty();
+
+                let offset_to_end = len_before + else_len;
+
+                let do_jmp_to_end = offset_to_end > 0
+                    && (first_jmp
+                        || branch
+                            .last()
+                            .is_some_and(|inst| inst.op() != LuaOpCode::OP_JMP));
+
+                let offset_to_next_branch = branch.len() + do_jmp_to_end as usize;
+
+                if first_jmp {
+                    insts.push(Instruction::op_jmp(offset_to_next_branch as i32));
                 }
 
                 for inst in branch {
                     insts.push(inst);
                 }
-                let offset = to_end_jmp as i32 - insts.len() as i32;
 
-                if offset > 0
-                    && insts
-                        .last()
-                        .is_some_and(|inst| inst.op() != LuaOpCode::OP_JMP)
-                {
-                    insts.push(Instruction::op_jmp(offset));
+                if do_jmp_to_end {
+                    insts.push(Instruction::op_jmp(offset_to_end as i32));
                 }
 
                 for (idx, (jmp_addr, is_cmp, jmp_op)) in jmps.iter().enumerate() {
-                    let len = insts.len() - 1;
+                    let len = insts.len() - 1 + else_len;
                     let Instruction::isJ(isJ { j, .. }) =
                         &mut insts[*jmp_addr as usize - before_inst]
                     else {
@@ -668,14 +690,23 @@ impl<'a> Compiler<'a> {
                     };
                 }
 
-                insts
-            });
+                chunks.push(insts.len() - len_before);
+                (insts, chunks)
+            },
+        );
+
+        let mut ptr = insts.len();
+        for chunk in chunks.into_iter().rev() {
+            for inst in &insts[ptr - chunk..ptr] {
+                ctx.push_inst(inst.clone());
+            }
+            ptr -= chunk;
+        }
+        // for inst in insts {
+        //     ctx.push_inst(inst);
+        // }
 
         for inst in else_instrs {
-            insts.push(inst);
-        }
-
-        for inst in insts {
             ctx.push_inst(inst);
         }
 
@@ -733,10 +764,6 @@ impl<'a> Compiler<'a> {
             self.visit_stat(stmt, ctx)?;
         }
 
-        if to_be_closed + 3 != ctx.get_or_push_free_register() {
-            ctx.push_inst(Instruction::op_close(to_be_closed + 3));
-        }
-
         {
             let mut scope = ctx.scope_mut();
             let regs = scope.regs()[to_be_closed as usize..]
@@ -761,11 +788,39 @@ impl<'a> Compiler<'a> {
             *b = nb_inst_loop as u32;
         }
 
+        let mut has_closure = false;
+        for inst in &ctx.scope().instructions()[nb_inst_before..] {
+            if inst.op() == LuaOpCode::OP_CLOSURE {
+                has_closure = true;
+                break;
+            }
+        }
+
+        if has_closure {
+            ctx.push_inst(Instruction::op_close(to_be_closed + 3));
+        }
+
         // Add the FORLOOP instruction
         ctx.push_inst(Instruction::op_forloop(
             forloop_test,
-            nb_inst_loop as u32 + 1,
+            nb_inst_loop as u32 + 1 + has_closure as u32,
         ));
+
+        let len = ctx.instructions_len() - 1;
+        let mut has_break = false;
+        {
+            let mut scope_mut = ctx.scope_mut();
+            for (i, inst) in scope_mut.instructions_mut().iter_mut().enumerate() {
+                if let Instruction::BREAK = inst {
+                    has_break = true;
+                    *inst = Instruction::op_jmp(len as i32 - i as i32)
+                }
+            }
+        }
+        // println!("{}", ctx.instructions_to_string());
+        if has_break {
+            ctx.push_inst(Instruction::op_close(to_be_closed + 3));
+        }
 
         Ok(())
     }
@@ -867,9 +922,8 @@ impl<'a> Compiler<'a> {
 
         let cond = self.collect_insts_and_rollback_cond(ctx, cond)?;
 
+        let to_be_closed = ctx.get_or_push_free_register();
         let then_instrs = self.collect_insts_and_rollback_stat(ctx, block)?;
-
-        let breaks = ctx.take_breaks();
 
         let before_inst = ctx.instructions_len();
 
@@ -880,17 +934,18 @@ impl<'a> Compiler<'a> {
             insts.push(inst);
         }
 
-        for inst in then_instrs {
-            insts.push(inst);
-        }
-        let offset = to_end_jmp as i32 - insts.len() as i32;
-
-        if offset > 0
+        let offset = then_instrs.len() as i32 + 1;
+        let has_jmp = offset > 0
             && insts
                 .last()
-                .is_some_and(|inst| inst.op() != LuaOpCode::OP_JMP)
-        {
+                .is_some_and(|inst| inst.op() != LuaOpCode::OP_JMP);
+
+        if has_jmp {
             insts.push(Instruction::op_jmp(offset));
+        }
+
+        for inst in then_instrs {
+            insts.push(inst);
         }
 
         let jmps = cond.1;
@@ -920,29 +975,43 @@ impl<'a> Compiler<'a> {
             };
         }
 
-        let len = insts.len() - 1;
-        for break_pos in breaks {
-            let Instruction::isJ(isJ { j, .. }) = &mut insts[break_pos - before_inst] else {
-                unreachable!()
-            };
-            *j = len as u32 - (break_pos as u32 - before_inst as u32) + MAX_HALF_sJ;
+        let len = insts.len();
+        let mut has_break = false;
+        let mut has_closure = false;
+        for (i, inst) in insts.iter_mut().enumerate() {
+            if inst.op() == LuaOpCode::OP_CLOSURE {
+                has_closure = true;
+                break;
+            }
+        }
+        for (i, inst) in insts.iter_mut().enumerate() {
+            if let Instruction::BREAK = inst {
+                has_break = true;
+                *inst = Instruction::op_jmp(len as i32 - i as i32 + has_closure as i32)
+            }
         }
 
-        let len = insts.len();
         for inst in insts {
             ctx.push_inst(inst);
         }
 
-        ctx.push_inst(Instruction::op_jmp(-(len as i32)));
+        if has_closure {
+            ctx.push_inst(Instruction::op_close(to_be_closed));
+        }
+
+        ctx.push_inst(Instruction::op_jmp(
+            -(len as i32) - has_closure as i32 - has_jmp as i32,
+        ));
+
+        if has_break {
+            ctx.push_inst(Instruction::op_close(to_be_closed));
+        }
 
         Ok(())
     }
 
     fn visit_break(&mut self, ctx: &mut CompilerCtx) -> Result<(), LuzError> {
-        let break_pos = ctx.instructions().len();
-        ctx.push_inst(Instruction::op_jmp(1));
-
-        ctx.push_break(break_pos);
+        ctx.push_inst(Instruction::BREAK);
         Ok(())
     }
 
@@ -987,6 +1056,7 @@ impl<'a> Compiler<'a> {
         let RepeaStat { block, cond } = stat;
 
         let nb_inst_before = ctx.scope().instructions().len();
+        let to_be_closed = ctx.get_or_push_free_register();
 
         for stmt in block {
             self.visit_stat(stmt, ctx)?;
@@ -1021,9 +1091,36 @@ impl<'a> Compiler<'a> {
             }
         }
 
+        let len = ctx.instructions().len();
+        let mut has_break = false;
+        let mut has_closure = false;
+        for (i, inst) in ctx.instructions()[nb_inst_before..].iter().enumerate() {
+            if inst.op() == LuaOpCode::OP_CLOSURE {
+                has_closure = true;
+                break;
+            }
+        }
+        for (i, inst) in ctx.instructions()[nb_inst_before..].iter_mut().enumerate() {
+            if let Instruction::BREAK = inst {
+                has_break = true;
+                *inst = Instruction::op_jmp(len as i32 - i as i32 + has_closure as i32)
+            }
+        }
+
+        if has_closure {
+            ctx.push_inst(Instruction::op_jmp(2));
+            ctx.push_inst(Instruction::op_close(to_be_closed));
+            ctx.push_inst(Instruction::op_jmp(2));
+            ctx.push_inst(Instruction::op_close(to_be_closed));
+        }
+
         let diff = nb_inst_before as i32 - ctx.scope().instructions().len() as i32;
 
-        ctx.push_inst(Instruction::op_jmp(diff));
+        ctx.push_inst(Instruction::op_jmp(diff - 1));
+
+        if has_break {
+            ctx.push_inst(Instruction::op_close(to_be_closed));
+        }
 
         Ok(())
     }
@@ -1056,9 +1153,12 @@ impl<'a> Compiler<'a> {
                     let (is_intable, src) = ctx.scope_mut().get_reg_or_upvalue(name)?;
                     match src {
                         RegOrUpvalue::Register(src) => {
+                            if is_intable {
+                                new_ctx = ctx.new_with(
+                                    CompilerCtxBuilder::default().dest_addr(Some(src.addr)),
+                                );
+                            }
                             // ctx.unclaim_registers(&[src.addr]);
-                            new_ctx = ctx
-                                .new_with(CompilerCtxBuilder::default().dest_addr(Some(src.addr)));
                         }
                         RegOrUpvalue::Upvalue(src) => {
                             // new_ctx = ctx
@@ -1189,16 +1289,16 @@ impl<'a> Compiler<'a> {
                     match src {
                         RegOrUpvalue::Register(src) => {
                             ctx.claim_register(src.addr);
-                            if src.addr != dest {
-                                if is_intable {
-                                    let name_k = ctx.get_or_add_const(LuzObj::str(name));
-                                    ctx.push_inst(Instruction::op_setfield(
-                                        src.addr,
-                                        name_k as u8,
-                                        dest,
-                                        is_const,
-                                    ));
-                                } else {
+                            if is_intable {
+                                let name_k = ctx.get_or_add_const(LuzObj::str(name));
+                                ctx.push_inst(Instruction::op_setfield(
+                                    src.addr,
+                                    name_k as u8,
+                                    dest,
+                                    is_const,
+                                ));
+                            } else {
+                                if src.addr != dest {
                                     ctx.push_inst(Instruction::op_move(src.addr, dest));
                                 }
                             }
@@ -1358,9 +1458,14 @@ impl<'a> Compiler<'a> {
             ctx.new_with(CompilerCtxBuilder::default().nb_expected(size as u8 + 1))
         };
 
+        let tbc = ctx
+            .instructions()
+            .iter()
+            .any(|i| i.op() == LuaOpCode::OP_CLOSURE);
         match stat.explist.len() {
-            0 => {
-                ctx.push_inst(Instruction::op_return0());
+            0 if !tbc => {
+                let reg = ctx.get_or_push_free_register();
+                ctx.push_inst(Instruction::op_return0(reg));
             }
             1 if matches!(stat.explist[0], ExpNode::FuncCall(..)) => {
                 let ExpNode::FuncCall(func) = &stat.explist[0] else {
@@ -1368,7 +1473,7 @@ impl<'a> Compiler<'a> {
                 };
                 self.visit_function_call(&mut new_ctx, func, true)?;
                 let reg = ctx.get_or_push_free_register();
-                ctx.push_inst(Instruction::op_return(reg, false, 0));
+                ctx.push_inst(Instruction::op_return(reg, tbc, 0));
             }
             // 1 => {
             //     let reg = self.load_exp(&mut new_ctx, &stat.explist[0])?;
@@ -1388,14 +1493,14 @@ impl<'a> Compiler<'a> {
                     &mut all_out_ctx,
                     &stat.explist[stat.explist.len() - 1],
                 )?;
-                ctx.push_inst(Instruction::op_return(start, false, 0));
+                ctx.push_inst(Instruction::op_return(start, tbc, 0));
             }
             _ => {
                 for exp in stat.explist.iter() {
                     self.handle_consecutive_exp(&mut new_ctx, exp)?;
                     ctx.claim_next_free_register();
                 }
-                ctx.push_inst(Instruction::op_return(start, false, size as u8 + 1));
+                ctx.push_inst(Instruction::op_return(start, tbc, size as u8 + 1));
             }
         }
 
@@ -2168,6 +2273,9 @@ impl<'a> Compiler<'a> {
         for stat in body {
             self.visit_stat(stat, ctx)?;
         }
+        let return_reg = ctx.get_or_push_free_register();
+        ctx.push_inst(Instruction::op_return0(return_reg));
+        self.finish(ctx);
         ctx.pop_scope()?;
         ctx.push_inst(Instruction::op_closure(reg, idx as u32));
         Ok(())
