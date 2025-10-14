@@ -24,8 +24,6 @@ pub enum LuzFunction {
         nb_fixed_params: u32,
         scope: ScopeRef,
         filename: String,
-        #[new(default)]
-        upvalues: Vec<Upvalue>,
     },
     Native {
         nb_fixed_params: u32,
