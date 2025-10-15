@@ -79,89 +79,89 @@ do
   expect_eq("shortcircuit_and_not_call_later", get_log(), "A,B")
   expect_eq("and_result_when_falsy_found", r, false)
 end
---
--- -- 3) Short-circuiting with side effects (or)
--- do
---   local log_append, get_log = mk_logger()
---   local function A() log_append("A"); return nil end
---   local function B() log_append("B"); return "ok" end
---   local function C() log_append("C"); return "shouldn't" end
---
---   local r = A() or B() or C()
---   expect_eq("shortcircuit_or_stop_at_first_truthy", get_log(), "A,B")
---   expect_eq("or_result_is_first_truthy", r, "ok")
--- end
---
--- -- 4) Order of evaluation: left-to-right for operands
--- do
---   local log_append, get_log = mk_logger()
---   local function left() log_append("L"); return false end
---   local function right() log_append("R"); return true end
---
---   local _ = left() and right()
---   expect_eq("order_and_left_to_right", get_log(), "L")
---   log_append, get_log = mk_logger()  -- reset
---   local _ = left() or right()
---   expect_eq("order_or_left_to_right", get_log(), "L,R") -- left false -> evaluate right
--- end
---
--- -- 5) and/or used in if/elseif/while/repeat
--- do
---   local called = {}
---   local function f(t) table.insert(called, t) return true end
---
---   local condition = (true and f("A"))  -- should call f("A")
---   if condition and false then
---     table.insert(called, "never")
---   elseif condition or false then
---     table.insert(called, "elseif-taken")
---   end
---
---   expect_eq("if_elseif_or_and_flow", table.concat(called, ","), "A,elseif-taken")
--- end
---
--- -- while loop uses condition truthiness short-circuited too
--- do
---   local cnt = 0
---   local function dec()
---     cnt = cnt + 1
---     return cnt < 2 and true or false  -- will be true once
---   end
---   local iterations = 0
---   while dec() and false do
---     iterations = iterations + 1
---   end
---   -- dec() evaluated, but while body not run because second operand false
---   expect_eq("while_shortcircuit", cnt, 1)
---   expect_eq("while_body_not_entered", iterations, 0)
--- end
---
--- -- repeat-until: body executes at least once; condition uses truthiness
--- do
---   local i = 0
---   repeat
---     i = i + 1
---   until (i >= 1) and true
---   expect_eq("repeat_until_and_condition", i, 1)
--- end
---
--- -- 6) Precedence: 'and' has higher precedence than 'or'
--- -- a or b and c  === a or (b and c)
--- do
---   local a, b, c = false, true, false
---   local res1 = a or b and c
---   local res2 = a or (b and c)
---   expect_eq("precedence_and_higher_than_or", res1, res2)
---   expect_eq("precedence_example_value", res1, false)
--- end
---
--- -- Precedence with 'not': not has higher precedence than and
--- do
---   local a = false
---   local b = true
---   expect_eq("not_precedence", (not a) and b, ( (not a) and b ) )
---   expect_eq("not_precedence_value", (not a) and b, true)
--- end
+
+-- 3) Short-circuiting with side effects (or)
+do
+  local log_append, get_log = mk_logger()
+  local function A() log_append("A"); return nil end
+  local function B() log_append("B"); return "ok" end
+  local function C() log_append("C"); return "shouldn't" end
+
+  local r = A() or B() or C()
+  expect_eq("shortcircuit_or_stop_at_first_truthy", get_log(), "A,B")
+  expect_eq("or_result_is_first_truthy", r, "ok")
+end
+
+-- 4) Order of evaluation: left-to-right for operands
+do
+  local log_append, get_log = mk_logger()
+  local function left() log_append("L"); return false end
+  local function right() log_append("R"); return true end
+
+  local _ = left() and right()
+  expect_eq("order_and_left_to_right", get_log(), "L")
+  log_append, get_log = mk_logger()  -- reset
+  local _ = left() or right()
+  expect_eq("order_or_left_to_right", get_log(), "L,R") -- left false -> evaluate right
+end
+
+-- 5) and/or used in if/elseif/while/repeat
+do
+  local called = {}
+  local function f(t) table.insert(called, t) return true end
+
+  local condition = (true and f("A"))  -- should call f("A")
+  if condition and false then
+    table.insert(called, "never")
+  elseif condition or false then
+    table.insert(called, "elseif-taken")
+  end
+
+  expect_eq("if_elseif_or_and_flow", table.concat(called, ","), "A,elseif-taken")
+end
+
+-- while loop uses condition truthiness short-circuited too
+do
+  local cnt = 0
+  local function dec()
+    cnt = cnt + 1
+    return cnt < 2 and true or false  -- will be true once
+  end
+  local iterations = 0
+  while dec() and false do
+    iterations = iterations + 1
+  end
+  -- dec() evaluated, but while body not run because second operand false
+  expect_eq("while_shortcircuit", cnt, 1)
+  expect_eq("while_body_not_entered", iterations, 0)
+end
+
+-- repeat-until: body executes at least once; condition uses truthiness
+do
+  local i = 0
+  repeat
+    i = i + 1
+  until (i >= 1) and true
+  expect_eq("repeat_until_and_condition", i, 1)
+end
+
+-- 6) Precedence: 'and' has higher precedence than 'or'
+-- a or b and c  === a or (b and c)
+do
+  local a, b, c = false, true, false
+  local res1 = a or b and c
+  local res2 = a or (b and c)
+  expect_eq("precedence_and_higher_than_or", res1, res2)
+  expect_eq("precedence_example_value", res1, false)
+end
+
+-- Precedence with 'not': not has higher precedence than and
+do
+  local a = false
+  local b = true
+  expect_eq("not_precedence", (not a) and b, ( (not a) and b ) )
+  expect_eq("not_precedence_value", (not a) and b, true)
+end
 --
 -- -- 7) Associativity: left-associative chaining
 -- do
@@ -367,19 +367,19 @@ end
 --   expect_eq("concat_result", res, "bX")
 -- end
 --
--- ---- summary ----
--- io.write("\n") -- progress line break
--- print(("Passed: %d, Failed: %d"):format(pass_count, fail_count))
--- if fail_count > 0 then
---   print("Failures detail:")
---   for _,r in ipairs(results) do
---     if not r.ok then
---       print("- ", r.name, ":", r.msg)
---     end
---   end
--- else
---   print("All tests passed.")
--- end
+---- summary ----
+io.write("\n") -- progress line break
+print(("Passed: %d, Failed: %d"):format(pass_count, fail_count))
+if fail_count > 0 then
+  print("Failures detail:")
+  for _,r in ipairs(results) do
+    if not r.ok then
+      print("- ", r.name, ":", r.msg)
+    end
+  end
+else
+  print("All tests passed.")
+end
 --
 -- -- return a table so test runner can inspect if run via require
 -- return { results = results, pass = pass_count, fail = fail_count }

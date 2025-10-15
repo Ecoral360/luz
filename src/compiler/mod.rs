@@ -114,9 +114,16 @@ impl<'a> Compiler<'a> {
 
         let mut jmps = vec![];
         let reg = match exp.normalize() {
+            // ExpNode::LogicCmpOp { .. } => {
+            //     jmps = self.visit_inner_logicop(ctx, exp.normalize(), 1)?;
+            //     ctx.get_or_push_free_register()
+            // }
             ExpNode::LogicCmpOp { .. } => {
-                jmps = self.visit_inner_logicop(ctx, exp.normalize(), 1)?;
+                self.visit_inner_logicop2(ctx, exp.normalize(), true)?;
                 ctx.get_or_push_free_register()
+            }
+            _ if matches!(exp, ExpNode::Unop(op, ..) if *op == Unop::Not) => {
+                self.load_exp(ctx, exp.normalize())?
             }
             _ => self.load_exp(ctx, exp)?,
         };
@@ -150,6 +157,12 @@ impl<'a> Compiler<'a> {
             _ => {
                 let in_not = matches!(exp, ExpNode::Unop(op, ..) if *op == Unop::Not);
                 insts.push(Instruction::op_test(reg, in_not));
+            }
+        }
+
+        if let Some(inst) = insts.last_mut() {
+            if inst.op() == LuaOpCode::OP_TESTSET {
+                *inst = Instruction::op_test(inst.b().unwrap(), inst.k().unwrap());
             }
         }
 
@@ -435,6 +448,7 @@ impl<'a> Compiler<'a> {
         exp: &ExpNode,
         apply_not: bool,
     ) -> Result<u8, LuzError> {
+        let is_not = matches!(exp, ExpNode::Unop(op, ..) if *op == Unop::Not);
         match exp.normalize() {
             ExpNode::CmpOp { .. } => {
                 self.visit_exp(exp, ctx)?;
@@ -443,21 +457,28 @@ impl<'a> Compiler<'a> {
             ExpNode::Name(name) => {
                 let val_reg = self.load_exp(ctx, exp)?;
                 let reg = ctx.get_or_push_free_register();
-                ctx.push_inst(Instruction::op_testset(reg, val_reg, apply_not));
+                if is_not {
+                    ctx.push_inst(Instruction::op_test(val_reg, !apply_not));
+                    ctx.push_inst(Instruction::op_jmp(1));
+                    ctx.push_inst(Instruction::op_lfalseskip(val_reg));
+                    ctx.push_inst(Instruction::op_loadtrue(val_reg));
+                } else {
+                    ctx.push_inst(Instruction::op_testset(reg, val_reg, !(is_not ^ apply_not)));
+                }
                 Ok(reg)
             }
             _ => {
                 self.visit_exp(exp, ctx)?;
                 if let Some(inst) = ctx.instructions().last_mut() {
                     if matches!(inst.op(), LuaOpCode::OP_TEST | LuaOpCode::OP_TESTSET) {
-                        if apply_not {
+                        if is_not ^ apply_not {
                             inst.set_k(!inst.k().unwrap());
                         }
-                        return Ok(ctx.get_or_push_free_register())
+                        return Ok(ctx.get_or_push_free_register());
                     }
                 }
                 let reg = ctx.get_or_push_free_register();
-                ctx.push_inst(Instruction::op_test(reg, !apply_not));
+                ctx.push_inst(Instruction::op_test(reg, !(is_not ^ apply_not)));
                 Ok(reg)
             }
         }
@@ -930,9 +951,21 @@ impl<'a> Compiler<'a> {
 
         ctx.push_inst(Instruction::op_tforcall(iter_addr, vars.len() as u8));
 
+        let mut has_closure = false;
+        for inst in &ctx.scope().instructions()[nb_inst_before..] {
+            if inst.op() == LuaOpCode::OP_CLOSURE {
+                has_closure = true;
+                break;
+            }
+        }
+
+        if has_closure {
+            ctx.push_inst(Instruction::op_close(to_be_closed + 4));
+        }
+
         ctx.push_inst(Instruction::op_tforloop(
             iter_addr,
-            loop_body_len as u32 + 2,
+            loop_body_len as u32 + 2 + has_closure as u32,
         ));
 
         {
@@ -958,7 +991,21 @@ impl<'a> Compiler<'a> {
             }
         }
 
-        ctx.push_inst(Instruction::op_close(to_be_closed));
+        let len = ctx.instructions_len() - 1;
+        let mut has_break = false;
+        {
+            let mut scope_mut = ctx.scope_mut();
+            for (i, inst) in scope_mut.instructions_mut().iter_mut().enumerate() {
+                if let Instruction::BREAK = inst {
+                    has_break = true;
+                    *inst = Instruction::op_jmp(len as i32 - i as i32)
+                }
+            }
+        }
+        // println!("{}", ctx.instructions_to_string());
+        if has_break {
+            ctx.push_inst(Instruction::op_close(to_be_closed + 3));
+        }
 
         Ok(())
     }
@@ -1109,34 +1156,35 @@ impl<'a> Compiler<'a> {
             self.visit_stat(stmt, ctx)?;
         }
 
-        self.visit_exp(cond, ctx)?;
+        // self.visit_exp(cond, ctx)?;
+        self.test_exp(ctx, cond, true)?;
 
-        match **cond {
-            ExpNode::CmpOp { .. } | ExpNode::LogicCmpOp { .. } => {
-                if ctx
-                    .scope()
-                    .instructions()
-                    .last()
-                    .is_some_and(|inst| inst.op() == LuaOpCode::OP_LOADTRUE)
-                {
-                    let mut scope = ctx.scope_mut();
-                    let insts = scope.instructions_mut();
-                    insts.pop();
-                    insts.pop();
-                    insts.pop();
-
-                    let Instruction::iABC(iABC { k, .. }) = insts.last_mut().unwrap() else {
-                        unreachable!()
-                    };
-
-                    *k = !*k;
-                }
-            }
-            _ => {
-                let reg = ctx.get_or_push_free_register();
-                ctx.push_inst(Instruction::op_test(reg, false));
-            }
-        }
+        // match **cond {
+        //     ExpNode::CmpOp { .. } | ExpNode::LogicCmpOp { .. } => {
+        //         if ctx
+        //             .scope()
+        //             .instructions()
+        //             .last()
+        //             .is_some_and(|inst| inst.op() == LuaOpCode::OP_LOADTRUE)
+        //         {
+        //             let mut scope = ctx.scope_mut();
+        //             let insts = scope.instructions_mut();
+        //             insts.pop();
+        //             insts.pop();
+        //             insts.pop();
+        //
+        //             let Instruction::iABC(iABC { k, .. }) = insts.last_mut().unwrap() else {
+        //                 unreachable!()
+        //             };
+        //
+        //             *k = !*k;
+        //         }
+        //     }
+        //     _ => {
+        //         let reg = ctx.get_or_push_free_register();
+        //         ctx.push_inst(Instruction::op_test(reg, false));
+        //     }
+        // }
 
         let len = ctx.instructions().len();
         let mut has_break = false;
@@ -1865,7 +1913,7 @@ impl<'a> Compiler<'a> {
         };
 
         // let jmps = self.visit_inner_logicop(ctx, exp, 0)?;
-        self.visit_inner_logicop2(ctx, exp, 0)?;
+        self.visit_inner_logicop2(ctx, exp, false)?;
 
         Ok(())
     }
@@ -1874,7 +1922,7 @@ impl<'a> Compiler<'a> {
         &mut self,
         ctx: &mut CompilerCtx,
         exp: &ExpNode,
-        depth: usize,
+        test_rhs: bool,
     ) -> Result<(), LuzError> {
         let ExpNode::LogicCmpOp { op, lhs, rhs } = exp else {
             Err(LuzRuntimeError::message(ctx.instructions_to_string()))?;
@@ -1895,15 +1943,24 @@ impl<'a> Compiler<'a> {
             .collect::<Vec<_>>();
 
         let rhs_br = self.load_exp(&mut new_ctx, rhs)?;
+        let reg = ctx.get_or_push_free_register();
+        if reg != rhs_br {
+            ctx.push_inst(Instruction::op_move(reg, rhs_br));
+        }
 
-        let rhs_insts = ctx
+        let mut rhs_insts = ctx
             .scope_mut()
             .instructions_mut()
             .drain(before_inst..)
             .collect::<Vec<_>>();
 
+        if let Some(inst) = rhs_insts.last() {
+            if test_rhs && inst.op() != LuaOpCode::OP_TEST {
+                rhs_insts.push(Instruction::op_test(rhs_br, !is_and));
+            }
+        }
+
         let Some(inst) = lhs_insts.last_mut() else {
-            dbg!(&exp);
             unreachable!("should not have an empty lhs for {:?} expression", op);
         };
 

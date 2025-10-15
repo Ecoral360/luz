@@ -952,7 +952,7 @@ impl<'a> Runner<'a> {
 
                     if !val.is_nil() {
                         // self.scope_mut().set_reg_val(a, val);
-                        return Ok(InstructionResult::Jmp(-(b as i32) + 1));
+                        return Ok(InstructionResult::Jmp(-(b as i32)));
                     }
                 }
 
