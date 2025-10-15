@@ -8,6 +8,7 @@ mod require;
 mod string;
 mod table;
 mod debug;
+mod io;
 
 #[macro_export]
 macro_rules! luz_fn {

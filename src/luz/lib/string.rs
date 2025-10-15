@@ -2,13 +2,15 @@ use std::collections::VecDeque;
 
 use crate::{
     luz::{
-        fn_dump, lib::LuzNativeLib, obj::{AsUTF8Unchecked, LuzObj, Numeral, TableRef}
+        fn_dump,
+        lib::LuzNativeLib,
+        obj::{AsUTF8Unchecked, LuzObj, Numeral, TableRef},
     },
     luz_fn, luz_let, luz_table,
     runner::err::LuzRuntimeError,
 };
 
-pub fn string_lib(_registry: TableRef) -> LuzNativeLib {
+pub fn string_lib(registry: TableRef) -> LuzNativeLib {
     let table = luz_table! {
         len: luz_fn!([1](*args) {
             let mut args = VecDeque::from(args);
@@ -97,6 +99,10 @@ pub fn string_lib(_registry: TableRef) -> LuzNativeLib {
             Ok(vec![LuzObj::String(fn_dump::dump(&f)?)])
         }),
     };
+
+    registry
+        .borrow_mut()
+        .rawset(LuzObj::str(":hidden.string.metatable:"), table.clone());
 
     LuzNativeLib {
         exports: vec![(String::from("string"), table)],

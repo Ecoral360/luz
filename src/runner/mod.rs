@@ -341,7 +341,7 @@ impl<'a> Runner<'a> {
                     }
                 }
                 LuaOpCode::OP_CLOSE => {
-                    Scope::close(Rc::clone(&self.scope), *a);
+                    Scope::close(Rc::clone(&self.scope), Some(*a));
                     // for addr in *a..reg_len as u8 {
                     //     self.scope_mut().set_reg_val(addr, LuzObj::Nil);
                     // }
@@ -488,7 +488,7 @@ impl<'a> Runner<'a> {
                         }
                     }
                     if *k {
-                        Scope::close(Rc::clone(&self.scope), *a);
+                        Scope::close(Rc::clone(&self.scope), None);
                     }
                     return Ok(InstructionResult::Return(rets));
                 }
@@ -532,19 +532,24 @@ impl<'a> Runner<'a> {
 
                     self.scope_mut().set_reg_val(*a + 1, self_table.clone());
 
-                    let LuzObj::Table(self_table) = self_table else {
-                        return Err(LuzError::Type {
-                            wrong: self_table.get_type(),
-                            expected: vec![LuzType::Table],
-                        });
-                    };
+                    // let LuzObj::Table(self_table) = self_table else {
+                    //     return Err(LuzError::Type {
+                    //         wrong: self_table.get_type(),
+                    //         expected: vec![LuzType::Table],
+                    //     });
+                    // };
                     let key = if *k {
                         self.get_const_val(*c)?
                     } else {
                         self.get_reg_val(*c)?
                     };
-                    let table = self_table.borrow();
-                    let val = table.rawget(&key);
+                    let Some(val) = self_table.index(self, &key)? else {
+                        return Err(LuzError::Type {
+                            wrong: self_table.get_type(),
+                            expected: vec![LuzType::Function],
+                        });
+                    };
+                    // let val = table.rawget(&key);
                     self.scope.borrow_mut().set_reg_val(*a, val.clone());
                 }
                 LuaOpCode::OP_CALL | LuaOpCode::OP_TAILCALL => {
@@ -593,6 +598,9 @@ impl<'a> Runner<'a> {
                     }
 
                     let results = if is_tail_call {
+                        if *k {
+                            Scope::close(Rc::clone(&self.scope), None);
+                        }
                         let Some(results) = f.tailcall(self, args, vararg)? else {
                             return Ok(InstructionResult::Continue);
                         };

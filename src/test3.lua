@@ -197,8 +197,8 @@ repeat
 until i > 10 or a[i]() ~= x
 
 assert(i == 11 and a[1]() == 1 and a[3]() == 3 and i == 4)
---
---
+
+
 -- -- testing closures created in 'then' and 'else' parts of 'if's
 -- a = {}
 -- for i = 1, 10 do
@@ -232,30 +232,30 @@ assert(i == 11 and a[1]() == 1 and a[3]() == 3 and i == 4)
 -- print'+'
 --
 --
--- -- test for correctly closing upvalues in tail calls of vararg functions
--- local function t ()
---   local function c(a,b) assert(a=="test" and b=="OK") end
---   local function v(f, ...) c("test", f() ~= 1 and "FAILED" or "OK") end
---   local x = 1
---   return v(function() return x end)
--- end
--- t()
---
---
--- -- test for debug manipulation of upvalues
--- local debug = require'debug'
---
--- local foo1, foo2, foo3
--- do
---   local a , b, c = 3, 5, 7
---   foo1 = function () return a+b end;
---   foo2 = function () return b+a end;
---   do
---     local a = 10
---     foo3 = function () return a+b end;
---   end
--- end
---
+-- test for correctly closing upvalues in tail calls of vararg functions
+local function t ()
+  local function c(a,b) assert(a=="test" and b=="OK") end
+  local function v(f, ...) c("test", f() ~= 1 and "FAILED" or "OK") end
+  local x = 1
+  return v(function() return x end)
+end
+t()
+
+
+-- test for debug manipulation of upvalues
+local debug = require'debug'
+
+local foo1, foo2, foo3
+do
+  local a , b, c = 3, 5, 7
+  foo1 = function () return a+b end;
+  foo2 = function () return b+a end;
+  do
+    local a = 10
+    foo3 = function () return a+b end;
+  end
+end
+
 -- assert(debug.upvalueid(foo1, 1))
 -- assert(debug.upvalueid(foo1, 2))
 -- assert(not debug.upvalueid(foo1, 3))
@@ -264,17 +264,17 @@ assert(i == 11 and a[1]() == 1 and a[3]() == 3 and i == 4)
 -- assert(debug.upvalueid(foo3, 1))
 -- assert(debug.upvalueid(foo1, 1) ~= debug.upvalueid(foo3, 1))
 -- assert(debug.upvalueid(foo1, 2) == debug.upvalueid(foo3, 2))
---
+
 -- assert(debug.upvalueid(string.gmatch("x", "x"), 1) ~= nil)
---
--- assert(foo1() == 3 + 5 and foo2() == 5 + 3)
--- debug.upvaluejoin(foo1, 2, foo2, 2)
--- assert(foo1() == 3 + 3 and foo2() == 5 + 3)
--- assert(foo3() == 10 + 5)
--- debug.upvaluejoin(foo3, 2, foo2, 1)
--- assert(foo3() == 10 + 5)
--- debug.upvaluejoin(foo3, 2, foo2, 2)
--- assert(foo3() == 10 + 3)
+
+assert(foo1() == 3 + 5 and foo2() == 5 + 3)
+debug.upvaluejoin(foo1, 2, foo2, 2)
+assert(foo1() == 3 + 3 and foo2() == 5 + 3)
+assert(foo3() == 10 + 5)
+debug.upvaluejoin(foo3, 2, foo2, 1)
+assert(foo3() == 10 + 5)
+debug.upvaluejoin(foo3, 2, foo2, 2)
+assert(foo3() == 10 + 3)
 --
 -- assert(not pcall(debug.upvaluejoin, foo1, 3, foo2, 1))
 -- assert(not pcall(debug.upvaluejoin, foo1, 1, foo2, 3))

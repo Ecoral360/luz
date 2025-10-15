@@ -102,9 +102,9 @@ fn dump_scope(dump: &mut Vec<u8>, scope: &Scope, depth: usize) -> Result<(), Luz
         }
     }
 
-    let has_env = scope.upvalues().iter().any(|up| up.name == "_ENV");
+    let has_env = scope.upvalues().iter().any(|up| up.borrow().name == "_ENV");
     for (i, upvalue) in scope.upvalues().iter().enumerate() {
-        let is_env = upvalue.name == "_ENV";
+        let is_env = upvalue.borrow().name == "_ENV";
         if depth == 0 {
             if is_env {
                 dump.push(0);
@@ -114,19 +114,19 @@ fn dump_scope(dump: &mut Vec<u8>, scope: &Scope, depth: usize) -> Result<(), Luz
                 dump.push(i as u8);
             }
         } else {
-            dump.push(upvalue.parent_addr);
+            dump.push(upvalue.borrow().parent_addr);
         }
         // flag for in_stack
         if is_env && depth == 0 {
             dump.push(2); // 2 means is_env
         } else {
-            dump.push(upvalue.in_stack as u8);
+            dump.push(upvalue.borrow().in_stack as u8);
         }
 
         // we push the len of the name of the upvalue
-        dump.extend((upvalue.name.len() as u32).to_be_bytes());
+        dump.extend((upvalue.borrow().name.len() as u32).to_be_bytes());
         // we push the name of the upvalue
-        dump.extend(upvalue.name.clone().into_bytes());
+        dump.extend(upvalue.borrow().name.clone().into_bytes());
     }
 
     for instruction in scope.instructions() {

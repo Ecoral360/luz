@@ -7,6 +7,8 @@ use crate::{
 
 use super::obj::LuzObj;
 
+pub const TBL_IDX_OFFSET: usize = 1;
+
 #[derive(Debug, Clone, Default)]
 pub struct Table {
     table: HashMap<LuzObj, LuzObj>,
@@ -110,6 +112,16 @@ impl Table {
 
     pub fn push(&mut self, item: LuzObj) {
         self.arr.push(item);
+    }
+
+    pub fn insert(&mut self, item: LuzObj, pos: usize) -> Result<(), LuzRuntimeError> {
+        if pos - TBL_IDX_OFFSET > self.arr.len() {
+            return Err(LuzRuntimeError::message("position out of bounds"));
+        }
+
+        self.arr.insert(pos - TBL_IDX_OFFSET, item);
+
+        Ok(())
     }
 
     pub fn rawset(&mut self, key: LuzObj, item: LuzObj) {

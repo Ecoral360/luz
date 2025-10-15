@@ -29,6 +29,34 @@ pub fn table_lib(_registry: TableRef) -> LuzNativeLib {
             Ok(vec![list.remove(&pos)])
         }),
 
+        insert: luz_fn!([2](LuzObj::Table(list), *args) {
+            if args.is_empty() {
+                return Err(LuzRuntimeError::message("wrong number of arguments to 'insert'"));
+            }
+
+            let list_len = list.borrow().len() + 1;
+            borrowed!(mut list);
+
+            if args.len() == 1 {
+                // this is safe because the len is 1
+                let value = args.pop_front().unwrap();
+                list.insert(value, list_len)
+                    .map_err(|err| LuzRuntimeError::message(format!("bad argument #2 to 'insert' ({})", err)))?;
+            } else {
+                // this is safe because the len is at least 2
+                luz_let!(LuzObj::Numeral(pos) = args.pop_front().unwrap());
+                if !pos.is_int_compatible() {
+                    Err(LuzRuntimeError::message("bad argument #2 to 'insert' (number has no integer representation)"))?;
+                }
+
+                let value = args.pop_front().unwrap();
+                list.insert(value, pos.as_int() as usize)
+                    .map_err(|err| LuzRuntimeError::message(format!("bad argument #2 to 'insert' ({})", err)))?;
+            }
+
+            Ok(vec![])
+        }),
+
         concat: luz_fn!([1, runner](LuzObj::Table(list), sep, i, j) {
             borrowed!(list);
 
@@ -51,7 +79,7 @@ pub fn table_lib(_registry: TableRef) -> LuzNativeLib {
                     ))
                 }
 
-                if idx < j - 1 {
+                if idx < j {
                     final_str.extend(&sep);
                 }
 

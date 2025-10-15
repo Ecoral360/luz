@@ -37,9 +37,12 @@ impl CompilerCtx {
     pub fn new_main(filename: String) -> Self {
         let mut scope = Scope::new(Some(String::from("main")), Some(get_builtin_scope()));
         scope.instructions.push(Instruction::op_varargprep(0));
-        scope
-            .upvalues
-            .push(Upvalue::new("_ENV".to_owned(), 0, 0, true));
+        scope.upvalues.push(Rc::new(RefCell::new(Upvalue::new(
+            "_ENV".to_owned(),
+            0,
+            0,
+            true,
+        ))));
         Self {
             filename,
             scope: Rc::new(RefCell::new(scope)),
@@ -52,12 +55,15 @@ impl CompilerCtx {
         filename: String,
         name: String,
         parent_scope: Option<ScopeRef>,
-        mut upvalues: Vec<Upvalue>,
+        mut upvalues: Vec<UpvalRef>,
     ) -> Self {
         let mut scope = Scope::new(Some(name), parent_scope.or(Some(get_builtin_scope())));
-        scope
-            .upvalues
-            .push(Upvalue::new("_ENV".to_owned(), 0, 0, true));
+        scope.upvalues.push(Rc::new(RefCell::new(Upvalue::new(
+            "_ENV".to_owned(),
+            0,
+            0,
+            true,
+        ))));
 
         scope.upvalues.append(&mut upvalues);
 
@@ -403,7 +409,7 @@ pub struct Scope {
     regs: Vec<Register>,
 
     #[new(default)]
-    upvalues: Vec<Upvalue>,
+    upvalues: Vec<Rc<RefCell<Upvalue>>>,
 
     #[new(default)]
     sub_scopes: Vec<ScopeRef>,
@@ -463,7 +469,7 @@ impl Scope {
             line_infos: self.line_infos.clone(),
             constants: self.constants.clone(),
             regs: self.regs.clone(),
-            upvalues: self.upvalues.clone(),
+            upvalues: self.upvalues.iter().map(|up| Rc::clone(&up)).collect(),
             sub_scopes: self.sub_scopes.clone(),
             nb_params: self.nb_params.clone(),
             vararg: self.vararg.clone(),
@@ -490,19 +496,21 @@ impl Scope {
         scope
     }
 
-    pub fn update_upval_from_instance(&mut self, instance: ScopeRef) {
-        borrowed!(instance);
-        for upval in self.upvalues.iter_mut() {
-            let inst_upval = instance
-                .upvalues
-                .iter()
-                .find(|inst_upval| inst_upval.is_same_as(upval))
-                .expect("Instance and parent should have the same upvalues");
-
-            upval.link = inst_upval.link.clone();
-            upval.val = inst_upval.val.clone();
-        }
-    }
+    // pub fn update_upval_from_instance(&mut self, instance: ScopeRef) {
+    //     borrowed!(instance);
+    //     for upval in self.upvalues.iter() {
+    //         let inst_upval = instance
+    //             .upvalues
+    //             .iter()
+    //             .find(|inst_upval| inst_upval.borrow().is_same_as(&upval.borrow()))
+    //             .expect("Instance and parent should have the same upvalues");
+    //
+    //         borrowed!(inst_upval);
+    //         borrowed!(mut upval);
+    //         upval.link = inst_upval.link.clone();
+    //         upval.val = inst_upval.val.clone();
+    //     }
+    // }
 
     /// closes a subscope
     pub fn make_closure(&mut self, sub_scope_idx: usize) -> Rc<RefCell<Self>> {
@@ -516,7 +524,7 @@ impl Scope {
                 line_infos: sub_scope.line_infos.clone(),
                 constants: sub_scope.constants.clone(),
                 regs: sub_scope.regs.clone(),
-                upvalues: sub_scope.upvalues.clone(),
+                upvalues: sub_scope.upvalues.iter().map(|up| Rc::clone(&up)).collect(),
                 sub_scopes: sub_scope.sub_scopes.clone(),
                 nb_params: sub_scope.nb_params.clone(),
                 vararg: sub_scope.vararg.clone(),
@@ -560,27 +568,49 @@ impl Scope {
 
         Rc::new(RefCell::new(scope))
     }
-    pub fn close(scope: ScopeRef, reg: u8) {
+    pub fn close(scope: ScopeRef, reg: Option<u8>) {
         let new_parent = scope.borrow().make_instance2();
-        // new_parent.borrow_mut().parent = Some(Rc::clone(&scope));
-        for sub_scope in &scope.borrow().scopes_tbc {
-            let mut sub_scope = sub_scope.borrow_mut();
-            // for upval in sub_scope.upvalues.iter_mut() {
-            //     if upval.in_stack && upval.parent_addr >= reg {
-            //         let upval_addr = new_parent.borrow().upvalues.len();
-            //         upval.in_stack = false;
-            //         upval.parent_addr = upval_addr as u8;
-            //
-            //         new_parent.borrow_mut().push_upval(Upvalue::new(
-            //             upval.name.clone(),
-            //             upval_addr as u8,
-            //             upval.parent_addr,
-            //             true,
-            //         ));
-            //     }
-            // }
-            sub_scope.parent = Some(Rc::clone(&new_parent));
+        match reg {
+            Some(reg) => {
+                for sub_scope in &scope.borrow().scopes_tbc {
+                    let mut sub_scope = sub_scope.borrow_mut();
+                    let new_sub_scope = sub_scope.make_instance2();
+                    // new_sub_scope.borrow_mut().parent = Some(Rc::clone(&scope));
+
+                    for upval in sub_scope.upvalues.iter_mut() {
+                        if upval.borrow().in_stack && upval.borrow().parent_addr >= reg {
+                            // let val = new_parent
+                            //     .borrow()
+                            //     .get_reg(upval.borrow().parent_addr)
+                            //     .val
+                            //     .clone();
+                            // borrowed!(mut upval);
+                            // upval.val = val;
+                        } else {
+                            borrowed!(mut upval);
+                            upval.link = Some(Rc::clone(&new_sub_scope));
+                        }
+                    }
+                    sub_scope.parent = Some(Rc::clone(&new_parent));
+                }
+            }
+            None => {
+                for sub_scope in &scope.borrow().sub_scopes {
+                    let mut sub_scope = sub_scope.borrow_mut();
+                    let new_sub_scope = sub_scope.make_instance2();
+                    // new_sub_scope.borrow_mut().parent = Some(Rc::clone(&scope));
+
+                    for upval in sub_scope.upvalues.iter_mut() {
+                        borrowed!(mut upval);
+                        if upval.in_stack && upval.link.is_some() {
+                            upval.link = Some(Rc::clone(&new_sub_scope));
+                        }
+                    }
+                    sub_scope.parent = Some(Rc::clone(&new_parent));
+                }
+            }
         }
+        // new_parent.borrow_mut().parent = Some(Rc::clone(&scope));
         scope.borrow_mut().scopes_tbc.clear()
     }
 
@@ -616,11 +646,12 @@ impl Scope {
 }
 
 pub type ScopeRef = Rc<RefCell<Scope>>;
+pub type UpvalRef = Rc<RefCell<Upvalue>>;
 
 #[derive(Debug)]
 pub enum RegOrUpvalue {
     Register(Register),
-    Upvalue(Upvalue),
+    Upvalue(UpvalRef),
 }
 
 impl Scope {
@@ -692,7 +723,7 @@ impl Scope {
         &self.regs
     }
 
-    pub fn upvalues(&self) -> &Vec<Upvalue> {
+    pub fn upvalues(&self) -> &Vec<UpvalRef> {
         &self.upvalues
     }
 
@@ -716,7 +747,7 @@ impl Scope {
     }
 
     pub fn push_upval(&mut self, upvalue: Upvalue) {
-        self.upvalues.push(upvalue);
+        self.upvalues.push(Rc::new(RefCell::new(upvalue)));
     }
 
     pub fn push_reg(&mut self, reg: &mut RegisterBuilder) {
@@ -754,7 +785,7 @@ impl Scope {
         }
 
         if let Some(up_addr) = self.get_upvalue_with_name(register_name) {
-            return Ok((false, RegOrUpvalue::Upvalue(up_addr.clone())));
+            return Ok((false, RegOrUpvalue::Upvalue(up_addr)));
         }
 
         if let Some(env_addr) = self.get_reg_with_name("_ENV") {
@@ -779,9 +810,15 @@ impl Scope {
             let (in_table, upvalue) = match parent_addr {
                 RegOrUpvalue::Register(register) => (
                     false,
-                    Upvalue::new(register.name.unwrap(), addr, register.addr, true),
+                    Rc::new(RefCell::new(Upvalue::new(
+                        register.name.unwrap(),
+                        addr,
+                        register.addr,
+                        true,
+                    ))),
                 ),
                 RegOrUpvalue::Upvalue(upvalue) => {
+                    borrowed!(upvalue);
                     let in_table = if upvalue.name == "_ENV" {
                         let obj = LuzObj::str(register_name);
                         if !self.constants.contains(&obj) {
@@ -793,18 +830,26 @@ impl Scope {
                     };
                     (
                         in_table,
-                        Upvalue::new(upvalue.name, addr, upvalue.addr, false),
+                        Rc::new(RefCell::new(Upvalue::new(
+                            upvalue.name.clone(),
+                            addr,
+                            upvalue.addr,
+                            false,
+                        ))),
                     )
                 }
             };
 
-            let existing_upvalue = self.upvalues.iter().find(|up| up.name == upvalue.name);
+            let existing_upvalue = self
+                .upvalues
+                .iter()
+                .find(|up| up.borrow().name == upvalue.borrow().name);
             match existing_upvalue {
                 Some(existing_upvalue) => {
-                    Ok((in_table, RegOrUpvalue::Upvalue(existing_upvalue.clone())))
+                    Ok((in_table, RegOrUpvalue::Upvalue(Rc::clone(existing_upvalue))))
                 }
                 None => {
-                    self.upvalues.push(upvalue.clone());
+                    self.upvalues.push(Rc::clone(&upvalue));
                     Ok((in_table, RegOrUpvalue::Upvalue(upvalue)))
                 }
             }
@@ -820,7 +865,7 @@ impl Scope {
         let (in_table, reg_or_upvalue) = self.get_reg_or_upvalue(register_name).ok()?;
         let obj = match reg_or_upvalue {
             RegOrUpvalue::Register(register) => register.val,
-            RegOrUpvalue::Upvalue(upvalue) => self.get_upvalue_value(upvalue.addr),
+            RegOrUpvalue::Upvalue(upvalue) => self.get_upvalue_value(upvalue.borrow().addr),
         }?;
 
         if in_table {
@@ -887,25 +932,24 @@ impl Scope {
         &self.regs[addr as usize]
     }
 
-    pub fn get_opt_upvalue(&self, addr: u8) -> Option<&Upvalue> {
-        self.upvalues.get(addr as usize)
+    pub fn get_opt_upvalue(&self, addr: u8) -> Option<UpvalRef> {
+        self.upvalues.get(addr as usize).map(|u| Rc::clone(u))
     }
 
-    pub fn get_mut_opt_upvalue(&mut self, addr: u8) -> Option<&mut Upvalue> {
-        self.upvalues.get_mut(addr as usize)
+    pub fn get_upvalue(&self, addr: u8) -> UpvalRef {
+        Rc::clone(&self.upvalues[addr as usize])
     }
 
-    pub fn get_upvalue(&self, addr: u8) -> &Upvalue {
-        &self.upvalues[addr as usize]
-    }
-
-    pub fn get_upvalue_with_name(&self, name: &str) -> Option<&Upvalue> {
-        self.upvalues.iter().find(|con| con.name == name)
+    pub fn get_upvalue_with_name(&self, name: &str) -> Option<UpvalRef> {
+        self.upvalues
+            .iter()
+            .find(|con| con.borrow().name == name)
+            .map(|u| Rc::clone(u))
     }
 
     pub fn get_upvalue_addr(&self, name: &str) -> Option<u8> {
         self.upvalues.iter().enumerate().find_map(|(i, con)| {
-            if con.name == name {
+            if con.borrow().name == name {
                 Some(i as u8)
             } else {
                 None
@@ -916,21 +960,21 @@ impl Scope {
     pub fn get_upvalue_value(&self, upvalue_addr: u8) -> Option<LuzObj> {
         let upvalue = &self.upvalues[upvalue_addr as usize];
 
-        if let Some(value) = &upvalue.val {
+        if let Some(value) = &upvalue.borrow().val {
             return Some(value.clone());
         }
 
-        if let Some(link) = &upvalue.link {
+        if let Some(link) = &upvalue.borrow().link {
             borrowed!(link);
             let p = link
                 .parent
                 .as_ref()
                 .expect("Needs parent to have upvalue")
                 .borrow();
-            if upvalue.in_stack {
-                return p.regs[upvalue.parent_addr as usize].val.clone();
+            if upvalue.borrow().in_stack {
+                return p.regs[upvalue.borrow().parent_addr as usize].val.clone();
             } else {
-                return p.get_upvalue_value(upvalue.parent_addr);
+                return p.get_upvalue_value(upvalue.borrow().parent_addr);
             }
         }
         let p = self
@@ -938,15 +982,17 @@ impl Scope {
             .as_ref()
             .expect("Needs parent to have upvalue")
             .borrow();
-        if upvalue.in_stack {
-            p.regs[upvalue.parent_addr as usize].val.clone()
+        if upvalue.borrow().in_stack {
+            p.regs[upvalue.borrow().parent_addr as usize].val.clone()
         } else {
-            p.get_upvalue_value(upvalue.parent_addr)
+            p.get_upvalue_value(upvalue.borrow().parent_addr)
         }
     }
 
     pub fn set_upvalue_value(&mut self, upvalue_addr: u8, value: LuzObj) {
-        let upvalue = &mut self.upvalues[upvalue_addr as usize];
+        let upvalue = &self.upvalues[upvalue_addr as usize];
+
+        borrowed!(mut upvalue);
 
         if upvalue.val.is_some() {
             upvalue.val.replace(value);
@@ -1021,6 +1067,7 @@ impl Scope {
 
         result += "---- Upvalues:\n";
         for (i, inst) in self.upvalues.iter().enumerate() {
+            borrowed!(inst);
             result += &format!(
                 "{} {} {} {} {}\n",
                 i,

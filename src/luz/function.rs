@@ -5,7 +5,7 @@ use derive_builder::Builder;
 use derive_new::new;
 
 use crate::{
-    compiler::ctx::{ScopeRef, Upvalue},
+    compiler::ctx::{Scope, ScopeRef, Upvalue},
     luz::obj::LuzObj,
     runner::{err::LuzRuntimeError, Runner},
 };
@@ -65,6 +65,7 @@ impl LuzFunction {
                 for (i, arg) in args.into_iter().enumerate() {
                     fc_scope.borrow_mut().set_or_push_reg_val(i as u8, arg);
                 }
+
                 runner.reset(fc_scope);
                 // let mut fc_runner =
                 //     Runner::new(String::new(), runner.input(), fc_scope, runner.registry());
@@ -112,7 +113,9 @@ impl LuzFunction {
                     .run()
                     .map_err(|err| LuzRuntimeError::ErrorObj(LuzObj::str(&err.to_string())));
 
-                scope.borrow_mut().update_upval_from_instance(fc_scope);
+                Scope::close(fc_scope, None);
+
+                // scope.borrow_mut().update_upval_from_instance(fc_scope);
                 // update the closed upvalues of the original scope
 
                 results

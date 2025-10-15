@@ -1,4 +1,5 @@
 use core::fmt;
+use std::any::Any;
 use std::cell::RefCell;
 use std::char;
 use std::fmt::Debug;
@@ -33,7 +34,7 @@ pub enum LuzObj {
     Function(Rc<RefCell<LuzFunction>>),
     Table(TableRef),
     Thread(Arc<Mutex<LuzThread>>),
-    Userdata(Arc<Mutex<Userdata>>),
+    Userdata(Rc<RefCell<Userdata<Box<dyn Any>>>>),
     #[default]
     Nil,
 }

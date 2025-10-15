@@ -1,13 +1,17 @@
 use std::{cell::RefCell, ops::Deref, rc::Rc, str::FromStr};
 
 use crate::{
-    compiler::ctx::{RegisterBuilder, Scope, Upvalue},
+    compiler::{
+        ctx::{RegisterBuilder, Scope, Upvalue},
+        opcode::TMcode,
+    },
     load,
     luz::{
         err::LuzError,
         fn_dump,
         lib::{
-            add_lib, math::math_lib, require::package_lib, string::string_lib, table::table_lib,
+            add_lib, io::io_lib, math::math_lib, require::package_lib, string::string_lib,
+            table::table_lib,
         },
         obj::{AsUTF8Unchecked, LuzFunction, LuzObj, LuzType, Numeral, TableRef},
     },
@@ -41,6 +45,20 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
                     .join("\t")
             );
             Ok(vec![])
+        }),
+
+        tostring: luz_fn!([0, runner](v) {
+            let tostring_meta_result =
+                LuzObj::call_metamethod(runner, TMcode::TM_TOSTRING, v.clone(), LuzObj::Nil);
+
+            match tostring_meta_result {
+                Ok(res) => {
+                    Ok(vec![res])
+                }
+                Err(..) => {
+                    Ok(vec![LuzObj::str(v.to_string())])
+                }
+            }
         }),
 
         type: luz_fn!([0, _runner](*args) {
@@ -408,6 +426,7 @@ pub fn make_env_table(registry: TableRef) -> TableRef {
     add_lib(&table, math_lib(Rc::clone(&registry)));
     add_lib(&table, string_lib(Rc::clone(&registry)));
     add_lib(&table, table_lib(Rc::clone(&registry)));
+    add_lib(&table, io_lib(Rc::clone(&registry)));
 
     let global_env = table;
     {

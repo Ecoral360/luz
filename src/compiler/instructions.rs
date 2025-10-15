@@ -436,9 +436,9 @@ impl Instruction {
             .to_iabc(func_reg, false, n_args, n_expected)
             .into()
     }
-    pub fn op_tailcall(func_reg: u8, n_args: u8) -> Instruction {
+    pub fn op_tailcall(func_reg: u8, n_args: u8, tbc: bool) -> Instruction {
         LuaOpCode::OP_TAILCALL
-            .to_iabc(func_reg, false, n_args, 0)
+            .to_iabc(func_reg, tbc, n_args, 0)
             .into()
     }
     pub fn op_concat(start: u8, nb: u8) -> Instruction {
@@ -810,11 +810,11 @@ impl iABC {
             LuaOpCode::OP_GETTABUP => {
                 let upval = scope.get_upvalue(self.b);
                 let local = scope.get_const(self.c);
-                format!("{} ; {} {}", self, upval.name, local.repr())
+                format!("{} ; {} {}", self, upval.borrow().name, local.repr())
             }
             LuaOpCode::OP_GETUPVAL | LuaOpCode::OP_SETUPVAL => {
                 let upval = scope.get_upvalue(self.b);
-                format!("{} ; {}", self, upval.name)
+                format!("{} ; {}", self, upval.borrow().name)
             }
             LuaOpCode::OP_SETTABUP => {
                 let upval = scope.get_upvalue(self.a);
@@ -824,7 +824,7 @@ impl iABC {
                 } else {
                     String::new()
                 };
-                format!("{} ; {} {} {}", self, upval.name, local.repr(), val)
+                format!("{} ; {} {} {}", self, upval.borrow().name, local.repr(), val)
             }
             LuaOpCode::OP_GETFIELD => {
                 let local = scope.get_const(self.c);
@@ -886,6 +886,7 @@ impl Display for iABC {
                 | LuaOpCode::OP_SELF
                 | LuaOpCode::OP_SETTABUP
                 | LuaOpCode::OP_RETURN
+                | LuaOpCode::OP_TAILCALL
         );
 
         let b = match self.op {

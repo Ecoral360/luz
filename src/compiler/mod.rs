@@ -7,7 +7,7 @@ use crate::{
         LabelStat, LogicCmpOp, RepeaStat, ReturnStat, Stat, StatNode, Unop, WhileStat,
     },
     compiler::{
-        ctx::{CompilerCtx, CompilerCtxBuilder, RegOrUpvalue, Upvalue},
+        ctx::{CompilerCtx, CompilerCtxBuilder, RegOrUpvalue, UpvalRef},
         instructions::{iABC, iABx, isJ, Instruction, MAX_HALF_sBx, MAX_HALF_sJ},
         opcode::{LuaOpCode, TMcode},
         visitor::Visitor,
@@ -57,6 +57,10 @@ impl<'a> Compiler<'a> {
                 LuaOpCode::OP_JMP => {
                     let target = final_jmp_target(&insts, pc);
                     fix_jmp(&mut insts[pc], pc, target);
+                }
+                LuaOpCode::OP_TAILCALL if needs_to_be_close => {
+                    insts[pc] =
+                        Instruction::op_tailcall(inst.a().unwrap(), inst.b().unwrap(), true);
                 }
                 LuaOpCode::OP_RETURN0 if needs_to_be_close => {
                     insts[pc] = Instruction::op_return(inst.a().unwrap(), true, 1);
@@ -207,9 +211,13 @@ impl<'a> Compiler<'a> {
                 };
                 if in_table {
                     let name_k = ctx.get_or_add_const(LuzObj::str(name));
-                    ctx.push_inst(Instruction::op_gettabup(reg, upvalue.addr, name_k as u8));
+                    ctx.push_inst(Instruction::op_gettabup(
+                        reg,
+                        upvalue.borrow().addr,
+                        name_k as u8,
+                    ));
                 } else {
-                    ctx.push_inst(Instruction::op_getupval(reg, upvalue.addr));
+                    ctx.push_inst(Instruction::op_getupval(reg, upvalue.borrow().addr));
                 }
             }
         }
@@ -336,11 +344,11 @@ impl<'a> Compiler<'a> {
                             let name_k = ctx.get_or_add_const(LuzObj::str(name));
                             ctx.push_inst(Instruction::op_gettabup(
                                 reg,
-                                upvalue.addr,
+                                upvalue.borrow().addr,
                                 name_k as u8,
                             ));
                         } else {
-                            ctx.push_inst(Instruction::op_getupval(reg, upvalue.addr));
+                            ctx.push_inst(Instruction::op_getupval(reg, upvalue.borrow().addr));
                         }
                         Ok(reg)
                     }
@@ -403,11 +411,11 @@ impl<'a> Compiler<'a> {
                             let name_k = ctx.get_or_add_const(LuzObj::str(name));
                             ctx.push_inst(Instruction::op_gettabup(
                                 reg,
-                                upvalue.addr,
+                                upvalue.borrow().addr,
                                 name_k as u8,
                             ));
                         } else {
-                            ctx.push_inst(Instruction::op_getupval(reg, upvalue.addr));
+                            ctx.push_inst(Instruction::op_getupval(reg, upvalue.borrow().addr));
                         }
                         Ok((false, reg))
                     }
@@ -417,6 +425,40 @@ impl<'a> Compiler<'a> {
                 self.visit_exp(exp, ctx)?;
                 let reg = ctx.get_or_push_free_register();
                 Ok((false, reg))
+            }
+        }
+    }
+
+    fn test_exp(
+        &mut self,
+        ctx: &mut CompilerCtx,
+        exp: &ExpNode,
+        apply_not: bool,
+    ) -> Result<u8, LuzError> {
+        match exp.normalize() {
+            ExpNode::CmpOp { .. } => {
+                self.visit_exp(exp, ctx)?;
+                Ok(ctx.get_or_push_free_register())
+            }
+            ExpNode::Name(name) => {
+                let val_reg = self.load_exp(ctx, exp)?;
+                let reg = ctx.get_or_push_free_register();
+                ctx.push_inst(Instruction::op_testset(reg, val_reg, apply_not));
+                Ok(reg)
+            }
+            _ => {
+                self.visit_exp(exp, ctx)?;
+                if let Some(inst) = ctx.instructions().last_mut() {
+                    if matches!(inst.op(), LuaOpCode::OP_TEST | LuaOpCode::OP_TESTSET) {
+                        if apply_not {
+                            inst.set_k(!inst.k().unwrap());
+                        }
+                        return Ok(ctx.get_or_push_free_register())
+                    }
+                }
+                let reg = ctx.get_or_push_free_register();
+                ctx.push_inst(Instruction::op_test(reg, !apply_not));
+                Ok(reg)
             }
         }
     }
@@ -440,9 +482,13 @@ impl<'a> Compiler<'a> {
                 let reg = ctx.get_or_push_free_register();
                 if in_table {
                     let name_k = ctx.get_or_add_const(LuzObj::str(name));
-                    ctx.push_inst(Instruction::op_gettabup(reg, upvalue.addr, name_k as u8));
+                    ctx.push_inst(Instruction::op_gettabup(
+                        reg,
+                        upvalue.borrow().addr,
+                        name_k as u8,
+                    ));
                 } else {
-                    ctx.push_inst(Instruction::op_getupval(reg, upvalue.addr));
+                    ctx.push_inst(Instruction::op_getupval(reg, upvalue.borrow().addr));
                 }
                 (false, reg)
             }
@@ -538,7 +584,7 @@ enum ExpEval {
     InConstant(u8),
     InUpvalue {
         in_table: bool,
-        upvalue: Upvalue,
+        upvalue: UpvalRef,
         name: String,
     },
 }
@@ -934,6 +980,15 @@ impl<'a> Compiler<'a> {
             insts.push(inst);
         }
 
+        let mut has_break = false;
+        let mut has_closure = false;
+        for inst in insts.iter().chain(then_instrs.iter()) {
+            if inst.op() == LuaOpCode::OP_CLOSURE {
+                has_closure = true;
+                break;
+            }
+        }
+
         let offset = then_instrs.len() as i32 + 1;
         let has_jmp = offset > 0
             && insts
@@ -941,7 +996,7 @@ impl<'a> Compiler<'a> {
                 .is_some_and(|inst| inst.op() != LuaOpCode::OP_JMP);
 
         if has_jmp {
-            insts.push(Instruction::op_jmp(offset));
+            insts.push(Instruction::op_jmp(offset + has_closure as i32));
         }
 
         for inst in then_instrs {
@@ -976,14 +1031,6 @@ impl<'a> Compiler<'a> {
         }
 
         let len = insts.len();
-        let mut has_break = false;
-        let mut has_closure = false;
-        for (i, inst) in insts.iter_mut().enumerate() {
-            if inst.op() == LuaOpCode::OP_CLOSURE {
-                has_closure = true;
-                break;
-            }
-        }
         for (i, inst) in insts.iter_mut().enumerate() {
             if let Instruction::BREAK = inst {
                 has_break = true;
@@ -1206,13 +1253,16 @@ impl<'a> Compiler<'a> {
                                 let name_k = ctx.get_or_add_const(LuzObj::str(name));
                                 ctx.push_inst(Instruction::op_gettabup(
                                     tabaddr,
-                                    upvalue.addr,
+                                    upvalue.borrow().addr,
                                     name_k as u8,
                                 ));
                                 var_claimed.push(tabaddr);
                                 var_exp_accesses.push((ExpEval::InRegister(tabaddr), prop));
                             } else {
-                                ctx.push_inst(Instruction::op_getupval(tabaddr, upvalue.addr));
+                                ctx.push_inst(Instruction::op_getupval(
+                                    tabaddr,
+                                    upvalue.borrow().addr,
+                                ));
                                 var_claimed.push(tabaddr);
                                 var_exp_accesses.push((ExpEval::InRegister(tabaddr), prop));
                             }
@@ -1308,13 +1358,13 @@ impl<'a> Compiler<'a> {
                                 let name_k = ctx.get_or_add_const(LuzObj::str(name));
 
                                 ctx.push_inst(Instruction::op_settabup(
-                                    src.addr,
+                                    src.borrow().addr,
                                     name_k as u8,
                                     dest,
                                     is_const,
                                 ));
                             } else {
-                                ctx.push_inst(Instruction::op_setupval(src.addr, dest));
+                                ctx.push_inst(Instruction::op_setupval(src.borrow().addr, dest));
                             }
                         }
                     }
@@ -1335,7 +1385,7 @@ impl<'a> Compiler<'a> {
                                 in_table, upvalue, ..
                             } => {
                                 ctx.push_inst(Instruction::op_settabup(
-                                    upvalue.addr,
+                                    upvalue.borrow().addr,
                                     prop.0,
                                     dest,
                                     is_const,
@@ -1736,11 +1786,14 @@ impl<'a> Compiler<'a> {
                                 let name_k = ctx.get_or_add_const(LuzObj::str(name));
                                 ctx.push_inst(Instruction::op_gettabup(
                                     tabaddr,
-                                    upvalue.addr,
+                                    upvalue.borrow().addr,
                                     name_k as u8,
                                 ));
                             } else {
-                                ctx.push_inst(Instruction::op_getupval(tabaddr, upvalue.addr));
+                                ctx.push_inst(Instruction::op_getupval(
+                                    tabaddr,
+                                    upvalue.borrow().addr,
+                                ));
                             }
                             ctx.push_inst(Instruction::op_geti(dest, tabaddr, imm));
                         } else {
@@ -1751,7 +1804,7 @@ impl<'a> Compiler<'a> {
                                         let name_k = ctx.get_or_add_const(LuzObj::str(name));
                                         ctx.push_inst(Instruction::op_gettabup(
                                             tabaddr,
-                                            upvalue.addr,
+                                            upvalue.borrow().addr,
                                             name_k as u8,
                                         ));
                                         ctx.push_inst(Instruction::op_getfield(
@@ -1760,14 +1813,17 @@ impl<'a> Compiler<'a> {
                                     } else {
                                         ctx.push_inst(Instruction::op_gettabup(
                                             tabaddr,
-                                            upvalue.addr,
+                                            upvalue.borrow().addr,
                                             attr as u8,
                                         ));
                                     }
                                 }
                                 _ => {
                                     let reg = self.load_exp(ctx, value)?;
-                                    ctx.push_inst(Instruction::op_getupval(tabaddr, upvalue.addr));
+                                    ctx.push_inst(Instruction::op_getupval(
+                                        tabaddr,
+                                        upvalue.borrow().addr,
+                                    ));
                                     ctx.push_inst(Instruction::op_gettable(dest, tabaddr, reg));
                                 }
                             }
@@ -1807,9 +1863,62 @@ impl<'a> Compiler<'a> {
         let ExpNode::LogicCmpOp { op, lhs, rhs } = exp else {
             unreachable!()
         };
+
+        // let jmps = self.visit_inner_logicop(ctx, exp, 0)?;
+        self.visit_inner_logicop2(ctx, exp, 0)?;
+
+        Ok(())
+    }
+
+    fn visit_inner_logicop2(
+        &mut self,
+        ctx: &mut CompilerCtx,
+        exp: &ExpNode,
+        depth: usize,
+    ) -> Result<(), LuzError> {
+        let ExpNode::LogicCmpOp { op, lhs, rhs } = exp else {
+            Err(LuzRuntimeError::message(ctx.instructions_to_string()))?;
+            unreachable!()
+        };
+
         let is_and = matches!(op, LogicCmpOp::And);
 
-        let jmps = self.visit_inner_logicop(ctx, exp, 0)?;
+        let before_inst = ctx.instructions_len();
+        let mut new_ctx = ctx.new_with(CompilerCtxBuilder::default().nb_expected(2));
+
+        let lhs_br = self.test_exp(&mut new_ctx, lhs, is_and)?;
+
+        let mut lhs_insts = ctx
+            .scope_mut()
+            .instructions_mut()
+            .drain(before_inst..)
+            .collect::<Vec<_>>();
+
+        let rhs_br = self.load_exp(&mut new_ctx, rhs)?;
+
+        let rhs_insts = ctx
+            .scope_mut()
+            .instructions_mut()
+            .drain(before_inst..)
+            .collect::<Vec<_>>();
+
+        let Some(inst) = lhs_insts.last_mut() else {
+            dbg!(&exp);
+            unreachable!("should not have an empty lhs for {:?} expression", op);
+        };
+
+        if inst.op() == LuaOpCode::OP_JMP {
+            inst.set_sj(rhs_insts.len() as u32 + MAX_HALF_sJ);
+        } else {
+            lhs_insts.push(Instruction::op_jmp(rhs_insts.len() as i32))
+        }
+
+        for inst in lhs_insts {
+            ctx.push_inst(inst);
+        }
+        for inst in rhs_insts {
+            ctx.push_inst(inst);
+        }
         Ok(())
     }
 
@@ -1833,17 +1942,33 @@ impl<'a> Compiler<'a> {
 
         let mut jumps = vec![];
         let mut post_cmp = vec![];
+        let mut rhs_start = 0;
 
         match lhs.normalize() {
-            ExpNode::LogicCmpOp { op: inner_op, .. } => {
+            ExpNode::LogicCmpOp {
+                op: inner_op,
+                lhs: lhs_lhs,
+                rhs: lhs_rhs,
+                ..
+            } => {
                 let lhs_jumps = self.visit_inner_logicop(&mut new_ctx, lhs, depth + 1)?;
                 // We pop the LFALSEKIP and LOADTRUE
                 if lhs_jumps.iter().any(|(_, is_cmp, _)| is_cmp.is_some()) {
-                    post_cmp = vec![
-                        ctx.pop_instruction().unwrap(),
-                        ctx.pop_instruction().unwrap(),
-                    ];
-                    post_cmp.reverse();
+                    if *op != LogicCmpOp::Or
+                        || matches!(
+                            lhs_rhs.normalize(),
+                            ExpNode::CmpOp { .. } | ExpNode::LogicCmpOp { .. }
+                        )
+                    {
+                        post_cmp = vec![
+                            ctx.pop_instruction().unwrap(),
+                            ctx.pop_instruction().unwrap(),
+                        ];
+                        post_cmp.reverse();
+                    } else {
+                        ctx.pop_instruction().unwrap();
+                        ctx.pop_instruction().unwrap();
+                    }
                 }
                 for jmp in lhs_jumps {
                     jumps.push(jmp);
@@ -1860,11 +1985,11 @@ impl<'a> Compiler<'a> {
                             let name_k = ctx.get_or_add_const(LuzObj::str(name));
                             ctx.push_inst(Instruction::op_gettabup(
                                 reg,
-                                upvalue.addr,
+                                upvalue.borrow().addr,
                                 name_k as u8,
                             ));
                         } else {
-                            ctx.push_inst(Instruction::op_getupval(reg, upvalue.addr));
+                            ctx.push_inst(Instruction::op_getupval(reg, upvalue.borrow().addr));
                         }
                         reg
                     }
@@ -1961,11 +2086,11 @@ impl<'a> Compiler<'a> {
                             let name_k = ctx.get_or_add_const(LuzObj::str(name));
                             ctx.push_inst(Instruction::op_gettabup(
                                 reg,
-                                upvalue.addr,
+                                upvalue.borrow().addr,
                                 name_k as u8,
                             ));
                         } else {
-                            ctx.push_inst(Instruction::op_getupval(reg, upvalue.addr));
+                            ctx.push_inst(Instruction::op_getupval(reg, upvalue.borrow().addr));
                         }
                         reg
                     }
@@ -1987,6 +2112,7 @@ impl<'a> Compiler<'a> {
                 }
             }
             _ => {
+                rhs_start = ctx.instructions().len();
                 self.visit_exp(rhs, &mut new_ctx)?;
 
                 if depth != 0 {
@@ -2041,7 +2167,11 @@ impl<'a> Compiler<'a> {
             ctx.push_inst(Instruction::op_jmp(2));
         }
 
-        let len = ctx.instructions_len() - 1;
+        let len = if *op == LogicCmpOp::Or && rhs_start > 0 {
+            rhs_start - 1
+        } else {
+            ctx.instructions_len() - 1
+        };
         if nb_expected != 1 {
             for (idx, (jmp_addr, is_cmp, jmp_op)) in jumps.iter().enumerate() {
                 let mut scope_mut = ctx.scope_mut();
@@ -2066,7 +2196,7 @@ impl<'a> Compiler<'a> {
                 };
                 if let Some(cmp) = is_cmp {
                     if *cmp {
-                        *j += 1;
+                        // *j += 1;
                     }
                 } else if has_cmp {
                     *j += 2;
@@ -2367,6 +2497,7 @@ impl<'a> Compiler<'a> {
                 } else {
                     (args.len() + 1 + method_name.as_ref().map_or(0, |_| 1)) as u8
                 },
+                false,
             ));
         } else {
             ctx.push_inst(Instruction::op_call(
@@ -2488,9 +2619,13 @@ impl<'a> Compiler<'a> {
             RegOrUpvalue::Upvalue(src) => {
                 if is_intable {
                     let name_k = ctx.get_or_add_const(LuzObj::str(name));
-                    ctx.push_inst(Instruction::op_gettabup(reg, src.addr, name_k as u8));
+                    ctx.push_inst(Instruction::op_gettabup(
+                        reg,
+                        src.borrow().addr,
+                        name_k as u8,
+                    ));
                 } else {
-                    ctx.push_inst(Instruction::op_getupval(reg, src.addr));
+                    ctx.push_inst(Instruction::op_getupval(reg, src.borrow().addr));
                 }
             }
         }

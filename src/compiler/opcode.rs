@@ -197,6 +197,7 @@ pub enum TMcode {
     TM_CALL,
     TM_CLOSE,
     TM_N, /* number of elements in the enum */
+    TM_TOSTRING
 }
 
 impl Display for TMcode {
@@ -228,6 +229,7 @@ impl Display for TMcode {
             TMcode::TM_CALL => "__call",
             TMcode::TM_CLOSE => "__close",
             TMcode::TM_N => "TM_N",
+            TMcode::TM_TOSTRING => "__tostring",
         };
 
         write!(f, "{}", s)
